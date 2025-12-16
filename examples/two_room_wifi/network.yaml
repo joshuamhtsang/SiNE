@@ -1,0 +1,79 @@
+# SiNE Example: Two Room WiFi6 Network
+#
+# This example demonstrates a simple wireless network with:
+# - A server in Room 1
+# - A client in Room 2 (through a doorway)
+# - WiFi6 5GHz parameters
+#
+# The server and client can communicate through the doorway opening
+# in the dividing wall, demonstrating realistic indoor propagation.
+#
+# Usage:
+#   1. Start the channel server: sine channel-server
+#   2. Deploy the emulation: sine deploy network.yaml
+#   3. Test connectivity:
+#      - Server: docker exec -it clab-two-room-wifi-server iperf3 -s
+#      - Client: docker exec -it clab-two-room-wifi-client iperf3 -c <server-ip>
+#   4. Cleanup: ./cleanup.sh or sine destroy network.yaml
+
+name: two-room-wifi
+prefix: clab
+
+topology:
+  # Scene configuration
+  # Uses the default two-room scene with a doorway
+  scene:
+    type: default
+    # For custom scenes, use:
+    # type: custom
+    # file: /path/to/your/scene.xml
+
+  # Node definitions
+  nodes:
+    # Server node in Room 1
+    server:
+      kind: linux
+      image: alpine:latest
+      # Wireless parameters
+      wireless:
+        rf_power_dbm: 23.0          # Typical WiFi AP transmit power
+        antenna_pattern: isotropic
+        antenna_gain_dbi: 2.0       # Small antenna gain
+        frequency_ghz: 5.18         # WiFi6 5GHz channel 36
+        bandwidth_mhz: 80           # 80 MHz channel width (WiFi6)
+        modulation: 64qam           # 64-QAM modulation
+        fec_type: ldpc              # LDPC forward error correction
+        fec_code_rate: 0.5          # Rate-1/2 coding
+        position:
+          x: 2.5                    # Center of Room 1 (x: 0-5m)
+          y: 2.0                    # Center of room (y: 0-4m)
+          z: 1.5                    # Typical device height
+
+    # Client node in Room 2
+    client:
+      kind: linux
+      image: alpine:latest
+      wireless:
+        rf_power_dbm: 18.0          # Typical client transmit power
+        antenna_pattern: isotropic
+        antenna_gain_dbi: 0.0       # No antenna gain (built-in antenna)
+        frequency_ghz: 5.18         # Same channel as server
+        bandwidth_mhz: 80
+        modulation: 64qam
+        fec_type: ldpc
+        fec_code_rate: 0.5
+        position:
+          x: 7.5                    # Center of Room 2 (x: 5.15-10.15m)
+          y: 2.0                    # Aligned with doorway (door at y=2.0)
+          z: 1.0                    # Slightly lower (e.g., on desk)
+
+  # Wireless links between nodes
+  wireless_links:
+    - endpoints: [server, client]
+
+  # Channel computation server URL
+  channel_server: "http://localhost:8000"
+
+  # Mobility polling interval (milliseconds)
+  # Set to 100ms for responsive mobility updates
+  mobility_poll_ms: 100

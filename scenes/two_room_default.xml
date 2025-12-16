@@ -1,0 +1,170 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SiNE Default Scene: Two Rooms with Doorway
+
+  Layout (top view):
+
+  Y
+  ^
+  |  +--------+----+--------+
+  |  |        |    |        |
+  4  | Room 1 |door| Room 2 |
+  |  |        |    |        |
+  |  |        |    |        |
+  0  +--------+----+--------+
+     0        5  5.15      10.15  -> X
+
+  Dimensions:
+  - Room 1: 5.0m x 4.0m x 2.5m (x: 0-5, y: 0-4)
+  - Room 2: 5.0m x 4.0m x 2.5m (x: 5.15-10.15, y: 0-4)
+  - Wall thickness: 0.15m
+  - Door: 0.9m wide x 2.0m tall, centered at y=2.0
+  - Height: 2.5m
+
+  Materials:
+  - Walls/Ceiling: Concrete (ITU indoor)
+  - Floor: Concrete
+
+  Coordinate system: Right-handed, Z-up
+-->
+
+<scene version="2.0.0">
+    <!-- Integrator for path tracing -->
+    <integrator type="path">
+        <integer name="max_depth" value="8"/>
+    </integrator>
+
+    <!-- Default material: Concrete (ITU indoor model) -->
+    <bsdf type="diffuse" id="concrete">
+        <rgb name="reflectance" value="0.5, 0.5, 0.5"/>
+    </bsdf>
+
+    <!-- Floor (both rooms) -->
+    <shape type="rectangle" id="floor">
+        <transform name="to_world">
+            <scale x="10.15" y="4.0" z="1"/>
+            <translate x="5.075" y="2.0" z="0"/>
+        </transform>
+        <ref id="concrete"/>
+    </shape>
+
+    <!-- Ceiling (both rooms) -->
+    <shape type="rectangle" id="ceiling">
+        <transform name="to_world">
+            <scale x="10.15" y="4.0" z="1"/>
+            <rotate x="1" angle="180"/>
+            <translate x="5.075" y="2.0" z="2.5"/>
+        </transform>
+        <ref id="concrete"/>
+    </shape>
+
+    <!-- Room 1 walls -->
+
+    <!-- Room 1: Back wall (y=0) -->
+    <shape type="rectangle" id="room1_wall_back">
+        <transform name="to_world">
+            <scale x="5.0" y="2.5" z="1"/>
+            <rotate x="1" angle="90"/>
+            <translate x="2.5" y="0" z="1.25"/>
+        </transform>
+        <ref id="concrete"/>
+    </shape>
+
+    <!-- Room 1: Front wall (y=4) -->
+    <shape type="rectangle" id="room1_wall_front">
+        <transform name="to_world">
+            <scale x="5.0" y="2.5" z="1"/>
+            <rotate x="1" angle="-90"/>
+            <translate x="2.5" y="4.0" z="1.25"/>
+        </transform>
+        <ref id="concrete"/>
+    </shape>
+
+    <!-- Room 1: Left wall (x=0) -->
+    <shape type="rectangle" id="room1_wall_left">
+        <transform name="to_world">
+            <scale x="4.0" y="2.5" z="1"/>
+            <rotate y="1" angle="-90"/>
+            <translate x="0" y="2.0" z="1.25"/>
+        </transform>
+        <ref id="concrete"/>
+    </shape>
+
+    <!-- Dividing wall with door opening -->
+    <!-- Wall section below door (z: 0 to 0) - not needed, door starts at floor -->
+
+    <!-- Wall section above door (z: 2.0 to 2.5) -->
+    <shape type="rectangle" id="divider_above_door">
+        <transform name="to_world">
+            <scale x="4.0" y="0.5" z="1"/>
+            <rotate y="1" angle="90"/>
+            <translate x="5.0" y="2.0" z="2.25"/>
+        </transform>
+        <ref id="concrete"/>
+    </shape>
+
+    <!-- Wall section left of door (y: 0 to 1.55) -->
+    <shape type="rectangle" id="divider_left">
+        <transform name="to_world">
+            <scale x="1.55" y="2.5" z="1"/>
+            <rotate y="1" angle="90"/>
+            <translate x="5.0" y="0.775" z="1.25"/>
+        </transform>
+        <ref id="concrete"/>
+    </shape>
+
+    <!-- Wall section right of door (y: 2.45 to 4.0) -->
+    <shape type="rectangle" id="divider_right">
+        <transform name="to_world">
+            <scale x="1.55" y="2.5" z="1"/>
+            <rotate y="1" angle="90"/>
+            <translate x="5.0" y="3.225" z="1.25"/>
+        </transform>
+        <ref id="concrete"/>
+    </shape>
+
+    <!-- Room 2 walls -->
+
+    <!-- Room 2: Back wall (y=0) -->
+    <shape type="rectangle" id="room2_wall_back">
+        <transform name="to_world">
+            <scale x="5.0" y="2.5" z="1"/>
+            <rotate x="1" angle="90"/>
+            <translate x="7.575" y="0" z="1.25"/>
+        </transform>
+        <ref id="concrete"/>
+    </shape>
+
+    <!-- Room 2: Front wall (y=4) -->
+    <shape type="rectangle" id="room2_wall_front">
+        <transform name="to_world">
+            <scale x="5.0" y="2.5" z="1"/>
+            <rotate x="1" angle="-90"/>
+            <translate x="7.575" y="4.0" z="1.25"/>
+        </transform>
+        <ref id="concrete"/>
+    </shape>
+
+    <!-- Room 2: Right wall (x=10.15) -->
+    <shape type="rectangle" id="room2_wall_right">
+        <transform name="to_world">
+            <scale x="4.0" y="2.5" z="1"/>
+            <rotate y="1" angle="90"/>
+            <translate x="10.15" y="2.0" z="1.25"/>
+        </transform>
+        <ref id="concrete"/>
+    </shape>
+
+    <!-- Light in Room 1 (point light at center ceiling) -->
+    <emitter type="point" id="light_room1">
+        <point name="position" x="2.5" y="2.0" z="2.4"/>
+        <rgb name="intensity" value="50, 50, 50"/>
+    </emitter>
+
+    <!-- Light in Room 2 (point light at center ceiling) -->
+    <emitter type="point" id="light_room2">
+        <point name="position" x="7.575" y="2.0" z="2.4"/>
+        <rgb name="intensity" value="50, 50, 50"/>
+    </emitter>
+
+</scene>
