@@ -9,12 +9,13 @@
 # in the dividing wall, demonstrating realistic indoor propagation.
 #
 # Usage:
-#   1. Start the channel server: sine channel-server
-#   2. Deploy the emulation: sine deploy network.yaml
-#   3. Test connectivity:
+#   1. Build the node image: docker build -t sine-node:latest docker/node/
+#   2. Start the channel server: uv run sine channel-server
+#   3. Deploy the emulation: uv run sine deploy examples/two_room_wifi/network.yaml
+#   4. Test connectivity:
 #      - Server: docker exec -it clab-two-room-wifi-server iperf3 -s
 #      - Client: docker exec -it clab-two-room-wifi-client iperf3 -c <server-ip>
-#   4. Cleanup: ./cleanup.sh or sine destroy network.yaml
+#   5. Cleanup: ./cleanup.sh or uv run sine destroy examples/two_room_wifi/network.yaml
 
 name: two-room-wifi
 prefix: clab
@@ -33,7 +34,7 @@ topology:
     # Server node in Room 1
     server:
       kind: linux
-      image: alpine:latest
+      image: sine-node:latest
       # Wireless parameters
       wireless:
         rf_power_dbm: 23.0          # Typical WiFi AP transmit power
@@ -52,7 +53,7 @@ topology:
     # Client node in Room 2
     client:
       kind: linux
-      image: alpine:latest
+      image: sine-node:latest
       wireless:
         rf_power_dbm: 18.0          # Typical client transmit power
         antenna_pattern: isotropic

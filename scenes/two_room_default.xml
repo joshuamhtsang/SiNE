@@ -2,18 +2,6 @@
 <!--
   SiNE Default Scene: Two Rooms with Doorway
 
-  Layout (top view):
-
-  Y
-  ^
-  |  +--------+----+--------+
-  |  |        |    |        |
-  4  | Room 1 |door| Room 2 |
-  |  |        |    |        |
-  |  |        |    |        |
-  0  +--------+----+--------+
-     0        5  5.15      10.15  -> X
-
   Dimensions:
   - Room 1: 5.0m x 4.0m x 2.5m (x: 0-5, y: 0-4)
   - Room 2: 5.0m x 4.0m x 2.5m (x: 5.15-10.15, y: 0-4)
@@ -35,7 +23,7 @@
     </integrator>
 
     <!-- Default material: Concrete (ITU indoor model) -->
-    <bsdf type="diffuse" id="concrete">
+    <bsdf type="diffuse" id="itu_concrete">
         <rgb name="reflectance" value="0.5, 0.5, 0.5"/>
     </bsdf>
 
@@ -45,7 +33,7 @@
             <scale x="10.15" y="4.0" z="1"/>
             <translate x="5.075" y="2.0" z="0"/>
         </transform>
-        <ref id="concrete"/>
+        <ref id="itu_concrete"/>
     </shape>
 
     <!-- Ceiling (both rooms) -->
@@ -55,7 +43,7 @@
             <rotate x="1" angle="180"/>
             <translate x="5.075" y="2.0" z="2.5"/>
         </transform>
-        <ref id="concrete"/>
+        <ref id="itu_concrete"/>
     </shape>
 
     <!-- Room 1 walls -->
@@ -67,7 +55,7 @@
             <rotate x="1" angle="90"/>
             <translate x="2.5" y="0" z="1.25"/>
         </transform>
-        <ref id="concrete"/>
+        <ref id="itu_concrete"/>
     </shape>
 
     <!-- Room 1: Front wall (y=4) -->
@@ -77,7 +65,7 @@
             <rotate x="1" angle="-90"/>
             <translate x="2.5" y="4.0" z="1.25"/>
         </transform>
-        <ref id="concrete"/>
+        <ref id="itu_concrete"/>
     </shape>
 
     <!-- Room 1: Left wall (x=0) -->
@@ -87,7 +75,7 @@
             <rotate y="1" angle="-90"/>
             <translate x="0" y="2.0" z="1.25"/>
         </transform>
-        <ref id="concrete"/>
+        <ref id="itu_concrete"/>
     </shape>
 
     <!-- Dividing wall with door opening -->
@@ -100,7 +88,7 @@
             <rotate y="1" angle="90"/>
             <translate x="5.0" y="2.0" z="2.25"/>
         </transform>
-        <ref id="concrete"/>
+        <ref id="itu_concrete"/>
     </shape>
 
     <!-- Wall section left of door (y: 0 to 1.55) -->
@@ -110,7 +98,7 @@
             <rotate y="1" angle="90"/>
             <translate x="5.0" y="0.775" z="1.25"/>
         </transform>
-        <ref id="concrete"/>
+        <ref id="itu_concrete"/>
     </shape>
 
     <!-- Wall section right of door (y: 2.45 to 4.0) -->
@@ -120,7 +108,7 @@
             <rotate y="1" angle="90"/>
             <translate x="5.0" y="3.225" z="1.25"/>
         </transform>
-        <ref id="concrete"/>
+        <ref id="itu_concrete"/>
     </shape>
 
     <!-- Room 2 walls -->
@@ -132,7 +120,7 @@
             <rotate x="1" angle="90"/>
             <translate x="7.575" y="0" z="1.25"/>
         </transform>
-        <ref id="concrete"/>
+        <ref id="itu_concrete"/>
     </shape>
 
     <!-- Room 2: Front wall (y=4) -->
@@ -142,7 +130,7 @@
             <rotate x="1" angle="-90"/>
             <translate x="7.575" y="4.0" z="1.25"/>
         </transform>
-        <ref id="concrete"/>
+        <ref id="itu_concrete"/>
     </shape>
 
     <!-- Room 2: Right wall (x=10.15) -->
@@ -152,7 +140,7 @@
             <rotate y="1" angle="90"/>
             <translate x="10.15" y="2.0" z="1.25"/>
         </transform>
-        <ref id="concrete"/>
+        <ref id="itu_concrete"/>
     </shape>
 
     <!-- Light in Room 1 (point light at center ceiling) -->

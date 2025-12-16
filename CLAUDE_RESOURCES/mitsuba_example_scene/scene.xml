@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<scene version="3.0.0">
+
+    <integrator type="path">
+        <integer name="max_depth" value="8"/>
+    </integrator>
+
+    <sensor type="perspective">
+        <float name="fov" value="45"/>
+        <transform name="to_world">
+            <lookat origin="0, -10, 2"
+                    target="0, 0, 1.5"
+                    up="0, 0, 1"/>
+        </transform>
+
+        <sampler type="independent">
+            <integer name="sample_count" value="64"/>
+        </sampler>
+
+        <film type="hdrfilm">
+            <integer name="width" value="800"/>
+            <integer name="height" value="600"/>
+            <rfilter type="gaussian"/>
+        </film>
+    </sensor>
+
+    <!-- Floor -->
+    <shape type="rectangle">
+        <transform name="to_world">
+            <scale x="5" y="4"/>
+        </transform>
+        <bsdf type="diffuse">
+            <rgb name="reflectance" value="0.6, 0.6, 0.6"/>
+        </bsdf>
+    </shape>
+
+    <!-- Ceiling with downward emitter -->
+    <shape type="rectangle">
+        <transform name="to_world">
+            <scale x="5" y="4"/>
+            <rotate y="1" angle="180"/>   <!-- critical fix -->
+            <translate x="0" y="0" z="3"/>
+        </transform>
+
+        <bsdf type="diffuse">
+            <rgb name="reflectance" value="0.8, 0.8, 0.8"/>
+        </bsdf>
+
+        <!-- strong light, needed in an open room -->
+        <emitter type="area">
+            <rgb name="radiance" value="0, 0, 0"/>
+        </emitter>
+    </shape>
+
+    <shape type="rectangle">
+        <transform name="to_world">
+            <scale x="5" y="4"/>
+        </transform>
+        <bsdf type="diffuse">
+            <rgb name="reflectance" value="0.6, 0.6, 0.6"/>
+        </bsdf>
+    </shape>
+
+    <!-- Xiao Deng -->
+    <shape type="rectangle">
+        <transform name="to_world">
+            <scale x="1" y="1"/>
+            <rotate y="1" angle="180"/>   <!-- critical fix -->
+            <translate x="0" y="0" z="3"/>
+        </transform>
+
+        <bsdf type="diffuse">
+            <rgb name="reflectance" value="0.8, 0.8, 0.8"/>
+        </bsdf>
+
+        <!-- strong light, needed in an open room -->
+        <emitter type="area">
+            <rgb name="radiance" value="1, 1, 1"/>
+        </emitter>
+    </shape>
+
+</scene>

@@ -64,7 +64,8 @@ class NetemParams:
         if use_nsenter:
             if pid is None:
                 raise ValueError("PID required when use_nsenter is True")
-            ns_prefix = f"nsenter -t {pid} -n "
+            # sudo is required to enter another process's network namespace
+            ns_prefix = f"sudo nsenter -t {pid} -n "
 
         # First, delete any existing qdisc (ignore errors)
         commands.append(
@@ -194,7 +195,7 @@ class NetemConfigurator:
         Returns:
             Dictionary with current config or None
         """
-        cmd = f"nsenter -t {pid} -n tc qdisc show dev {interface}"
+        cmd = f"sudo nsenter -t {pid} -n tc qdisc show dev {interface}"
 
         try:
             result = subprocess.run(
@@ -266,7 +267,7 @@ class NetemConfigurator:
         Returns:
             True if successful
         """
-        cmd = f"nsenter -t {pid} -n tc qdisc del dev {interface} root 2>/dev/null || true"
+        cmd = f"sudo nsenter -t {pid} -n tc qdisc del dev {interface} root 2>/dev/null || true"
 
         try:
             subprocess.run(cmd, shell=True, check=True, capture_output=True)

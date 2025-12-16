@@ -32,6 +32,57 @@ def setup_logging(verbose: bool = False) -> None:
     )
 
 
+def _print_deployment_summary(summary: dict) -> None:
+    """Print a summary of the deployment."""
+    console.print()
+
+    # Containers table
+    if summary.get("containers"):
+        container_table = Table(title="Deployed Containers")
+        container_table.add_column("Container", style="cyan")
+        container_table.add_column("Image")
+        container_table.add_column("PID", style="dim")
+        container_table.add_column("Interfaces", style="green")
+        container_table.add_column("Position (x,y,z)")
+
+        for c in summary["containers"]:
+            interfaces = ", ".join(c.get("interfaces", [])) or "eth0"
+            pos = ""
+            if c.get("position"):
+                p = c["position"]
+                pos = f"({p['x']:.1f}, {p['y']:.1f}, {p['z']:.1f})"
+            container_table.add_row(
+                c.get("name", ""),
+                c.get("image", ""),
+                str(c.get("pid", "")),
+                interfaces,
+                pos,
+            )
+
+        console.print(container_table)
+
+    # Wireless links table
+    if summary.get("wireless_links"):
+        console.print()
+        link_table = Table(title="Wireless Link Parameters (netem)")
+        link_table.add_column("Link", style="cyan")
+        link_table.add_column("Delay", justify="right")
+        link_table.add_column("Jitter", justify="right")
+        link_table.add_column("Loss %", justify="right")
+        link_table.add_column("Rate", justify="right")
+
+        for link in summary["wireless_links"]:
+            link_table.add_row(
+                link["link"],
+                f"{link['delay_ms']:.2f} ms",
+                f"{link['jitter_ms']:.2f} ms",
+                f"{link['loss_percent']:.2f}%",
+                f"{link['rate_mbps']:.1f} Mbps",
+            )
+
+        console.print(link_table)
+
+
 @click.group()
 @click.version_option(version="0.1.0", prog_name="sine")
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose output")
@@ -67,7 +118,12 @@ def deploy(topology: Path, channel_server: str) -> None:
             success = await controller.start()
             if success:
                 console.print("[bold green]Emulation deployed successfully![/]")
-                console.print(f"Cleanup script: {topology.parent / 'cleanup.sh'}")
+
+                # Print deployment summary
+                summary = controller.get_deployment_summary()
+                _print_deployment_summary(summary)
+
+                console.print(f"\nCleanup script: {topology.parent / 'cleanup.sh'}")
                 console.print("\n[dim]Press Ctrl+C to stop emulation[/]")
 
                 # Keep running until interrupted

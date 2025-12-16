@@ -24,7 +24,7 @@ _sionna_import_error: Optional[str] = None
 try:
     import tensorflow as tf
     import sionna
-    from sionna.rt import load_scene, PlanarArray, Transmitter, Receiver, PathSolver
+    from sionna.rt import load_scene, Scene, PlanarArray, Transmitter, Receiver, PathSolver
 
     _sionna_available = True
 except ImportError as e:
@@ -111,8 +111,8 @@ class SionnaEngine:
         if scene_path:
             self.scene = load_scene(scene_path)
         else:
-            # Load empty scene
-            self.scene = load_scene(sionna.rt.scene.empty)
+            # Create empty scene (Sionna 1.2+ API)
+            self.scene = Scene()
 
         # Configure RF parameters
         self.scene.frequency = frequency_hz
@@ -344,6 +344,7 @@ class FallbackEngine:
         self._transmitters: dict[str, tuple[float, float, float]] = {}
         self._receivers: dict[str, tuple[float, float, float]] = {}
         self._frequency_hz = 5.18e9
+        self._scene_loaded = False
 
     def load_scene(
         self,
@@ -353,7 +354,8 @@ class FallbackEngine:
     ) -> None:
         """Load scene (no-op for fallback, just store frequency)."""
         self._frequency_hz = frequency_hz
-        logger.warning("Using fallback engine - ray tracing not available")
+        self._scene_loaded = True
+        logger.info(f"Fallback engine: scene loaded (frequency={frequency_hz/1e9:.3f} GHz)")
 
     def add_transmitter(
         self, name: str, position: tuple[float, float, float], antenna_pattern: str = "isotropic"

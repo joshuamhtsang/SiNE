@@ -415,3 +415,51 @@ class EmulationController:
     def is_running(self) -> bool:
         """Check if emulation is currently running."""
         return self._running
+
+    def get_deployment_summary(self) -> dict:
+        """
+        Get a summary of the deployment.
+
+        Returns:
+            Dictionary with deployment information including containers,
+            network interfaces, and channel parameters.
+        """
+        summary = {
+            "topology_name": self.config.name if self.config else "Unknown",
+            "containers": [],
+            "wireless_links": [],
+        }
+
+        # Get container info
+        if self.clab_manager:
+            containers = self.clab_manager.get_all_containers()
+            for name, info in containers.items():
+                container_info = {
+                    "name": info.get("name", name),
+                    "image": info.get("image", "unknown"),
+                    "pid": info.get("pid"),
+                    "interfaces": info.get("interfaces", []),
+                    "ipv4": info.get("ipv4", ""),
+                }
+                # Add wireless position if available
+                short_name = name.replace(f"clab-{self.config.name}-", "")
+                node = self.config.topology.nodes.get(short_name)
+                if node and node.wireless:
+                    container_info["position"] = {
+                        "x": node.wireless.position.x,
+                        "y": node.wireless.position.y,
+                        "z": node.wireless.position.z,
+                    }
+                summary["containers"].append(container_info)
+
+        # Get link states
+        for (tx, rx), params in self._link_states.items():
+            summary["wireless_links"].append({
+                "link": f"{tx} <-> {rx}",
+                "delay_ms": params.delay_ms,
+                "jitter_ms": params.jitter_ms,
+                "loss_percent": params.loss_percent,
+                "rate_mbps": params.rate_mbps,
+            })
+
+        return summary
