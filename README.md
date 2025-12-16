@@ -6,7 +6,7 @@ Wireless network emulation using Sionna ray tracing and Containerlab.
 
 SiNE creates realistic wireless network emulations by combining:
 - **Containerlab**: Deploy Docker containers as network nodes
-- **Sionna V1.2**: Ray tracing for accurate wireless channel modeling
+- **Sionna v1.2.1**: Ray tracing for accurate wireless channel modeling
 - **Linux netem**: Apply computed channel conditions (delay, loss, bandwidth)
 
 ## Features
@@ -21,27 +21,38 @@ SiNE creates realistic wireless network emulations by combining:
 
 ## Installation
 
-```bash
-# Using UV (recommended)
-uv pip install -e .
+### 1. System Dependencies
 
-# With GPU support (Sionna + TensorFlow)
-uv pip install -e ".[gpu]"
+Run the configure script to install system-level dependencies:
+
+```bash
+# Basic setup (installs Containerlab)
+./configure.sh
+
+# With GPU support (also installs NVIDIA CUDA Toolkit)
+./configure.sh --cuda
+```
+
+### 2. Python Dependencies
+
+```bash
+# Using UV (recommended) - creates venv and installs dependencies including Sionna v1.2
+uv sync
 
 # Development dependencies
-uv pip install -e ".[dev]"
+uv sync --extra dev
 ```
 
 ## Quick Start
 
 1. **Start the channel server**:
    ```bash
-   sine channel-server
+   uv run sine channel-server
    ```
 
 2. **Deploy an emulation**:
    ```bash
-   sine deploy examples/two_room_wifi/network.yaml
+   uv run sine deploy examples/two_room_wifi/network.yaml
    ```
 
 3. **Test connectivity** (in separate terminals):
@@ -57,7 +68,7 @@ uv pip install -e ".[dev]"
    ```bash
    ./cleanup.sh
    # or
-   sine destroy examples/two_room_wifi/network.yaml
+   uv run sine destroy examples/two_room_wifi/network.yaml
    ```
 
 ## Example Topology
@@ -104,20 +115,32 @@ topology:
 
 ## Requirements
 
-- Python 3.10+
+- Python 3.12+
 - Docker
 - Containerlab
+- Sionna v1.2.1 (installed automatically via `uv sync`)
 - For GPU acceleration: NVIDIA GPU with CUDA support
 
-## CLI Commands
+## CLI Tool
+
+This project provides the `sine` command-line tool. It's defined as a Python entry point in `pyproject.toml`:
+
+```toml
+[project.scripts]
+sine = "sine.cli:main"
+```
+
+When you run `uv sync`, the installer creates `.venv/bin/sine` - a wrapper that imports and runs the `main()` function from [src/sine/cli.py](src/sine/cli.py). The CLI is built using [Click](https://click.palletsprojects.com/).
+
+### Available Commands
 
 ```bash
-sine deploy <topology.yaml>   # Deploy emulation
-sine destroy <topology.yaml>  # Destroy emulation
-sine status                   # Show running containers
-sine channel-server           # Start channel computation server
-sine validate <topology.yaml> # Validate topology file
-sine info                     # Show system information
+uv run sine deploy <topology.yaml>   # Deploy emulation
+uv run sine destroy <topology.yaml>  # Destroy emulation
+uv run sine status                   # Show running containers
+uv run sine channel-server           # Start channel computation server
+uv run sine validate <topology.yaml> # Validate topology file
+uv run sine info                     # Show system information
 ```
 
 ## Architecture

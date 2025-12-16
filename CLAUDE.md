@@ -4,7 +4,7 @@
 
 SiNE is a wireless network emulation package that combines:
 - **Containerlab**: Container-based network topology management
-- **Sionna V1.2**: Ray tracing and wireless channel simulation
+- **Sionna v1.2.1**: Ray tracing and wireless channel simulation (Python 3.12+)
 - **Linux netem**: Network emulation (delay, loss, bandwidth)
 
 ## Architecture
@@ -40,7 +40,7 @@ network.yaml -> EmulationController -> Containerlab (Docker containers)
 | API Framework | FastAPI | Async support, OpenAPI docs |
 | Mobility Poll | 100ms | Balance responsiveness vs overhead |
 | Rate Limiting | tbf | netem lacks native rate control |
-| Sionna API | PathSolver | New Sionna 1.2+ API |
+| Sionna API | PathSolver | Sionna v1.2.1 API |
 | PER Formula | BLER for coded | Industry standard |
 | Default Scene | Mitsuba XML | Sionna requires mesh files |
 
@@ -48,40 +48,59 @@ network.yaml -> EmulationController -> Containerlab (Docker containers)
 
 - `CLAUDE_RESOURCES/` - Reference documentation for Containerlab and Sionna
 
+## CLI Tool
+
+This project provides the `sine` CLI tool, defined in `pyproject.toml`:
+
+```toml
+[project.scripts]
+sine = "sine.cli:main"
+```
+
+When you run `uv sync`, it creates `.venv/bin/sine` which calls the `main()` function in `src/sine/cli.py`. The CLI is built with [Click](https://click.palletsprojects.com/).
+
+## Setup
+
+```bash
+# Install system dependencies (containerlab, optionally CUDA)
+./configure.sh          # Basic setup
+./configure.sh --cuda   # With NVIDIA CUDA toolkit for GPU acceleration
+```
+
 ## Commands
 
 ```bash
-# Install
-uv pip install -e .
+# Create virtual environment and install dependencies (including Sionna v1.2)
+uv sync
 
 # Start channel server
-sine channel-server
+uv run sine channel-server
 
 # Deploy emulation
-sine deploy examples/two_room_wifi/network.yaml
+uv run sine deploy examples/two_room_wifi/network.yaml
 
 # Validate topology
-sine validate examples/two_room_wifi/network.yaml
+uv run sine validate examples/two_room_wifi/network.yaml
 
 # Check system info
-sine info
+uv run sine info
 
 # Destroy emulation
-sine destroy examples/two_room_wifi/network.yaml
+uv run sine destroy examples/two_room_wifi/network.yaml
 ```
 
 ## Development
 
 ```bash
 # Install with dev dependencies
-uv pip install -e ".[dev]"
+uv sync --extra dev
 
 # Run tests
-pytest
+uv run pytest
 
 # Type checking
-mypy src/sine
+uv run mypy src/sine
 
 # Linting
-ruff check src/sine
+uv run ruff check src/sine
 ```
