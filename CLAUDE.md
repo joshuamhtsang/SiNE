@@ -50,6 +50,21 @@ network.yaml -> EmulationController -> Containerlab (Docker containers)
 
 - `CLAUDE_RESOURCES/` - Reference documentation for Containerlab and Sionna
 
+## MCP Server Setup (Optional)
+
+For enhanced Sionna documentation access in Claude Code, set up the Sionna MCP server:
+
+1. Clone the Sionna MCP server repository to your machine
+2. Copy `.mcp.json.example` to `.mcp.json`
+3. Edit `.mcp.json` and replace `/path/to/sionna_mcp_server` with your actual path
+
+```bash
+cp .mcp.json.example .mcp.json
+# Edit .mcp.json with your path
+```
+
+Note: `.mcp.json` is gitignored since it contains user-specific paths.
+
 ## CLI Tool
 
 This project provides the `sine` CLI tool, defined in `pyproject.toml`:
