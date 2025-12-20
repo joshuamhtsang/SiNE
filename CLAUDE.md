@@ -138,3 +138,5 @@ uv run ruff check src/sine
 - **Sionna Scene Materials**: Must use ITU naming convention (e.g., `itu_concrete`, not `concrete`)
 - **netem Configuration**: Requires `sudo` for `nsenter` to access container network namespaces
 - **Sionna v1.2.1 API**: Use `Scene()` for empty scenes, `load_scene()` for files
+- **Antenna Patterns**: Valid pattern names are `"iso"`, `"dipole"`, `"hw_dipole"`, `"tr38901"` (not `"isotropic"`)
+- **Antenna Polarization**: Valid polarization values are `"V"`, `"H"`, `"VH"`, `"cross"`
