@@ -129,7 +129,8 @@ class SionnaEngine:
         self,
         name: str,
         position: tuple[float, float, float],
-        antenna_pattern: str = "isotropic",
+        antenna_pattern: str = "iso",
+        polarization: str = "V",
     ) -> None:
         """
         Add a transmitter to the scene.
@@ -137,7 +138,8 @@ class SionnaEngine:
         Args:
             name: Unique transmitter name
             position: (x, y, z) position in meters
-            antenna_pattern: Antenna pattern type
+            antenna_pattern: Antenna pattern type ("iso", "dipole", "hw_dipole", "tr38901")
+            polarization: Antenna polarization ("V", "H", "VH", "cross")
         """
         if not self._scene_loaded:
             raise RuntimeError("Scene must be loaded before adding transmitters")
@@ -153,6 +155,7 @@ class SionnaEngine:
             vertical_spacing=0.5,
             horizontal_spacing=0.5,
             pattern=antenna_pattern,
+            polarization=polarization,
         )
 
         # Create and add transmitter
@@ -167,7 +170,8 @@ class SionnaEngine:
         self,
         name: str,
         position: tuple[float, float, float],
-        antenna_pattern: str = "isotropic",
+        antenna_pattern: str = "iso",
+        polarization: str = "V",
     ) -> None:
         """
         Add a receiver to the scene.
@@ -175,7 +179,8 @@ class SionnaEngine:
         Args:
             name: Unique receiver name
             position: (x, y, z) position in meters
-            antenna_pattern: Antenna pattern type
+            antenna_pattern: Antenna pattern type ("iso", "dipole", "hw_dipole", "tr38901")
+            polarization: Antenna polarization ("V", "H", "VH", "cross")
         """
         if not self._scene_loaded:
             raise RuntimeError("Scene must be loaded before adding receivers")
@@ -191,6 +196,7 @@ class SionnaEngine:
             vertical_spacing=0.5,
             horizontal_spacing=0.5,
             pattern=antenna_pattern,
+            polarization=polarization,
         )
 
         # Create and add receiver
@@ -218,12 +224,13 @@ class SionnaEngine:
         paths = self.path_solver(self.scene)
 
         # Get channel impulse response
-        # Returns: (batch, num_rx, num_rx_ant, num_tx, num_tx_ant, num_paths)
-        a, tau = paths.cir()
+        # Sionna v1.2.1 returns ((a_real, a_imag), tau) from cir()
+        # Shape: [num_rx, num_rx_ant, num_tx, num_tx_ant, num_paths]
+        (a_real, a_imag), tau = paths.cir(out_type='numpy')
 
-        # Convert to numpy
-        a_np = a.numpy()
-        tau_np = tau.numpy()
+        # Reconstruct complex channel coefficients
+        a_np = a_real + 1j * a_imag
+        tau_np = tau
 
         # Check if we have valid paths
         num_valid_paths = int(np.sum(np.abs(a_np) > 1e-10))
@@ -358,13 +365,21 @@ class FallbackEngine:
         logger.info(f"Fallback engine: scene loaded (frequency={frequency_hz/1e9:.3f} GHz)")
 
     def add_transmitter(
-        self, name: str, position: tuple[float, float, float], antenna_pattern: str = "isotropic"
+        self,
+        name: str,
+        position: tuple[float, float, float],
+        antenna_pattern: str = "iso",
+        polarization: str = "V",
     ) -> None:
         """Add transmitter position."""
         self._transmitters[name] = position
 
     def add_receiver(
-        self, name: str, position: tuple[float, float, float], antenna_pattern: str = "isotropic"
+        self,
+        name: str,
+        position: tuple[float, float, float],
+        antenna_pattern: str = "iso",
+        polarization: str = "V",
     ) -> None:
         """Add receiver position."""
         self._receivers[name] = position

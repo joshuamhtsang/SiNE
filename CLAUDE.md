@@ -65,6 +65,8 @@ cp .mcp.json.example .mcp.json
 
 Note: `.mcp.json` is gitignored since it contains user-specific paths.
 
+The Sionna MCP server source code is at https://codeberg.org/supermonkey/sionna_mcp_server (currently a private repository).
+
 ## CLI Tool
 
 This project provides the `sine` CLI tool, defined in `pyproject.toml`:

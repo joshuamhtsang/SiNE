@@ -83,7 +83,8 @@ class WirelessLinkRequest(BaseModel):
     tx_power_dbm: float = Field(default=20.0, description="Transmit power in dBm")
     tx_gain_dbi: float = Field(default=0.0, description="TX antenna gain in dBi")
     rx_gain_dbi: float = Field(default=0.0, description="RX antenna gain in dBi")
-    antenna_pattern: str = Field(default="isotropic")
+    antenna_pattern: str = Field(default="iso", description="Antenna pattern: iso, dipole, hw_dipole, tr38901")
+    polarization: str = Field(default="V", description="Antenna polarization: V, H, VH, cross")
     frequency_hz: float = Field(default=5.18e9)
     bandwidth_hz: float = Field(default=80e6)
     modulation: str = Field(default="64qam")
@@ -301,11 +302,13 @@ async def compute_single_link(request: WirelessLinkRequest):
             name=request.tx_node,
             position=request.tx_position.as_tuple(),
             antenna_pattern=request.antenna_pattern,
+            polarization=request.polarization,
         )
         _engine.add_receiver(
             name=request.rx_node,
             position=request.rx_position.as_tuple(),
             antenna_pattern=request.antenna_pattern,
+            polarization=request.polarization,
         )
 
         # Compute paths
@@ -355,11 +358,13 @@ async def compute_batch_links(request: BatchChannelRequest):
                 name=link.tx_node,
                 position=link.tx_position.as_tuple(),
                 antenna_pattern=link.antenna_pattern,
+                polarization=link.polarization,
             )
             _engine.add_receiver(
                 name=link.rx_node,
                 position=link.rx_position.as_tuple(),
                 antenna_pattern=link.antenna_pattern,
+                polarization=link.polarization,
             )
 
             # Compute paths
