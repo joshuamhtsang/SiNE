@@ -234,6 +234,7 @@ class EmulationController:
                     "tx_gain_dbi": node1.wireless.antenna_gain_dbi,
                     "rx_gain_dbi": node2.wireless.antenna_gain_dbi,
                     "antenna_pattern": node1.wireless.antenna_pattern.value,
+                    "polarization": node1.wireless.polarization.value,
                     "frequency_hz": node1.wireless.frequency_hz,
                     "bandwidth_hz": node1.wireless.bandwidth_hz,
                     "modulation": node1.wireless.modulation.value,

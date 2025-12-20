@@ -46,11 +46,21 @@ class FECType(str, Enum):
 
 
 class AntennaPattern(str, Enum):
-    """Supported antenna radiation patterns."""
+    """Supported antenna radiation patterns (Sionna v1.2.1 naming)."""
 
-    ISOTROPIC = "isotropic"
-    DIPOLE = "dipole"
+    ISO = "iso"  # Isotropic pattern
+    DIPOLE = "dipole"  # Dipole antenna
+    HW_DIPOLE = "hw_dipole"  # Half-wave dipole
     TR38901 = "tr38901"  # 3GPP TR 38.901 antenna model
+
+
+class Polarization(str, Enum):
+    """Antenna polarization options (Sionna v1.2.1)."""
+
+    V = "V"  # Vertical
+    H = "H"  # Horizontal
+    VH = "VH"  # Dual vertical-horizontal
+    CROSS = "cross"  # Cross-polarized
 
 
 class Position(BaseModel):
@@ -71,7 +81,8 @@ class WirelessParams(BaseModel):
     rf_power_dbm: float = Field(
         default=20.0, description="Transmit power in dBm", ge=-30.0, le=40.0
     )
-    antenna_pattern: AntennaPattern = Field(default=AntennaPattern.ISOTROPIC)
+    antenna_pattern: AntennaPattern = Field(default=AntennaPattern.ISO)
+    polarization: Polarization = Field(default=Polarization.V)
     antenna_gain_dbi: float = Field(default=0.0, description="Antenna gain in dBi")
     frequency_ghz: float = Field(
         default=5.18, description="RF frequency in GHz", gt=0.0, le=100.0

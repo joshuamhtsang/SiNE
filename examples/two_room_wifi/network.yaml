@@ -38,7 +38,8 @@ topology:
       # Wireless parameters
       wireless:
         rf_power_dbm: 23.0          # Typical WiFi AP transmit power
-        antenna_pattern: isotropic
+        antenna_pattern: iso        # Isotropic antenna pattern
+        polarization: V             # Vertical polarization
         antenna_gain_dbi: 2.0       # Small antenna gain
         frequency_ghz: 5.18         # WiFi6 5GHz channel 36
         bandwidth_mhz: 80           # 80 MHz channel width (WiFi6)
@@ -56,7 +57,8 @@ topology:
       image: sine-node:latest
       wireless:
         rf_power_dbm: 18.0          # Typical client transmit power
-        antenna_pattern: isotropic
+        antenna_pattern: iso        # Isotropic antenna pattern
+        polarization: V             # Vertical polarization
         antenna_gain_dbi: 0.0       # No antenna gain (built-in antenna)
         frequency_ghz: 5.18         # Same channel as server
         bandwidth_mhz: 80
