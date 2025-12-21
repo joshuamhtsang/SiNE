@@ -22,7 +22,7 @@ from sine.config.loader import TopologyLoader
 from sine.config.schema import NetworkTopology
 from sine.topology.manager import ContainerlabManager
 from sine.topology.netem import NetemConfigurator, NetemParams
-from sine.scene.builder import SceneBuilder, get_default_scene_path
+from sine.scene.builder import SceneBuilder
 from sine.emulation.cleanup import CleanupGenerator
 
 logger = logging.getLogger(__name__)
@@ -85,10 +85,7 @@ class EmulationController:
         # Load scene
         try:
             scene_config = self.config.topology.scene
-            if scene_config.type == "custom" and scene_config.file:
-                self.scene_builder.load_custom_scene(scene_config.file)
-            else:
-                self.scene_builder.load_default_scene()
+            self.scene_builder.load_scene(scene_config.file)
         except Exception as e:
             logger.error(f"Failed to load scene: {e}")
             raise EmulationError(f"Failed to load scene: {e}") from e
@@ -158,13 +155,6 @@ class EmulationController:
         """Initialize scene on channel server."""
         scene_config = self.config.topology.scene
 
-        # Get scene file path
-        scene_path = None
-        if scene_config.type == "custom" and scene_config.file:
-            scene_path = scene_config.file
-        elif self.scene_builder.scene_path:
-            scene_path = str(self.scene_builder.scene_path)
-
         # Get frequency from first node with wireless params
         frequency_hz = 5.18e9
         bandwidth_hz = 80e6
@@ -179,8 +169,7 @@ class EmulationController:
             response = await client.post(
                 f"{self.channel_server_url}/scene/load",
                 json={
-                    "scene_type": scene_config.type,
-                    "custom_file": scene_path,
+                    "scene_file": scene_config.file,
                     "frequency_hz": frequency_hz,
                     "bandwidth_hz": bandwidth_hz,
                 },
@@ -254,10 +243,7 @@ class EmulationController:
                 f"{self.channel_server_url}/compute/batch",
                 json={
                     "scene": {
-                        "scene_type": scene_config.type,
-                        "custom_file": scene_config.file
-                        if scene_config.type == "custom"
-                        else None,
+                        "scene_file": scene_config.file,
                         "frequency_hz": link_requests[0]["frequency_hz"],
                         "bandwidth_hz": link_requests[0]["bandwidth_hz"],
                     },

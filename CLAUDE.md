@@ -43,7 +43,7 @@ network.yaml -> EmulationController -> Containerlab (Docker containers)
 | Rate Limiting | tbf | netem lacks native rate control |
 | Sionna API | PathSolver, Scene | Sionna v1.2.1 API (use `Scene()` for empty) |
 | PER Formula | BLER for coded | Industry standard |
-| Default Scene | Mitsuba XML | Sionna requires mesh files, ITU material prefix |
+| Scene Config | Explicit file path | Always require `scene.file` in network.yaml (no "default" option) |
 | netem Access | sudo nsenter | Required for container network namespace access |
 
 ## Claude and AI Resources
@@ -137,8 +137,20 @@ uv run mypy src/sine
 uv run ruff check src/sine
 ```
 
+## Examples
+
+Two example topologies are provided in `examples/`:
+
+| Example | Description | Node Positions |
+|---------|-------------|----------------|
+| `two_room_wifi/` | Good link quality | Aligned with doorway (~5m, LOS) |
+| `two_room_wifi_poor/` | Poor link quality | Opposite corners (~11m, NLOS) |
+
+Both use the same scene file (`scenes/two_room_default.xml`) but with different node positions to demonstrate the effect of propagation conditions on link quality.
+
 ## Important Notes
 
+- **Scene Configuration**: Always specify `scene.file` in network.yaml (e.g., `file: scenes/two_room_default.xml`)
 - **Sionna Scene Materials**: Must use ITU naming convention (e.g., `itu_concrete`, not `concrete`)
 - **netem Configuration**: Requires `sudo` for `nsenter` to access container network namespaces
 - **Sionna v1.2.1 API**: Use `Scene()` for empty scenes, `load_scene()` for files

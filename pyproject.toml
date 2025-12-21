@@ -30,6 +30,7 @@ dependencies = [
     "docker>=6.0",
     "rich>=13.0",
     "numpy>=1.24",
+    "scipy>=1.11",
     "sionna>=1.2.1",
 ]
 

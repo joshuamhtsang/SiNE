@@ -224,13 +224,22 @@ class SionnaEngine:
         paths = self.path_solver(self.scene)
 
         # Get channel impulse response
-        # Sionna v1.2.1 returns ((a_real, a_imag), tau) from cir()
-        # Shape: [num_rx, num_rx_ant, num_tx, num_tx_ant, num_paths]
-        (a_real, a_imag), tau = paths.cir(out_type='numpy')
+        # Sionna v1.2.1 cir() with out_type='numpy' returns:
+        # - a: np.array (complex) with shape [num_rx, num_rx_ant, num_tx, num_tx_ant, num_paths, num_time_steps]
+        # - tau: np.array with shape [num_rx, num_rx_ant, num_tx, num_tx_ant, num_paths] or [num_rx, num_tx, num_paths]
+        cir_result = paths.cir(out_type='numpy')
 
-        # Reconstruct complex channel coefficients
-        a_np = a_real + 1j * a_imag
-        tau_np = tau
+        # Handle different return formats
+        if isinstance(cir_result, tuple) and len(cir_result) == 2:
+            a_np, tau_np = cir_result
+        else:
+            # Fallback: might be a single value or different structure
+            logger.error(f"Unexpected CIR result type: {type(cir_result)}")
+            raise ValueError(f"Unexpected CIR result format: {type(cir_result)}")
+
+        # If a is returned as tuple of (real, imag), reconstruct complex
+        if isinstance(a_np, tuple) and len(a_np) == 2:
+            a_np = a_np[0] + 1j * a_np[1]
 
         # Check if we have valid paths
         num_valid_paths = int(np.sum(np.abs(a_np) > 1e-10))

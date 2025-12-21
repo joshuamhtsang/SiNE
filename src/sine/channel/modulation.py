@@ -9,6 +9,7 @@ and Sionna-based simulated calculations (when GPU package is installed).
 """
 
 import numpy as np
+from scipy.special import erfc
 from typing import Optional
 from enum import Enum
 
@@ -130,12 +131,12 @@ class BERCalculator:
     @staticmethod
     def _q_function(x: float) -> float:
         """Q-function: Q(x) = 0.5 * erfc(x/sqrt(2))"""
-        return 0.5 * np.erfc(x / np.sqrt(2))
+        return 0.5 * erfc(x / np.sqrt(2))
 
     @staticmethod
     def _erfc(x: float) -> float:
         """Complementary error function wrapper."""
-        return float(np.erfc(x))
+        return float(erfc(x))
 
 
 class BLERCalculator:

@@ -84,7 +84,7 @@ name: two-room-wifi
 
 topology:
   scene:
-    type: default  # Two rooms with doorway
+    file: scenes/two_room_default.xml  # Mitsuba XML scene file
 
   nodes:
     server:
@@ -118,6 +118,13 @@ topology:
   wireless_links:
     - endpoints: [server, client]
 ```
+
+## Examples
+
+Two example topologies are provided:
+
+- **`examples/two_room_wifi/`** - Good link quality: nodes aligned with doorway (~5m separation, line-of-sight)
+- **`examples/two_room_wifi_poor/`** - Poor link quality: nodes in opposite corners (~11m separation, no line-of-sight)
 
 ## Requirements
 

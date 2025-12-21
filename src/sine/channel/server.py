@@ -66,8 +66,7 @@ class Position(BaseModel):
 class SceneConfig(BaseModel):
     """Scene configuration for ray tracing."""
 
-    scene_type: str = Field(default="default", description="'default' or 'custom'")
-    custom_file: str | None = Field(default=None, description="Path to Mitsuba XML")
+    scene_file: str = Field(..., description="Path to Mitsuba XML scene file")
     frequency_hz: float = Field(default=5.18e9, description="RF frequency in Hz")
     bandwidth_hz: float = Field(default=80e6, description="Channel bandwidth in Hz")
 
@@ -142,7 +141,7 @@ class SceneLoadResponse(BaseModel):
     """Response for scene load operation."""
 
     status: str
-    scene_type: str
+    scene_file: str
     frequency_ghz: float
     bandwidth_mhz: float
 
@@ -261,7 +260,7 @@ async def load_scene(config: SceneConfig) -> SceneLoadResponse:
     """
     Load or reload the ray tracing scene.
 
-    Call this before computing channels if using a custom scene.
+    Call this before computing channels.
     """
     global _engine
 
@@ -269,19 +268,15 @@ async def load_scene(config: SceneConfig) -> SceneLoadResponse:
         _engine = get_engine()
 
     try:
-        scene_path = None
-        if config.scene_type == "custom" and config.custom_file:
-            scene_path = config.custom_file
-
         _engine.load_scene(
-            scene_path=scene_path,
+            scene_path=config.scene_file,
             frequency_hz=config.frequency_hz,
             bandwidth_hz=config.bandwidth_hz,
         )
 
         return SceneLoadResponse(
             status="success",
-            scene_type=config.scene_type,
+            scene_file=config.scene_file,
             frequency_ghz=config.frequency_hz / 1e9,
             bandwidth_mhz=config.bandwidth_hz / 1e6,
         )
@@ -347,13 +342,9 @@ async def compute_batch_links(request: BatchChannelRequest):
 
     start_time = time.time()
 
-    # Load scene if needed
-    scene_path = None
-    if request.scene.scene_type == "custom" and request.scene.custom_file:
-        scene_path = request.scene.custom_file
-
+    # Load scene
     _engine.load_scene(
-        scene_path=scene_path,
+        scene_path=request.scene.scene_file,
         frequency_hz=request.scene.frequency_hz,
         bandwidth_hz=request.scene.bandwidth_hz,
     )

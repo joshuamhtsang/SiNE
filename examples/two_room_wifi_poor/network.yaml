@@ -1,38 +1,38 @@
-# SiNE Example: Two Room WiFi6 Network
+# SiNE Example: Two Room WiFi6 Network (Poor Link Quality)
 #
-# This example demonstrates a simple wireless network with:
-# - A server in Room 1
-# - A client in Room 2 (through a doorway)
-# - WiFi6 5GHz parameters
+# This example demonstrates a wireless network with degraded link quality:
+# - Server positioned in back corner of Room 1 (away from doorway)
+# - Client positioned in opposite corner of Room 2 (away from doorway)
+# - ~11m diagonal separation with no direct line-of-sight through doorway
+# - Signals must diffract around walls or penetrate concrete
 #
-# The server and client can communicate through the doorway opening
-# in the dividing wall, demonstrating realistic indoor propagation.
+# Expected behavior: Higher path loss, lower SNR, increased packet loss
+# compared to the two_room_wifi example where nodes are aligned with doorway.
 #
 # Usage:
 #   1. Build the node image: docker build -t sine-node:latest docker/node/
 #   2. Start the channel server: uv run sine channel-server
-#   3. Deploy the emulation: uv run sine deploy examples/two_room_wifi/network.yaml
+#   3. Deploy the emulation: uv run sine deploy examples/two_room_wifi_poor/network.yaml
 #   4. Test connectivity:
-#      - Server: docker exec -it clab-two-room-wifi-server iperf3 -s
-#      - Client: docker exec -it clab-two-room-wifi-client iperf3 -c <server-ip>
-#   5. Cleanup: uv run sine destroy examples/two_room_wifi/network.yaml
+#      - Server: docker exec -it clab-two-room-wifi-poor-server iperf3 -s
+#      - Client: docker exec -it clab-two-room-wifi-poor-client iperf3 -c <server-ip>
+#   5. Cleanup: uv run sine destroy examples/two_room_wifi_poor/network.yaml
 
-name: two-room-wifi
+name: two-room-wifi-poor
 prefix: clab
 
 topology:
   # Scene configuration
-  # Uses the two-room scene with a doorway
+  # Uses the same two-room scene as the good example
   scene:
     file: scenes/two_room_default.xml
 
   # Node definitions
   nodes:
-    # Server node in Room 1
+    # Server node in back corner of Room 1 (away from doorway at y=2.0)
     server:
       kind: linux
       image: sine-node:latest
-      # Wireless parameters
       wireless:
         rf_power_dbm: 23.0          # Typical WiFi AP transmit power
         antenna_pattern: iso        # Isotropic antenna pattern
@@ -44,11 +44,11 @@ topology:
         fec_type: ldpc              # LDPC forward error correction
         fec_code_rate: 0.5          # Rate-1/2 coding
         position:
-          x: 2.5                    # Center of Room 1 (x: 0-5m)
-          y: 2.0                    # Center of room (y: 0-4m)
+          x: 1.0                    # Back corner of Room 1 (near x=0 wall)
+          y: 0.5                    # Near back wall (y=0), away from door at y=2
           z: 1.5                    # Typical device height
 
-    # Client node in Room 2
+    # Client node in opposite corner of Room 2
     client:
       kind: linux
       image: sine-node:latest
@@ -63,8 +63,8 @@ topology:
         fec_type: ldpc
         fec_code_rate: 0.5
         position:
-          x: 7.5                    # Center of Room 2 (x: 5.15-10.15m)
-          y: 2.0                    # Aligned with doorway (door at y=2.0)
+          x: 9.0                    # Far side of Room 2 (near x=10.15 wall)
+          y: 3.5                    # Near front wall (y=4), away from door at y=2
           z: 1.0                    # Slightly lower (e.g., on desk)
 
   # Wireless links between nodes
@@ -75,5 +75,4 @@ topology:
   channel_server: "http://localhost:8000"
 
   # Mobility polling interval (milliseconds)
-  # Set to 100ms for responsive mobility updates
   mobility_poll_ms: 100

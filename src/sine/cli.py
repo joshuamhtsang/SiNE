@@ -123,8 +123,8 @@ def deploy(topology: Path, channel_server: str) -> None:
                 summary = controller.get_deployment_summary()
                 _print_deployment_summary(summary)
 
-                console.print(f"\nCleanup script: {topology.parent / 'cleanup.sh'}")
-                console.print("\n[dim]Press Ctrl+C to stop emulation[/]")
+                console.print(f"\n[dim]To destroy: uv run sine destroy {topology}[/]")
+                console.print("[dim]Press Ctrl+C to stop emulation[/]")
 
                 # Keep running until interrupted
                 try:
@@ -274,7 +274,7 @@ def validate(topology: Path) -> None:
     table.add_row("Prefix", config.container_prefix)
     table.add_row("Nodes", str(len(config.topology.nodes)))
     table.add_row("Wireless Links", str(len(config.topology.wireless_links)))
-    table.add_row("Scene Type", config.topology.scene.type)
+    table.add_row("Scene File", config.topology.scene.file)
     table.add_row("Channel Server", config.topology.channel_server)
     table.add_row("Mobility Poll", f"{config.topology.mobility_poll_ms}ms")
 
@@ -299,24 +299,21 @@ def validate(topology: Path) -> None:
         console.print(node_table)
 
     # Validate scene
-    if config.topology.scene.type == "default":
+    scene_path = Path(config.topology.scene.file)
+    if scene_path.exists():
         try:
             builder = SceneBuilder()
-            builder.load_default_scene()
+            builder.load_scene(scene_path)
             warnings = builder.validate_scene()
             if warnings:
                 for w in warnings:
                     console.print(f"[yellow]⚠ Scene warning:[/] {w}")
             else:
-                console.print("[green]✓ Default scene valid[/]")
+                console.print(f"[green]✓ Scene valid:[/] {scene_path}")
         except Exception as e:
             console.print(f"[red]✗ Scene error:[/] {e}")
-    elif config.topology.scene.file:
-        scene_path = Path(config.topology.scene.file)
-        if scene_path.exists():
-            console.print(f"[green]✓ Custom scene exists:[/] {scene_path}")
-        else:
-            console.print(f"[red]✗ Custom scene not found:[/] {scene_path}")
+    else:
+        console.print(f"[red]✗ Scene file not found:[/] {scene_path}")
 
     console.print("\n[green]Validation complete[/]")
 

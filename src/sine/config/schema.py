@@ -9,8 +9,6 @@ This module defines the schema for network.yaml files that describe:
 """
 
 from enum import Enum
-from typing import Literal
-
 from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
 
@@ -161,31 +159,7 @@ class WirelessLink(BaseModel):
 class SceneConfig(BaseModel):
     """Ray tracing scene configuration."""
 
-    type: Literal["default", "custom"] = Field(
-        default="default", description="Scene type: 'default' or 'custom'"
-    )
-    file: str | None = Field(
-        default=None, description="Path to custom Mitsuba XML scene file"
-    )
-    # Default scene parameters (two rooms with doorway)
-    room1_dimensions: tuple[float, float, float] = Field(
-        default=(5.0, 4.0, 2.5), description="Room 1 dimensions (x, y, z) in meters"
-    )
-    room2_dimensions: tuple[float, float, float] = Field(
-        default=(5.0, 4.0, 2.5), description="Room 2 dimensions (x, y, z) in meters"
-    )
-    door_width: float = Field(default=0.9, description="Door width in meters")
-    door_height: float = Field(default=2.0, description="Door height in meters")
-    wall_material: str = Field(default="concrete", description="Wall material type")
-
-    @field_validator("file", mode="after")
-    @classmethod
-    def validate_custom_scene(cls, v: str | None, info: ValidationInfo) -> str | None:
-        """Ensure file is provided for custom scenes."""
-        # Access other field values via info.data
-        if info.data.get("type") == "custom" and v is None:
-            raise ValueError("Custom scene requires 'file' path to Mitsuba XML")
-        return v
+    file: str = Field(..., description="Path to Mitsuba XML scene file")
 
 
 class TopologyDefinition(BaseModel):
