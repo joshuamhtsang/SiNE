@@ -208,3 +208,6 @@ __marimo__/
 
 # Claude Code MCP configuration (user-specific paths)
 .mcp.json
+
+# SiNE (user-specific paths)
+cleanup.sh
