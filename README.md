@@ -74,8 +74,6 @@ uv sync --extra dev
 
 5. **Cleanup**:
    ```bash
-   ./cleanup.sh
-   # or
    uv run sine destroy examples/two_room_wifi/network.yaml
    ```
 

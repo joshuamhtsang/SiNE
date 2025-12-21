@@ -52,20 +52,24 @@ network.yaml -> EmulationController -> Containerlab (Docker containers)
 
 ## MCP Server Setup (Optional)
 
-For enhanced Sionna documentation access in Claude Code, set up the Sionna MCP server:
+For enhanced documentation access in Claude Code, configure MCP servers in `.mcp.json`:
 
-1. Clone the Sionna MCP server repository to your machine
-2. Copy `.mcp.json.example` to `.mcp.json`
-3. Edit `.mcp.json` and replace `/path/to/sionna_mcp_server` with your actual path
+1. Copy `.mcp.json.example` to `.mcp.json`
+2. Edit `.mcp.json` with your paths
 
 ```bash
 cp .mcp.json.example .mcp.json
-# Edit .mcp.json with your path
+# Edit .mcp.json with your paths
 ```
 
 Note: `.mcp.json` is gitignored since it contains user-specific paths.
 
-The Sionna MCP server source code is at https://codeberg.org/supermonkey/sionna_mcp_server (currently a private repository).
+### Available MCP Servers
+
+| Server | Purpose |
+|--------|---------|
+| **sionna-docs** | Sionna RT documentation (local). Source: https://codeberg.org/supermonkey/sionna_mcp_server |
+| **context7** | Up-to-date documentation for any library (Pydantic, FastAPI, etc.) |
 
 ## CLI Tool
 
