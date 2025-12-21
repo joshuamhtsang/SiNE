@@ -9,7 +9,7 @@ This module defines the schema for network.yaml files that describe:
 """
 
 from enum import Enum
-from pydantic import BaseModel, Field, ValidationInfo, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 
 
 class ModulationType(str, Enum):
@@ -64,6 +64,8 @@ class Polarization(str, Enum):
 class Position(BaseModel):
     """3D position coordinates in meters."""
 
+    model_config = ConfigDict(extra="forbid")
+
     x: float = Field(..., description="X coordinate in meters")
     y: float = Field(..., description="Y coordinate in meters")
     z: float = Field(default=1.0, description="Z coordinate in meters (height)")
@@ -75,6 +77,8 @@ class Position(BaseModel):
 
 class WirelessParams(BaseModel):
     """Wireless link parameters for a node."""
+
+    model_config = ConfigDict(extra="forbid")
 
     rf_power_dbm: float = Field(
         default=20.0, description="Transmit power in dBm", ge=-30.0, le=40.0
@@ -127,6 +131,8 @@ class NodeConfig(BaseModel):
     A node represents a Docker container in the emulated network.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     kind: str = Field(default="linux", description="Containerlab node kind")
     image: str = Field(default="alpine:latest", description="Docker image")
     cmd: str | None = Field(default=None, description="Container command to run")
@@ -139,6 +145,8 @@ class NodeConfig(BaseModel):
 
 class WirelessLink(BaseModel):
     """Definition of a wireless link between two nodes."""
+
+    model_config = ConfigDict(extra="forbid")
 
     endpoints: tuple[str, str] = Field(
         ..., description="Tuple of (node1_name, node2_name)"
@@ -159,11 +167,15 @@ class WirelessLink(BaseModel):
 class SceneConfig(BaseModel):
     """Ray tracing scene configuration."""
 
+    model_config = ConfigDict(extra="forbid")
+
     file: str = Field(..., description="Path to Mitsuba XML scene file")
 
 
 class TopologyDefinition(BaseModel):
     """Topology definition containing nodes, links, and scene."""
+
+    model_config = ConfigDict(extra="forbid")
 
     defaults: dict | None = Field(default=None, description="Default node settings")
     kinds: dict[str, NodeConfig] | None = Field(
@@ -202,6 +214,8 @@ class TopologyDefinition(BaseModel):
 
 class NetworkTopology(BaseModel):
     """Root topology definition for network.yaml files."""
+
+    model_config = ConfigDict(extra="forbid")
 
     name: str = Field(..., description="Topology name")
     prefix: str | None = Field(
