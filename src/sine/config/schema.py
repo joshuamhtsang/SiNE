@@ -9,9 +9,9 @@ This module defines the schema for network.yaml files that describe:
 """
 
 from enum import Enum
-from typing import Literal, Optional
+from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
 
 class ModulationType(str, Enum):
@@ -97,7 +97,7 @@ class WirelessParams(BaseModel):
     )
     position: Position
 
-    @field_validator("frequency_ghz")
+    @field_validator("frequency_ghz", mode="after")
     @classmethod
     def validate_wifi6_frequency(cls, v: float) -> float:
         """Validate frequency is in WiFi6/6E bands (warning only)."""
@@ -131,10 +131,10 @@ class NodeConfig(BaseModel):
 
     kind: str = Field(default="linux", description="Containerlab node kind")
     image: str = Field(default="alpine:latest", description="Docker image")
-    cmd: Optional[str] = Field(default=None, description="Container command to run")
-    binds: Optional[list[str]] = Field(default=None, description="Volume mounts")
-    env: Optional[dict[str, str]] = Field(default=None, description="Environment variables")
-    wireless: Optional[WirelessParams] = Field(
+    cmd: str | None = Field(default=None, description="Container command to run")
+    binds: list[str] | None = Field(default=None, description="Volume mounts")
+    env: dict[str, str] | None = Field(default=None, description="Environment variables")
+    wireless: WirelessParams | None = Field(
         default=None, description="Wireless parameters (if this node has a wireless interface)"
     )
 
@@ -145,11 +145,11 @@ class WirelessLink(BaseModel):
     endpoints: tuple[str, str] = Field(
         ..., description="Tuple of (node1_name, node2_name)"
     )
-    bandwidth_override_mbps: Optional[float] = Field(
+    bandwidth_override_mbps: float | None = Field(
         default=None, description="Override computed bandwidth limit (Mbps)"
     )
 
-    @field_validator("endpoints")
+    @field_validator("endpoints", mode="after")
     @classmethod
     def validate_endpoints(cls, v: tuple[str, str]) -> tuple[str, str]:
         """Ensure endpoints are different nodes."""
@@ -164,7 +164,7 @@ class SceneConfig(BaseModel):
     type: Literal["default", "custom"] = Field(
         default="default", description="Scene type: 'default' or 'custom'"
     )
-    file: Optional[str] = Field(
+    file: str | None = Field(
         default=None, description="Path to custom Mitsuba XML scene file"
     )
     # Default scene parameters (two rooms with doorway)
@@ -178,9 +178,9 @@ class SceneConfig(BaseModel):
     door_height: float = Field(default=2.0, description="Door height in meters")
     wall_material: str = Field(default="concrete", description="Wall material type")
 
-    @field_validator("file")
+    @field_validator("file", mode="after")
     @classmethod
-    def validate_custom_scene(cls, v: Optional[str], info) -> Optional[str]:
+    def validate_custom_scene(cls, v: str | None, info: ValidationInfo) -> str | None:
         """Ensure file is provided for custom scenes."""
         # Access other field values via info.data
         if info.data.get("type") == "custom" and v is None:
@@ -191,8 +191,8 @@ class SceneConfig(BaseModel):
 class TopologyDefinition(BaseModel):
     """Topology definition containing nodes, links, and scene."""
 
-    defaults: Optional[dict] = Field(default=None, description="Default node settings")
-    kinds: Optional[dict[str, NodeConfig]] = Field(
+    defaults: dict | None = Field(default=None, description="Default node settings")
+    kinds: dict[str, NodeConfig] | None = Field(
         default=None, description="Default settings per node kind"
     )
     nodes: dict[str, NodeConfig] = Field(..., description="Node definitions")
@@ -210,10 +210,10 @@ class TopologyDefinition(BaseModel):
         le=10000,
     )
 
-    @field_validator("wireless_links")
+    @field_validator("wireless_links", mode="after")
     @classmethod
     def validate_link_nodes_exist(
-        cls, v: list[WirelessLink], info
+        cls, v: list[WirelessLink], info: ValidationInfo
     ) -> list[WirelessLink]:
         """Ensure all link endpoints reference existing nodes."""
         nodes = info.data.get("nodes", {})
@@ -230,7 +230,7 @@ class NetworkTopology(BaseModel):
     """Root topology definition for network.yaml files."""
 
     name: str = Field(..., description="Topology name")
-    prefix: Optional[str] = Field(
+    prefix: str | None = Field(
         default=None, description="Prefix for container names (defaults to 'clab')"
     )
     topology: TopologyDefinition

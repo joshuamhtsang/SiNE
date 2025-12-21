@@ -13,7 +13,6 @@ Endpoints:
 
 import logging
 import time
-from typing import Optional
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
@@ -68,7 +67,7 @@ class SceneConfig(BaseModel):
     """Scene configuration for ray tracing."""
 
     scene_type: str = Field(default="default", description="'default' or 'custom'")
-    custom_file: Optional[str] = Field(default=None, description="Path to Mitsuba XML")
+    custom_file: str | None = Field(default=None, description="Path to Mitsuba XML")
     frequency_hz: float = Field(default=5.18e9, description="RF frequency in Hz")
     bandwidth_hz: float = Field(default=80e6, description="Channel bandwidth in Hz")
 
@@ -107,7 +106,7 @@ class ChannelResponse(BaseModel):
     snr_db: float
     # Error rates
     ber: float
-    bler: Optional[float]
+    bler: float | None
     per: float
     # netem parameters
     netem_delay_ms: float
@@ -137,6 +136,15 @@ class HealthResponse(BaseModel):
     sionna_available: bool
     gpu_available: bool
     scene_loaded: bool
+
+
+class SceneLoadResponse(BaseModel):
+    """Response for scene load operation."""
+
+    status: str
+    scene_type: str
+    frequency_ghz: float
+    bandwidth_mhz: float
 
 
 # ============================================================================
@@ -248,8 +256,8 @@ async def health_check():
     )
 
 
-@app.post("/scene/load")
-async def load_scene(config: SceneConfig):
+@app.post("/scene/load", response_model=SceneLoadResponse)
+async def load_scene(config: SceneConfig) -> SceneLoadResponse:
     """
     Load or reload the ray tracing scene.
 
@@ -271,16 +279,18 @@ async def load_scene(config: SceneConfig):
             bandwidth_hz=config.bandwidth_hz,
         )
 
-        return {
-            "status": "success",
-            "scene_type": config.scene_type,
-            "frequency_ghz": config.frequency_hz / 1e9,
-            "bandwidth_mhz": config.bandwidth_hz / 1e6,
-        }
+        return SceneLoadResponse(
+            status="success",
+            scene_type=config.scene_type,
+            frequency_ghz=config.frequency_hz / 1e9,
+            bandwidth_mhz=config.bandwidth_hz / 1e6,
+        )
 
     except Exception as e:
-        logger.error(f"Failed to load scene: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to load scene: {str(e)}")
+        logger.error("Failed to load scene: %s", e)
+        raise HTTPException(
+            status_code=500, detail=f"Failed to load scene: {str(e)}"
+        ) from e
 
 
 @app.post("/compute/single", response_model=ChannelResponse)

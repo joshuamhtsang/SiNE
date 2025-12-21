@@ -3,6 +3,10 @@
     "sionna-docs": {
       "command": "uv",
       "args": ["run", "--directory", "/path/to/sionna_mcp_server", "sionna-mcp"]
+    },
+    "context7": {
+      "command": "npx",
+      "args": ["-y", "@upstash/context7-mcp"]
     }
   }
 }
