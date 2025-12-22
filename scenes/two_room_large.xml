@@ -1,13 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  SiNE Default Scene: Two Rooms with Doorway
+  SiNE Scene: Two Large Rooms with Doorway
 
-  Dimensions:
-  - Room 1: 5.0m x 4.0m x 2.5m (x: 0-5, y: 0-4)
-  - Room 2: 5.0m x 4.0m x 2.5m (x: 5.15-10.15, y: 0-4)
+  Dimensions (larger than default for testing poor signal conditions):
+  - Room 1: 10.0m x 8.0m x 2.5m (x: 0-10, y: 0-8)
+  - Room 2: 10.0m x 8.0m x 2.5m (x: 10.15-20.15, y: 0-8)
   - Wall thickness: 0.15m
-  - Door: 0.9m wide x 2.0m tall, centered at y=2.0
+  - Door: 0.9m wide x 2.0m tall, centered at y=4.0
   - Height: 2.5m
+
+  Total span: ~20m x 8m
+  Maximum diagonal distance: ~22m (corner to corner)
 
   Materials:
   - Walls/Ceiling: Concrete (ITU indoor)
@@ -30,8 +33,8 @@
     <!-- Floor (both rooms) -->
     <shape type="rectangle" id="floor">
         <transform name="to_world">
-            <scale x="10.15" y="4.0" z="1"/>
-            <translate x="5.075" y="2.0" z="0"/>
+            <scale x="20.15" y="8.0" z="1"/>
+            <translate x="10.075" y="4.0" z="0"/>
         </transform>
         <ref id="itu_concrete"/>
     </shape>
@@ -39,9 +42,9 @@
     <!-- Ceiling (both rooms) -->
     <shape type="rectangle" id="ceiling">
         <transform name="to_world">
-            <scale x="10.15" y="4.0" z="1"/>
+            <scale x="20.15" y="8.0" z="1"/>
             <rotate x="1" angle="180"/>
-            <translate x="5.075" y="2.0" z="2.5"/>
+            <translate x="10.075" y="4.0" z="2.5"/>
         </transform>
         <ref id="itu_concrete"/>
     </shape>
@@ -51,19 +54,19 @@
     <!-- Room 1: Back wall (y=0) -->
     <shape type="rectangle" id="room1_wall_back">
         <transform name="to_world">
-            <scale x="5.0" y="2.5" z="1"/>
+            <scale x="10.0" y="2.5" z="1"/>
             <rotate x="1" angle="90"/>
-            <translate x="2.5" y="0" z="1.25"/>
+            <translate x="5.0" y="0" z="1.25"/>
         </transform>
         <ref id="itu_concrete"/>
     </shape>
 
-    <!-- Room 1: Front wall (y=4) -->
+    <!-- Room 1: Front wall (y=8) -->
     <shape type="rectangle" id="room1_wall_front">
         <transform name="to_world">
-            <scale x="5.0" y="2.5" z="1"/>
+            <scale x="10.0" y="2.5" z="1"/>
             <rotate x="1" angle="-90"/>
-            <translate x="2.5" y="4.0" z="1.25"/>
+            <translate x="5.0" y="8.0" z="1.25"/>
         </transform>
         <ref id="itu_concrete"/>
     </shape>
@@ -71,42 +74,42 @@
     <!-- Room 1: Left wall (x=0) -->
     <shape type="rectangle" id="room1_wall_left">
         <transform name="to_world">
-            <scale x="4.0" y="2.5" z="1"/>
+            <scale x="8.0" y="2.5" z="1"/>
             <rotate y="1" angle="-90"/>
-            <translate x="0" y="2.0" z="1.25"/>
+            <translate x="0" y="4.0" z="1.25"/>
         </transform>
         <ref id="itu_concrete"/>
     </shape>
 
     <!-- Dividing wall with door opening -->
-    <!-- Wall section below door (z: 0 to 0) - not needed, door starts at floor -->
+    <!-- Door centered at y=4.0, width 0.9m (y: 3.55 to 4.45), height 2.0m -->
 
     <!-- Wall section above door (z: 2.0 to 2.5) -->
     <shape type="rectangle" id="divider_above_door">
         <transform name="to_world">
-            <scale x="4.0" y="0.5" z="1"/>
+            <scale x="8.0" y="0.5" z="1"/>
             <rotate y="1" angle="90"/>
-            <translate x="5.0" y="2.0" z="2.25"/>
+            <translate x="10.0" y="4.0" z="2.25"/>
         </transform>
         <ref id="itu_concrete"/>
     </shape>
 
-    <!-- Wall section left of door (y: 0 to 1.55) -->
+    <!-- Wall section left of door (y: 0 to 3.55) -->
     <shape type="rectangle" id="divider_left">
         <transform name="to_world">
-            <scale x="1.55" y="2.5" z="1"/>
+            <scale x="3.55" y="2.5" z="1"/>
             <rotate y="1" angle="90"/>
-            <translate x="5.0" y="0.775" z="1.25"/>
+            <translate x="10.0" y="1.775" z="1.25"/>
         </transform>
         <ref id="itu_concrete"/>
     </shape>
 
-    <!-- Wall section right of door (y: 2.45 to 4.0) -->
+    <!-- Wall section right of door (y: 4.45 to 8.0) -->
     <shape type="rectangle" id="divider_right">
         <transform name="to_world">
-            <scale x="1.55" y="2.5" z="1"/>
+            <scale x="3.55" y="2.5" z="1"/>
             <rotate y="1" angle="90"/>
-            <translate x="5.0" y="3.225" z="1.25"/>
+            <translate x="10.0" y="6.225" z="1.25"/>
         </transform>
         <ref id="itu_concrete"/>
     </shape>
@@ -116,43 +119,43 @@
     <!-- Room 2: Back wall (y=0) -->
     <shape type="rectangle" id="room2_wall_back">
         <transform name="to_world">
-            <scale x="5.0" y="2.5" z="1"/>
+            <scale x="10.0" y="2.5" z="1"/>
             <rotate x="1" angle="90"/>
-            <translate x="7.575" y="0" z="1.25"/>
+            <translate x="15.075" y="0" z="1.25"/>
         </transform>
         <ref id="itu_concrete"/>
     </shape>
 
-    <!-- Room 2: Front wall (y=4) -->
+    <!-- Room 2: Front wall (y=8) -->
     <shape type="rectangle" id="room2_wall_front">
         <transform name="to_world">
-            <scale x="5.0" y="2.5" z="1"/>
+            <scale x="10.0" y="2.5" z="1"/>
             <rotate x="1" angle="-90"/>
-            <translate x="7.575" y="4.0" z="1.25"/>
+            <translate x="15.075" y="8.0" z="1.25"/>
         </transform>
         <ref id="itu_concrete"/>
     </shape>
 
-    <!-- Room 2: Right wall (x=10.15) -->
+    <!-- Room 2: Right wall (x=20.15) -->
     <shape type="rectangle" id="room2_wall_right">
         <transform name="to_world">
-            <scale x="4.0" y="2.5" z="1"/>
+            <scale x="8.0" y="2.5" z="1"/>
             <rotate y="1" angle="90"/>
-            <translate x="10.15" y="2.0" z="1.25"/>
+            <translate x="20.15" y="4.0" z="1.25"/>
         </transform>
         <ref id="itu_concrete"/>
     </shape>
 
     <!-- Light in Room 1 (point light at center ceiling) -->
     <emitter type="point" id="light_room1">
-        <point name="position" x="2.5" y="2.0" z="2.4"/>
-        <rgb name="intensity" value="1, 1, 1"/>
+        <point name="position" x="5.0" y="4.0" z="2.4"/>
+        <rgb name="intensity" value="100, 100, 100"/>
     </emitter>
 
     <!-- Light in Room 2 (point light at center ceiling) -->
     <emitter type="point" id="light_room2">
-        <point name="position" x="7.575" y="2.0" z="2.4"/>
-        <rgb name="intensity" value="1, 1, 1"/>
+        <point name="position" x="15.075" y="4.0" z="2.4"/>
+        <rgb name="intensity" value="100, 100, 100"/>
     </emitter>
 
 </scene>

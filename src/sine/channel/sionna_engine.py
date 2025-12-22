@@ -24,7 +24,7 @@ _sionna_import_error: Optional[str] = None
 try:
     import tensorflow as tf
     import sionna
-    from sionna.rt import load_scene, Scene, PlanarArray, Transmitter, Receiver, PathSolver
+    from sionna.rt import load_scene, Scene, PlanarArray, Transmitter, Receiver, PathSolver, Camera
 
     _sionna_available = True
 except ImportError as e:
@@ -470,24 +470,121 @@ class SionnaEngine:
         self._transmitters.clear()
         self._receivers.clear()
 
+    def _compute_default_camera(
+        self,
+        look_at: Optional[tuple[float, float, float]] = None,
+    ) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
+        """
+        Compute a default camera position and look_at point based on scene geometry.
+
+        The camera is positioned to show all transmitters and receivers.
+
+        Args:
+            look_at: Optional explicit look_at point. If None, computed from devices.
+
+        Returns:
+            Tuple of (camera_position, look_at_point)
+        """
+        # Collect all device positions
+        positions = list(self._transmitters.values()) + list(self._receivers.values())
+
+        if not positions:
+            # No devices, use scene center estimate
+            return ((10.0, 10.0, 15.0), (5.0, 2.0, 1.5))
+
+        # Compute bounding box
+        xs = [p[0] for p in positions]
+        ys = [p[1] for p in positions]
+        zs = [p[2] for p in positions]
+
+        center_x = (min(xs) + max(xs)) / 2
+        center_y = (min(ys) + max(ys)) / 2
+        center_z = (min(zs) + max(zs)) / 2
+
+        # Compute scene extent
+        extent_x = max(xs) - min(xs) + 2.0  # Add padding
+        extent_y = max(ys) - min(ys) + 2.0
+        extent = max(extent_x, extent_y, 5.0)  # Minimum extent
+
+        # Position camera at a distance proportional to scene extent
+        # Offset diagonally and above to get a good view
+        camera_pos = (
+            center_x + extent * 1.5,
+            center_y + extent * 0.8,
+            center_z + extent * 1.2,
+        )
+
+        if look_at is None:
+            look_at = (center_x, center_y, center_z)
+
+        return (camera_pos, look_at)
+
     def render_scene(
-        self, output_path: str, camera_position: Optional[tuple[float, float, float]] = None
+        self,
+        output_path: str,
+        camera_position: Optional[tuple[float, float, float]] = None,
+        look_at: Optional[tuple[float, float, float]] = None,
+        fov: float = 45.0,
+        resolution: tuple[int, int] = (655, 500),
+        num_samples: int = 512,
+        show_devices: bool = True,
+        show_orientations: bool = True,
+        include_paths: bool = True,
+        clip_at: Optional[float] = None,
     ) -> None:
         """
         Render the scene to an image file.
 
         Args:
             output_path: Path to save the rendered image
-            camera_position: Optional camera position (uses default if None)
+            camera_position: Camera position (x, y, z). If None, auto-computed.
+            look_at: Point to look at (x, y, z). If None, auto-computed.
+            fov: Field of view in degrees
+            resolution: Image resolution as (width, height)
+            num_samples: Number of ray samples (higher = better quality)
+            show_devices: Show TX/RX device markers
+            show_orientations: Show device orientation indicators
+            include_paths: Compute and render propagation paths
+            clip_at: Clip plane height (z) to cut away geometry above this level
         """
         if not self._scene_loaded:
             raise RuntimeError("Scene must be loaded before rendering")
 
-        self.scene.render_to_file(
-            filename=output_path,
-            camera="preview" if camera_position is None else None,
-            num_samples=512,
-        )
+        # Compute camera position if not provided
+        if camera_position is None or look_at is None:
+            default_pos, default_look_at = self._compute_default_camera(look_at)
+            if camera_position is None:
+                camera_position = default_pos
+            if look_at is None:
+                look_at = default_look_at
+
+        # Create camera
+        camera = Camera(position=camera_position)
+        camera.look_at(look_at)
+
+        # Compute paths if requested and devices are present
+        paths = None
+        if include_paths and self._transmitters and self._receivers:
+            try:
+                paths = self.path_solver(self.scene)
+                logger.info(f"Computed propagation paths for rendering")
+            except Exception as e:
+                logger.warning(f"Could not compute paths for rendering: {e}")
+
+        # Render scene
+        render_kwargs = {
+            "filename": output_path,
+            "camera": camera,
+            "fov": fov,
+            "resolution": resolution,
+            "num_samples": num_samples,
+            "show_devices": show_devices,
+            "show_orientations": show_orientations,
+            "paths": paths,
+        }
+        if clip_at is not None:
+            render_kwargs["clip_at"] = clip_at
+        self.scene.render_to_file(**render_kwargs)
         logger.info(f"Rendered scene to {output_path}")
 
 

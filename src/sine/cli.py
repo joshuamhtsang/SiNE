@@ -7,12 +7,15 @@ Commands:
 - sine status                  : Show status of running emulations
 - sine channel-server          : Start the channel computation server
 - sine validate <topology.yaml>: Validate topology file
+- sine render <topology.yaml>  : Render scene with nodes and paths
+- sine info                    : Show system information
 """
 
 import asyncio
 import logging
 import sys
 from pathlib import Path
+from typing import Optional
 
 import click
 from rich.console import Console
@@ -316,6 +319,206 @@ def validate(topology: Path) -> None:
         console.print(f"[red]✗ Scene file not found:[/] {scene_path}")
 
     console.print("\n[green]Validation complete[/]")
+
+
+def _parse_resolution(value: str) -> tuple[int, int]:
+    """Parse resolution string like '1920x1080' to tuple."""
+    try:
+        parts = value.lower().split("x")
+        if len(parts) != 2:
+            raise ValueError()
+        return (int(parts[0]), int(parts[1]))
+    except ValueError:
+        raise click.BadParameter(f"Resolution must be WxH (e.g., '1920x1080'), got: {value}")
+
+
+def _parse_position(value: str) -> tuple[float, float, float]:
+    """Parse position string like '10,5,20' to tuple."""
+    try:
+        parts = value.split(",")
+        if len(parts) != 3:
+            raise ValueError()
+        return (float(parts[0]), float(parts[1]), float(parts[2]))
+    except ValueError:
+        raise click.BadParameter(f"Position must be X,Y,Z (e.g., '10,5,20'), got: {value}")
+
+
+@main.command()
+@click.argument("topology", type=click.Path(exists=True, path_type=Path))
+@click.option(
+    "-o",
+    "--output",
+    required=True,
+    type=click.Path(path_type=Path),
+    help="Output image path (e.g., scene.png)",
+)
+@click.option(
+    "--resolution",
+    default="655x500",
+    help="Image resolution WxH (default: 655x500)",
+)
+@click.option(
+    "--num-samples",
+    default=512,
+    type=int,
+    help="Ray samples for quality (default: 512)",
+)
+@click.option(
+    "--camera-position",
+    default=None,
+    help="Camera position X,Y,Z (default: auto)",
+)
+@click.option(
+    "--look-at",
+    default=None,
+    help="Look-at position X,Y,Z (default: scene center)",
+)
+@click.option(
+    "--fov",
+    default=45.0,
+    type=float,
+    help="Field of view in degrees (default: 45)",
+)
+@click.option(
+    "--no-paths",
+    is_flag=True,
+    help="Skip rendering propagation paths",
+)
+@click.option(
+    "--no-devices",
+    is_flag=True,
+    help="Hide TX/RX device markers",
+)
+@click.option(
+    "--clip-at",
+    default=None,
+    type=float,
+    help="Clip plane height (z) to cut away ceiling/walls",
+)
+def render(
+    topology: Path,
+    output: Path,
+    resolution: str,
+    num_samples: int,
+    camera_position: Optional[str],
+    look_at: Optional[str],
+    fov: float,
+    no_paths: bool,
+    no_devices: bool,
+    clip_at: Optional[float],
+) -> None:
+    """Render a scene with nodes and propagation paths.
+
+    TOPOLOGY is the path to a network.yaml file defining the scene and nodes.
+
+    Uses Sionna's native ray-traced rendering to produce high-quality images
+    showing the scene geometry, TX/RX positions, and propagation paths.
+    """
+    from sine.config.loader import TopologyLoader, TopologyLoadError
+    from sine.channel.sionna_engine import is_sionna_available, SionnaEngine
+
+    console.print(f"[bold blue]Rendering:[/] {topology}")
+
+    # Check Sionna availability
+    if not is_sionna_available():
+        console.print(
+            "[bold red]Error:[/] Sionna is required for rendering.\n"
+            "[dim]Install with: pip install sine[gpu][/]"
+        )
+        sys.exit(1)
+
+    # Parse resolution
+    try:
+        res_tuple = _parse_resolution(resolution)
+    except click.BadParameter as e:
+        console.print(f"[bold red]Error:[/] {e.message}")
+        sys.exit(1)
+
+    # Parse camera position if provided
+    cam_pos = None
+    if camera_position:
+        try:
+            cam_pos = _parse_position(camera_position)
+        except click.BadParameter as e:
+            console.print(f"[bold red]Error:[/] {e.message}")
+            sys.exit(1)
+
+    # Parse look-at if provided
+    look_at_pos = None
+    if look_at:
+        try:
+            look_at_pos = _parse_position(look_at)
+        except click.BadParameter as e:
+            console.print(f"[bold red]Error:[/] {e.message}")
+            sys.exit(1)
+
+    # Load topology
+    try:
+        loader = TopologyLoader(topology)
+        config = loader.load()
+    except TopologyLoadError as e:
+        console.print(f"[bold red]Topology error:[/] {e}")
+        sys.exit(1)
+
+    # Check scene file
+    scene_path = Path(config.topology.scene.file)
+    if not scene_path.exists():
+        console.print(f"[bold red]Scene file not found:[/] {scene_path}")
+        sys.exit(1)
+
+    # Initialize engine and load scene
+    try:
+        engine = SionnaEngine()
+        engine.load_scene(scene_path=str(scene_path))
+        console.print(f"[green]✓ Loaded scene:[/] {scene_path}")
+    except Exception as e:
+        console.print(f"[bold red]Failed to load scene:[/] {e}")
+        sys.exit(1)
+
+    # Add TX/RX devices from wireless links
+    nodes_added = set()
+    for link in config.topology.wireless_links:
+        for endpoint in link.endpoints:
+            if endpoint in nodes_added:
+                continue
+
+            node = config.topology.nodes.get(endpoint)
+            if node and node.wireless:
+                pos = (
+                    node.wireless.position.x,
+                    node.wireless.position.y,
+                    node.wireless.position.z,
+                )
+                # Add as transmitter (for path computation, both ends need devices)
+                if len(nodes_added) % 2 == 0:
+                    engine.add_transmitter(endpoint, pos)
+                else:
+                    engine.add_receiver(endpoint, pos)
+                nodes_added.add(endpoint)
+                console.print(f"[dim]Added device: {endpoint} at ({pos[0]:.1f}, {pos[1]:.1f}, {pos[2]:.1f})[/]")
+
+    if not nodes_added:
+        console.print("[yellow]Warning: No wireless nodes found in topology[/]")
+
+    # Render scene
+    try:
+        console.print(f"[dim]Rendering with {num_samples} samples at {resolution}...[/]")
+        engine.render_scene(
+            output_path=str(output),
+            camera_position=cam_pos,
+            look_at=look_at_pos,
+            fov=fov,
+            resolution=res_tuple,
+            num_samples=num_samples,
+            show_devices=not no_devices,
+            show_orientations=not no_devices,
+            include_paths=not no_paths,
+            clip_at=clip_at,
+        )
+        console.print(f"[bold green]Rendered scene to:[/] {output}")
+    except Exception as e:
+        console.print(f"[bold red]Render failed:[/] {e}")
+        sys.exit(1)
 
 
 @main.command()

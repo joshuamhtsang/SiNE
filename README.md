@@ -154,8 +154,47 @@ uv run sine destroy <topology.yaml>  # Destroy emulation
 uv run sine status                   # Show running containers
 uv run sine channel-server           # Start channel computation server
 uv run sine validate <topology.yaml> # Validate topology file
+uv run sine render <topology.yaml> -o scene.png  # Render scene to image
 uv run sine info                     # Show system information
 ```
+
+### Render Command
+
+Render scenes with nodes and propagation paths using Sionna's ray-traced rendering:
+
+```bash
+# Basic render
+uv run sine render examples/two_room_wifi/network.yaml -o scene.png
+
+# High resolution with custom camera
+uv run sine render examples/two_room_wifi/network.yaml -o scene.png \
+    --resolution 1920x1080 --camera-position 5,-3,6 --look-at 5,2,1
+
+# Cut away ceiling to see interior
+uv run sine render examples/two_room_wifi/network.yaml -o scene.png \
+    --clip-at 2.0 --camera-position 5,2,10 --look-at 5,2,1
+```
+
+Options: `--resolution WxH`, `--num-samples N`, `--camera-position X,Y,Z`, `--look-at X,Y,Z`, `--fov degrees`, `--clip-at Z`, `--no-paths`, `--no-devices`
+
+### Interactive Scene Viewer
+
+For interactive 3D scene exploration, use the Jupyter notebook in `scenes/viewer.ipynb`:
+
+```bash
+# Run with Jupyter (install temporarily)
+uv run --with jupyter jupyter notebook scenes/viewer.ipynb
+```
+
+The viewer notebook provides:
+- **Object listing**: Shows all scene surfaces with their IDs, positions, and sizes
+- **Axis markers**: Visual origin and axis indicators using TX/RX devices
+- **Path visualization**: Add devices and view propagation paths
+- **Clipping**: Cut away ceiling/walls to see interior
+
+Controls: Mouse left (rotate), scroll (zoom), mouse right (pan), Alt+click (pick coordinates)
+
+**Note**: Use `load_scene(file, merge_shapes=False)` to keep individual surfaces separate for inspection. The default `merge_shapes=True` combines surfaces with the same material for better performance.
 
 ## Architecture
 

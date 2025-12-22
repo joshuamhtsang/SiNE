@@ -27,7 +27,7 @@ network.yaml -> EmulationController -> Containerlab (Docker containers)
   - `topology/` - Containerlab and netem management (requires sudo for nsenter)
   - `scene/` - Scene loading and configuration
   - `emulation/` - Main orchestrator, cleanup, and deployment summary
-- `scenes/` - Mitsuba XML scene files (ITU material naming required: `itu_*`)
+- `scenes/` - Mitsuba XML scene files (ITU material naming required: `itu_*`) and `viewer.ipynb` for interactive viewing
 - `examples/` - Example network topologies
 - `docker/` - Dockerfile definitions
 - `tests/` - Test suite
@@ -105,6 +105,13 @@ uv run sine deploy examples/two_room_wifi/network.yaml
 # Validate topology
 uv run sine validate examples/two_room_wifi/network.yaml
 
+# Render scene to image (does NOT require channel server)
+uv run sine render examples/two_room_wifi/network.yaml -o scene.png
+
+# Render with options: custom camera, clip ceiling, high resolution
+uv run sine render examples/two_room_wifi/network.yaml -o scene.png \
+    --camera-position 5,2,10 --look-at 5,2,1 --clip-at 2.0 --resolution 1920x1080
+
 # Check system info
 uv run sine info
 
@@ -113,6 +120,9 @@ uv run sine status
 
 # Destroy emulation
 uv run sine destroy examples/two_room_wifi/network.yaml
+
+# Interactive scene viewer (Jupyter notebook)
+uv run --with jupyter jupyter notebook scenes/viewer.ipynb
 ```
 
 ## Deployment Output
@@ -182,3 +192,33 @@ Returns detailed ray tracing path information including:
 - **Sionna v1.2.1 API**: Use `Scene()` for empty scenes, `load_scene()` for files
 - **Antenna Patterns**: Valid pattern names are `"iso"`, `"dipole"`, `"hw_dipole"`, `"tr38901"` (not `"isotropic"`)
 - **Antenna Polarization**: Valid polarization values are `"V"`, `"H"`, `"VH"`, `"cross"`
+- **Scene Loading**: Use `load_scene(file, merge_shapes=False)` to keep individual surfaces separate for inspection; default merges same-material surfaces for performance
+- **Render Command**: Does NOT require channel server - uses local SionnaEngine directly
+
+## Scene Visualization
+
+### Interactive Viewer (`scenes/viewer.ipynb`)
+
+The Jupyter notebook provides:
+- Lists all scene objects with IDs, center positions, bounding boxes, and materials
+- Adds axis markers (TX at origin, RX at 1m along each axis) for orientation
+- Supports clipping planes to see interior (`scene.preview(clip_at=2.0)`)
+- Alt+click in preview to get coordinates of any point
+
+### Render Command (`sine render`)
+
+Static rendering to image file:
+```bash
+uv run sine render <topology.yaml> -o output.png [options]
+```
+
+Options: `--camera-position X,Y,Z`, `--look-at X,Y,Z`, `--clip-at Z`, `--resolution WxH`, `--num-samples N`, `--fov degrees`, `--no-paths`, `--no-devices`
+
+### Creating Scene Files
+
+Mitsuba XML scenes can be created with:
+- **Blender + Mitsuba add-on** (recommended): Model interactively, export to XML
+- **Programmatic Python**: Build scenes using Mitsuba 3 API
+- **Convert from OBJ**: Model in any 3D tool, convert via Mitsuba
+
+Key requirement: Material names must use `itu_` prefix (e.g., `itu_concrete`, `itu_glass`)
