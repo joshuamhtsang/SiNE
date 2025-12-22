@@ -124,7 +124,7 @@ topology:
 Two example topologies are provided:
 
 - **`examples/two_room_wifi/`** - Good link quality: nodes aligned with doorway (~5m separation, line-of-sight)
-- **`examples/two_room_wifi_poor/`** - Poor link quality: nodes in opposite corners (~11m separation, no line-of-sight)
+- **`examples/two_room_wifi_poor/`** - Poor link quality: uses larger rooms (10m x 8m each), nodes in opposite corners (~22m separation, no line-of-sight)
 
 ## Requirements
 
@@ -177,6 +177,44 @@ uv run sine info                     # Show system information
                           | (Ray tracing + BER)    |
                           +------------------------+
 ```
+
+## Channel Server API
+
+The channel server exposes a REST API for channel computation:
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health check with GPU status |
+| `/scene/load` | POST | Load ray tracing scene |
+| `/compute/single` | POST | Compute channel for single link |
+| `/compute/batch` | POST | Compute channels for multiple links |
+| `/debug/paths` | POST | Get detailed path info for debugging |
+
+### Debug Endpoint: `/debug/paths`
+
+Get detailed ray tracing path information for debugging, including interaction types (reflection, refraction) and vertices (bounce points).
+
+```bash
+# 1. Load scene first
+curl -X POST http://localhost:8000/scene/load \
+  -H "Content-Type: application/json" \
+  -d '{"scene_file": "scenes/two_room_large.xml", "frequency_hz": 5.18e9}'
+
+# 2. Get path details
+curl -X POST http://localhost:8000/debug/paths \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tx_position": {"x": 1.0, "y": 0.5, "z": 1.5},
+    "rx_position": {"x": 19.0, "y": 7.5, "z": 1.0}
+  }'
+```
+
+Response includes:
+- `distance_m`: Direct line distance between TX and RX
+- `num_paths`: Number of valid propagation paths found
+- `paths`: List of paths with delay, power, interaction types, and vertices
+- `strongest_path`: Path with highest received power
+- `shortest_path`: Path with lowest delay (fastest arrival)
 
 ## Deployment Output
 

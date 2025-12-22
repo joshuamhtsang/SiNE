@@ -8,6 +8,7 @@ Endpoints:
 - POST /compute/single - Compute channel for single link
 - POST /compute/batch - Compute channels for multiple links (efficient)
 - POST /scene/load - Load/reload ray tracing scene
+- POST /debug/paths - Get detailed path info for debugging (vertices, interactions)
 - GET /health - Health check with GPU status
 """
 
@@ -18,7 +19,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-from sine.channel.sionna_engine import get_engine, is_sionna_available, PathResult
+from sine.channel.sionna_engine import get_engine, is_sionna_available, PathResult, PathDetails, SinglePathInfo
 from sine.channel.snr import SNRCalculator
 from sine.channel.modulation import BERCalculator, BLERCalculator, get_bits_per_symbol
 from sine.channel.per_calculator import PERCalculator
@@ -144,6 +145,42 @@ class SceneLoadResponse(BaseModel):
     scene_file: str
     frequency_ghz: float
     bandwidth_mhz: float
+
+
+class SinglePathInfoResponse(BaseModel):
+    """Information about a single propagation path."""
+
+    path_index: int
+    delay_ns: float
+    power_db: float
+    interaction_types: list[str]
+    vertices: list[list[float]]  # List of [x, y, z] coordinates
+    is_los: bool
+
+
+class PathDetailsRequest(BaseModel):
+    """Request for path details between two positions."""
+
+    tx_name: str = Field(default="tx", description="Transmitter name")
+    rx_name: str = Field(default="rx", description="Receiver name")
+    tx_position: Position
+    rx_position: Position
+    antenna_pattern: str = Field(default="iso")
+    polarization: str = Field(default="V")
+
+
+class PathDetailsResponse(BaseModel):
+    """Detailed path information for debugging."""
+
+    tx_position: list[float]
+    rx_position: list[float]
+    distance_m: float
+    num_paths: int
+    paths: list[SinglePathInfoResponse]
+    strongest_path_index: int
+    shortest_path_index: int
+    strongest_path: SinglePathInfoResponse | None
+    shortest_path: SinglePathInfoResponse | None
 
 
 # ============================================================================
@@ -400,6 +437,81 @@ async def compute_batch_links(request: BatchChannelRequest):
     computation_time_ms = (time.time() - start_time) * 1000
 
     return BatchChannelResponse(results=results, computation_time_ms=computation_time_ms)
+
+
+@app.post("/debug/paths", response_model=PathDetailsResponse)
+async def get_path_details(request: PathDetailsRequest):
+    """
+    Get detailed ray tracing path information for debugging.
+
+    Returns information about all propagation paths between TX and RX,
+    including interaction types (reflection, refraction) and vertices
+    (bounce points).
+
+    Requires scene to be loaded first via POST /scene/load.
+    """
+    global _engine
+
+    if _engine is None:
+        raise HTTPException(status_code=400, detail="Engine not initialized")
+
+    if not getattr(_engine, "_scene_loaded", False):
+        raise HTTPException(status_code=400, detail="Scene not loaded. Call POST /scene/load first.")
+
+    try:
+        # Set up TX/RX
+        _engine.clear_devices()
+        _engine.add_transmitter(
+            name=request.tx_name,
+            position=request.tx_position.as_tuple(),
+            antenna_pattern=request.antenna_pattern,
+            polarization=request.polarization,
+        )
+        _engine.add_receiver(
+            name=request.rx_name,
+            position=request.rx_position.as_tuple(),
+            antenna_pattern=request.antenna_pattern,
+            polarization=request.polarization,
+        )
+
+        # Get path details
+        details: PathDetails = _engine.get_path_details()
+
+        # Convert to response format
+        path_responses = []
+        for p in details.paths:
+            path_responses.append(SinglePathInfoResponse(
+                path_index=p.path_index,
+                delay_ns=p.delay_ns,
+                power_db=p.power_db,
+                interaction_types=p.interaction_types,
+                vertices=[list(v) for v in p.vertices],
+                is_los=p.is_los,
+            ))
+
+        # Get strongest and shortest paths
+        strongest = None
+        shortest = None
+        if details.strongest_path_index >= 0 and details.strongest_path_index < len(path_responses):
+            strongest = path_responses[details.strongest_path_index]
+        if details.shortest_path_index >= 0 and details.shortest_path_index < len(path_responses):
+            shortest = path_responses[details.shortest_path_index]
+
+        return PathDetailsResponse(
+            tx_position=list(details.tx_position),
+            rx_position=list(details.rx_position),
+            distance_m=details.distance_m,
+            num_paths=details.num_paths,
+            paths=path_responses,
+            strongest_path_index=details.strongest_path_index,
+            shortest_path_index=details.shortest_path_index,
+            strongest_path=strongest,
+            shortest_path=shortest,
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to get path details: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get path details: {str(e)}")
 
 
 # ============================================================================

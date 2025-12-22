@@ -141,12 +141,38 @@ uv run ruff check src/sine
 
 Two example topologies are provided in `examples/`:
 
-| Example | Description | Node Positions |
-|---------|-------------|----------------|
-| `two_room_wifi/` | Good link quality | Aligned with doorway (~5m, LOS) |
-| `two_room_wifi_poor/` | Poor link quality | Opposite corners (~11m, NLOS) |
+| Example | Description | Scene | Node Positions |
+|---------|-------------|-------|----------------|
+| `two_room_wifi/` | Good link quality | `two_room_default.xml` (5m x 4m rooms) | Aligned with doorway (~5m, LOS) |
+| `two_room_wifi_poor/` | Poor link quality | `two_room_large.xml` (10m x 8m rooms) | Opposite corners (~22m, NLOS) |
 
-Both use the same scene file (`scenes/two_room_default.xml`) but with different node positions to demonstrate the effect of propagation conditions on link quality.
+The examples demonstrate the effect of distance and propagation conditions on link quality.
+
+## Channel Server API
+
+The channel server (`uv run sine channel-server`) exposes REST endpoints:
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health check with GPU status |
+| `/scene/load` | POST | Load ray tracing scene |
+| `/compute/single` | POST | Compute channel for single link |
+| `/compute/batch` | POST | Compute channels for multiple links |
+| `/debug/paths` | POST | Get detailed path info for debugging |
+
+### Debug Endpoint: `POST /debug/paths`
+
+Returns detailed ray tracing path information including:
+- `distance_m`: Direct line distance between TX and RX
+- `num_paths`: Number of valid propagation paths
+- `paths[]`: Each path includes:
+  - `delay_ns`: Propagation delay
+  - `power_db`: Received power
+  - `interaction_types`: `["specular_reflection", "diffuse_reflection", "refraction"]`
+  - `vertices`: 3D coordinates of bounce points `[[x, y, z], ...]`
+  - `is_los`: True if line-of-sight (no interactions)
+- `strongest_path`: Path with highest power
+- `shortest_path`: Path with lowest delay
 
 ## Important Notes
 

@@ -42,6 +42,31 @@ def get_sionna_import_error() -> Optional[str]:
 
 
 @dataclass
+class SinglePathInfo:
+    """Information about a single propagation path."""
+
+    path_index: int
+    delay_ns: float
+    power_db: float
+    interaction_types: list[str]  # e.g., ['reflection', 'refraction']
+    vertices: list[tuple[float, float, float]]  # interaction points
+    is_los: bool
+
+
+@dataclass
+class PathDetails:
+    """Detailed path information for debugging."""
+
+    tx_position: tuple[float, float, float]
+    rx_position: tuple[float, float, float]
+    distance_m: float
+    num_paths: int
+    paths: list[SinglePathInfo]
+    strongest_path_index: int
+    shortest_path_index: int
+
+
+@dataclass
 class PathResult:
     """Results from ray tracing path computation."""
 
@@ -299,6 +324,124 @@ class SionnaEngine:
             dominant_path_type=dominant_path_type,
         )
 
+    def get_path_details(self) -> PathDetails:
+        """
+        Get detailed information about all propagation paths for debugging.
+
+        Returns:
+            PathDetails with information about each path including vertices,
+            interaction types, and power levels.
+        """
+        if not self._scene_loaded:
+            raise RuntimeError("Scene must be loaded before getting path details")
+
+        if not self._transmitters or not self._receivers:
+            raise RuntimeError("At least one transmitter and receiver must be added")
+
+        # Compute paths using PathSolver
+        paths = self.path_solver(self.scene)
+
+        # Get CIR for power/delay info
+        cir_result = paths.cir(out_type='numpy')
+        if isinstance(cir_result, tuple) and len(cir_result) == 2:
+            a_np, tau_np = cir_result
+        else:
+            raise ValueError(f"Unexpected CIR result format: {type(cir_result)}")
+
+        if isinstance(a_np, tuple) and len(a_np) == 2:
+            a_np = a_np[0] + 1j * a_np[1]
+
+        # Get TX/RX positions
+        tx_pos = list(self._transmitters.values())[0]
+        rx_pos = list(self._receivers.values())[0]
+        distance = np.sqrt(
+            (rx_pos[0] - tx_pos[0]) ** 2
+            + (rx_pos[1] - tx_pos[1]) ** 2
+            + (rx_pos[2] - tx_pos[2]) ** 2
+        )
+
+        # Interaction type mapping
+        interaction_map = {
+            0: "none",
+            1: "specular_reflection",
+            2: "diffuse_reflection",
+            4: "refraction",
+        }
+
+        # Extract path information
+        path_powers = np.abs(a_np.flatten()) ** 2
+        path_delays = tau_np.flatten()
+
+        # Get interactions and vertices if available
+        try:
+            interactions = paths.interactions.numpy()  # [max_depth, num_rx, num_rx_ant, num_tx, num_tx_ant, num_paths]
+            vertices = paths.vertices.numpy()  # [max_depth, num_rx, num_rx_ant, num_tx, num_tx_ant, num_paths, 3]
+            has_geometry = True
+        except (AttributeError, Exception) as e:
+            logger.debug(f"Could not get path geometry: {e}")
+            has_geometry = False
+            interactions = None
+            vertices = None
+
+        path_infos = []
+        num_paths = len(path_powers)
+
+        for i in range(num_paths):
+            power = path_powers[i]
+            if power < 1e-20:
+                continue  # Skip invalid paths
+
+            delay_ns = float(path_delays[i] * 1e9)
+            power_db = float(10 * np.log10(power + 1e-30))
+
+            # Get interaction types for this path
+            interaction_types = []
+            path_vertices = []
+
+            if has_geometry and interactions is not None:
+                # interactions shape: [max_depth, ...]
+                # Get interactions for first rx/tx antenna pair
+                path_interactions = interactions[:, 0, 0, 0, 0, i] if i < interactions.shape[-1] else []
+                for interaction_code in path_interactions:
+                    if interaction_code in interaction_map and interaction_code != 0:
+                        interaction_types.append(interaction_map[int(interaction_code)])
+
+                # Get vertices for this path
+                if vertices is not None and i < vertices.shape[-2]:
+                    path_verts = vertices[:, 0, 0, 0, 0, i, :]
+                    for v in path_verts:
+                        if not np.all(v == 0):  # Skip zero vertices
+                            path_vertices.append((float(v[0]), float(v[1]), float(v[2])))
+
+            is_los = len(interaction_types) == 0
+
+            path_infos.append(SinglePathInfo(
+                path_index=i,
+                delay_ns=delay_ns,
+                power_db=power_db,
+                interaction_types=interaction_types,
+                vertices=path_vertices,
+                is_los=is_los,
+            ))
+
+        # Sort by power to find strongest
+        if path_infos:
+            strongest_idx = max(range(len(path_infos)), key=lambda i: path_infos[i].power_db)
+            shortest_idx = min(range(len(path_infos)), key=lambda i: path_infos[i].delay_ns)
+        else:
+            strongest_idx = -1
+            shortest_idx = -1
+
+        return PathDetails(
+            tx_position=tx_pos,
+            rx_position=rx_pos,
+            distance_m=float(distance),
+            num_paths=len(path_infos),
+            paths=path_infos,
+            strongest_path_index=strongest_idx,
+            shortest_path_index=shortest_idx,
+        )
+
     def update_position(self, name: str, position: tuple[float, float, float]) -> None:
         """
         Update position of a transmitter or receiver.
@@ -433,6 +576,50 @@ class FallbackEngine:
             delay_spread_ns=5.0,  # Typical indoor
             num_paths=1,
             dominant_path_type="fspl_estimate",
+        )
+
+    def get_path_details(self) -> PathDetails:
+        """
+        Get path details for fallback engine (simplified).
+
+        Returns:
+            PathDetails with single FSPL path estimate.
+        """
+        if not self._transmitters or not self._receivers:
+            raise RuntimeError("At least one transmitter and receiver required")
+
+        tx_pos = list(self._transmitters.values())[0]
+        rx_pos = list(self._receivers.values())[0]
+
+        distance = np.sqrt(
+            (rx_pos[0] - tx_pos[0]) ** 2
+            + (rx_pos[1] - tx_pos[1]) ** 2
+            + (rx_pos[2] - tx_pos[2]) ** 2
+        )
+
+        if distance < 0.1:
+            distance = 0.1
+
+        fspl = 20 * np.log10(distance) + 20 * np.log10(self._frequency_hz) - 147.55
+        delay_ns = (distance / 3e8) * 1e9
+
+        single_path = SinglePathInfo(
+            path_index=0,
+            delay_ns=delay_ns,
+            power_db=float(-fspl - 10.0),  # Negative FSPL + indoor loss
+            interaction_types=[],
+            vertices=[],
+            is_los=True,
+        )
+
+        return PathDetails(
+            tx_position=tx_pos,
+            rx_position=rx_pos,
+            distance_m=float(distance),
+            num_paths=1,
+            paths=[single_path],
+            strongest_path_index=0,
+            shortest_path_index=0,
         )
 
     def update_position(self, name: str, position: tuple[float, float, float]) -> None:
