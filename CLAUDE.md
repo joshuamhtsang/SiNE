@@ -217,8 +217,22 @@ Options: `--camera-position X,Y,Z`, `--look-at X,Y,Z`, `--clip-at Z`, `--resolut
 ### Creating Scene Files
 
 Mitsuba XML scenes can be created with:
-- **Blender + Mitsuba add-on** (recommended): Model interactively, export to XML
-- **Programmatic Python**: Build scenes using Mitsuba 3 API
-- **Convert from OBJ**: Model in any 3D tool, convert via Mitsuba
+
+1. **Scene Generator Script** (`scenes/generate_room.py`) - Generate two-room layouts:
+   ```bash
+   # Default 5x4x2.5m rooms
+   uv run python scenes/generate_room.py -o scenes/my_scene.xml
+
+   # Custom sizes
+   uv run python scenes/generate_room.py -o scenes/large.xml \
+       --room1-size 10,8,3 --room2-size 10,8,3 --door-width 1.5
+
+   # See all options
+   uv run python scenes/generate_room.py --help
+   ```
+
+2. **Blender + Mitsuba add-on** - Model interactively, export to XML
+
+3. **Hand-edit XML** - For simple modifications or custom geometries
 
 Key requirement: Material names must use `itu_` prefix (e.g., `itu_concrete`, `itu_glass`)
