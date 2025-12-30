@@ -329,28 +329,6 @@ Response includes:
 - `strongest_path`: Path with highest received power
 - `shortest_path`: Path with lowest delay (fastest arrival)
 
-## Deployment Output
-
-After successful deployment, SiNE displays a summary:
-
-```
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃                          Deployed Containers                              ┃
-┣━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┫
-┃ Container          ┃ Image         ┃ PID    ┃ Interfaces  ┃ Position      ┃
-┡━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━┩
-│ clab-...-server    │ alpine:latest │ 12345  │ eth1        │ (2.5, 2.0, 1.5)│
-│ clab-...-client    │ alpine:latest │ 12346  │ eth1        │ (7.5, 2.0, 1.0)│
-└────────────────────┴───────────────┴────────┴─────────────┴───────────────┘
-
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃                    Wireless Link Parameters (netem)                       ┃
-┣━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━━━━┫
-┃ Link                  ┃ Delay     ┃ Jitter    ┃ Loss %   ┃ Rate           ┃
-┡━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━━━━┩
-│ server <-> client     │ 0.50 ms   │ 0.10 ms   │ 0.01%    │ 150.0 Mbps     │
-└───────────────────────┴───────────┴───────────┴──────────┴────────────────┘
-```
 
 ## License
 
