@@ -5,9 +5,11 @@ Wireless network emulation using Sionna ray tracing and Containerlab.
 ## Overview
 
 SiNE creates realistic wireless network emulations by combining:
-- **Containerlab**: Deploy Docker containers as network nodes
+- **Containerlab**: Deploy Docker containers and veth links between nodes
 - **Sionna v1.2.1**: Ray tracing for accurate wireless channel modeling
-- **Linux netem**: Apply computed channel conditions (delay, loss, bandwidth)
+- **Linux netem**: Apply computed channel conditions (delay, loss, bandwidth) to containerlab links
+
+**How it works**: SiNE converts your `network.yaml` topology to containerlab format, deploys containers via containerlab, then applies wireless channel emulation on top of the containerlab-created network interfaces using netem.
 
 ## Features
 
@@ -62,7 +64,7 @@ uv sync --extra dev
    ```bash
    # Note: Requires sudo for netem (network emulation) configuration
    # Use full path to uv to avoid "command not found" with sudo
-   sudo $(which uv) run sine deploy examples/two_room_wifi/network.yaml
+   sudo $(which uv) run sine deploy examples/vacuum_20m/network.yaml
    ```
 
    **Why sudo?** Network emulation requires sudo to use `nsenter` to access container network namespaces and configure traffic control (tc) with netem. Without sudo, containers will be created but links will operate at full bandwidth (~10+ Gbps) without any wireless channel emulation.
@@ -74,14 +76,14 @@ uv sync --extra dev
    **Option A: IPv4 (recommended)**
    ```bash
    # Assign IPv4 addresses to the wireless interfaces
-   docker exec -it clab-two-room-wifi-server ip addr add 192.168.1.1/24 dev eth1
-   docker exec -it clab-two-room-wifi-client ip addr add 192.168.1.2/24 dev eth1
+   docker exec -it clab-vacuum-20m-node1 ip addr add 192.168.1.1/24 dev eth1
+   docker exec -it clab-vacuum-20m-node2 ip addr add 192.168.1.2/24 dev eth1
    ```
 
    **Option B: Use IPv6 link-local (auto-configured)**
    ```bash
-   # Get server's IPv6 address
-   docker exec -it clab-two-room-wifi-server ip -6 addr show dev eth1 | grep fe80
+   # Get node1's IPv6 address
+   docker exec -it clab-vacuum-20m-node1 ip -6 addr show dev eth1 | grep fe80
    # Example output: inet6 fe80::a8b9:48ff:fe4a:a1f6/64
    ```
 
@@ -90,18 +92,62 @@ uv sync --extra dev
 5. **Test connectivity** (in separate terminals):
    ```bash
    # IPv4 method
-   docker exec -it clab-two-room-wifi-server iperf3 -s
-   docker exec -it clab-two-room-wifi-client iperf3 -c 192.168.1.1
+   docker exec -it clab-vacuum-20m-node1 iperf3 -s
+   docker exec -it clab-vacuum-20m-node2 iperf3 -c 192.168.1.1
 
-   # OR IPv6 method (use server's IPv6 address from step 4, with %eth1 suffix)
-   docker exec -it clab-two-room-wifi-server iperf3 -s
-   docker exec -it clab-two-room-wifi-client iperf3 -c fe80::a8b9:48ff:fe4a:a1f6%eth1
+   # OR IPv6 method (use node1's IPv6 address from step 4, with %eth1 suffix)
+   docker exec -it clab-vacuum-20m-node1 iperf3 -s
+   docker exec -it clab-vacuum-20m-node2 iperf3 -c fe80::a8b9:48ff:fe4a:a1f6%eth1
    ```
 
 6. **Cleanup**:
    ```bash
-   uv run sine destroy examples/two_room_wifi/network.yaml
+   uv run sine destroy examples/vacuum_20m/network.yaml
    ```
+
+## Mobility - Moving Nodes During Emulation
+
+SiNE supports real-time node mobility with automatic channel recomputation. As nodes move, link parameters (delay, jitter, loss, rate) are updated based on new positions.
+
+### Quick Start with Mobility
+
+1. **Start channel server** (Terminal 1):
+   ```bash
+   uv run sine channel-server
+   ```
+
+2. **Start mobility API server** (Terminal 2):
+   ```bash
+   sudo $(which uv) run sine mobility-server examples/vacuum_20m/network.yaml
+   ```
+
+3. **Run mobility script** (Terminal 3):
+   ```bash
+   # Linear movement example
+   uv run python examples/mobility/linear_movement.py
+
+   # OR waypoint-based movement
+   uv run python examples/mobility/waypoint_movement.py
+   ```
+
+### Mobility Features
+
+- **Linear Movement**: Move nodes from point A to B at constant velocity
+- **Waypoint Paths**: Define complex paths with multiple waypoints and velocities
+- **REST API**: Control positions via HTTP requests for external integration
+- **Real-time Updates**: Channel conditions recomputed every 100ms (configurable)
+- **Automatic netem**: Link parameters updated automatically as nodes move
+
+### Example: Manual Position Update
+
+```bash
+# Update node2 position via API
+curl -X POST http://localhost:8001/api/mobility/update \
+     -H "Content-Type: application/json" \
+     -d '{"node": "node2", "x": 10.0, "y": 5.0, "z": 1.5}'
+```
+
+See [examples/mobility/README.md](examples/mobility/README.md) for detailed mobility documentation.
 
 ## Example Topoplogies
 
@@ -219,21 +265,31 @@ Controls: Mouse left (rotate), scroll (zoom), mouse right (pan), Alt+click (pick
 ```
 +-------------------+     +------------------------+     +------------------+
 |   network.yaml    | --> |  Emulation Controller  | --> |   Containerlab   |
-| (Topology + RF)   |     |   (Orchestrator)       |     |  (Docker nodes)  |
-+-------------------+     +------------------------+     +------------------+
+| (Topology + RF)   |     |   (Orchestrator)       |     |  (Docker nodes   |
++-------------------+     +------------------------+     |   + veth links)  |
+                                    |                    +------------------+
                                     |                            |
                                     v                            v
                           +------------------------+     +------------------+
                           | Channel Computation    |     |   Linux netem    |
-                          | Server (FastAPI)       | --> | (tc/qdisc)       |
-                          +------------------------+     +------------------+
-                                    |
+                          | Server (FastAPI)       | --> | (applied to      |
+                          +------------------------+     |  veth interfaces)|
+                                    |                    +------------------+
                                     v
                           +------------------------+
                           |    Sionna RT Engine    |
                           | (Ray tracing + BER)    |
                           +------------------------+
 ```
+
+**Containerlab Integration**: SiNE uses containerlab as a required dependency to deploy the actual network topology. The workflow is:
+
+1. **Parse topology**: Read `network.yaml` with wireless parameters (position, RF power, antenna, etc.)
+2. **Generate containerlab config**: Strip wireless params, create `.sine_clab_topology.yaml`
+3. **Deploy via containerlab**: Run `containerlab deploy` to create Docker containers and veth links
+4. **Apply wireless emulation**: Configure netem on the containerlab-created interfaces based on Sionna ray tracing results
+
+Containerlab handles container lifecycle and network plumbing; SiNE adds the wireless channel model on top.
 
 ## Channel Server API
 

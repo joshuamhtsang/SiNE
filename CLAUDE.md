@@ -3,21 +3,64 @@
 ## Project Overview
 
 SiNE is a wireless network emulation package that combines:
-- **Containerlab**: Container-based network topology management
+- **Containerlab**: Container-based network topology management (REQUIRED dependency)
 - **Sionna v1.2.1**: Ray tracing and wireless channel simulation (Python 3.12+)
 - **Linux netem**: Network emulation (delay, loss, bandwidth)
+
+### Containerlab Integration Details
+
+SiNE uses containerlab as a core component for deploying the network topology:
+
+1. **Topology Conversion** ([src/sine/topology/manager.py:44-105](src/sine/topology/manager.py#L44-L105)):
+   - SiNE topology YAML extends containerlab format with wireless parameters (position, RF power, antenna, etc.)
+   - `ContainerlabManager.generate_clab_topology()` strips wireless params to create pure containerlab YAML
+   - Wireless links become standard veth links: `endpoints: ["node1:eth1", "node2:eth1"]`
+   - Output: `.sine_clab_topology.yaml` file
+
+2. **Container Deployment** ([src/sine/topology/manager.py:107-146](src/sine/topology/manager.py#L107-L146)):
+   - Executes `containerlab deploy -t .sine_clab_topology.yaml`
+   - Containerlab creates Docker containers with naming pattern: `clab-<lab_name>-<node_name>`
+   - Creates veth pairs connecting containers (eth1, eth2, etc.)
+   - eth0 reserved for management interface
+
+3. **Container Discovery** ([src/sine/topology/manager.py:148-229](src/sine/topology/manager.py#L148-L229)):
+   - After deployment, discovers containers using Docker API or subprocess fallback
+   - Extracts container ID, name, PID, and network interfaces
+   - Stores info for later netem configuration
+
+4. **Wireless Channel Application** ([src/sine/emulation/controller.py:313-381](src/sine/emulation/controller.py#L313-L381)):
+   - Uses Sionna ray tracing to compute channel conditions (SNR, BER, BLER)
+   - Converts to netem parameters (delay, jitter, loss %, rate)
+   - Applies netem to containerlab-created veth interfaces using `nsenter` (requires sudo)
+   - Bidirectional: applies same params to both TX and RX interfaces
+
+5. **Cleanup** ([src/sine/topology/manager.py:247-285](src/sine/topology/manager.py#L247-L285)):
+   - Executes `containerlab destroy -t .sine_clab_topology.yaml --cleanup`
+   - Removes containers, networks, and temp files
+
+**Key Point**: Containerlab is NOT optional - it's the foundation for container and network management. SiNE adds the wireless propagation model layer on top of containerlab's basic networking.
 
 ## Architecture
 
 ```
-network.yaml -> EmulationController -> Containerlab (Docker containers)
-                      |
-                      v
-              Channel Server (FastAPI) -> netem (tc/qdisc)
+network.yaml -> EmulationController -> Containerlab (Docker containers + veth links)
+   (with RF)          |                       |
+                      |                       v
+                      |                  (eth1, eth2, ... interfaces)
+                      v                       |
+              Channel Server (FastAPI) -----> netem (tc/qdisc on veth)
                       |
                       v
               Sionna RT (Ray tracing + BER/BLER/PER)
 ```
+
+**Deployment Flow**:
+1. Parse `network.yaml` (contains containerlab params + wireless params)
+2. Generate `.sine_clab_topology.yaml` (pure containerlab format, wireless params stripped)
+3. `containerlab deploy` → creates containers and veth pairs
+4. Discover container PIDs and interface names
+5. Compute channel conditions via Sionna ray tracing
+6. Apply netem to veth interfaces using `sudo nsenter -t <pid> -n tc ...`
 
 ## Key Directories
 
@@ -38,6 +81,8 @@ network.yaml -> EmulationController -> Containerlab (Docker containers)
 |----------|--------|-----------|
 | Package Manager | UV | Modern, fast Python package manager |
 | Python Version | 3.12+ | Required for Sionna v1.2.1 compatibility |
+| Container Deployment | Containerlab | Industry-standard container network orchestration; handles topology, containers, veth links |
+| Topology Format | Containerlab-compatible YAML | SiNE extends containerlab format with wireless parameters; generates pure containerlab YAML for deployment |
 | API Framework | FastAPI | Async support, OpenAPI docs |
 | Mobility Poll | 100ms | Balance responsiveness vs overhead |
 | Rate Limiting | tbf | netem lacks native rate control |
@@ -45,6 +90,7 @@ network.yaml -> EmulationController -> Containerlab (Docker containers)
 | PER Formula | BLER for coded | Industry standard |
 | Scene Config | Explicit file path | Always require `scene.file` in network.yaml (no "default" option) |
 | netem Access | sudo nsenter | Required for container network namespace access |
+| Container Naming | `clab-<lab>-<node>` | Follows containerlab convention for consistency |
 
 ## Claude and AI Resources
 

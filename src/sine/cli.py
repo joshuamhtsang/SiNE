@@ -6,6 +6,7 @@ Commands:
 - sine destroy <topology.yaml> : Destroy deployed emulation
 - sine status                  : Show status of running emulations
 - sine channel-server          : Start the channel computation server
+- sine mobility-server <topology.yaml> : Start mobility API server with emulation
 - sine validate <topology.yaml>: Validate topology file
 - sine render <topology.yaml>  : Render scene with nodes and paths
 - sine info                    : Show system information
@@ -245,6 +246,33 @@ def channel_server(host: str, port: int, reload: bool) -> None:
         reload=reload,
         log_level="info",
     )
+
+
+@main.command("mobility-server")
+@click.argument("topology", type=click.Path(exists=True, path_type=Path))
+@click.option("--host", default="0.0.0.0", help="Host to bind to")
+@click.option("-p", "--port", default=8001, type=int, help="Port to listen on")
+def mobility_server(topology: Path, host: str, port: int) -> None:
+    """Start the mobility API server with emulation.
+
+    This starts both the emulation and a REST API server that allows
+    external tools to update node positions in real-time.
+
+    Example:
+        # Start server
+        uv run sine mobility-server examples/vacuum_20m/network.yaml
+
+        # Update position (in another terminal)
+        curl -X POST http://localhost:8001/api/mobility/update \\
+             -H "Content-Type: application/json" \\
+             -d '{"node": "node1", "x": 10.0, "y": 5.0, "z": 1.5}'
+    """
+    console.print(f"[bold blue]Starting mobility API server on {host}:{port}[/]")
+    console.print(f"[dim]Topology: {topology}[/]")
+
+    from sine.mobility import run_mobility_server
+
+    asyncio.run(run_mobility_server(topology, host, port))
 
 
 @main.command()
