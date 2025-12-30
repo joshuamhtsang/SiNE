@@ -21,7 +21,7 @@ import httpx
 from sine.config.loader import TopologyLoader
 from sine.config.schema import NetworkTopology
 from sine.topology.manager import ContainerlabManager
-from sine.topology.netem import NetemConfigurator, NetemParams
+from sine.topology.netem import NetemConfigurator, NetemParams, check_sudo_available
 from sine.scene.builder import SceneBuilder
 from sine.emulation.cleanup import CleanupGenerator
 
@@ -54,6 +54,7 @@ class EmulationController:
         self._running = False
         self._link_states: dict[tuple[str, str], NetemParams] = {}
         self._mobility_task: Optional[asyncio.Task] = None
+        self._netem_failures: list[tuple[str, str]] = []  # Track failed netem applications
 
     async def start(self) -> bool:
         """
@@ -71,6 +72,32 @@ class EmulationController:
             True if emulation started successfully
         """
         logger.info(f"Starting emulation from {self.topology_path}")
+
+        # Check sudo availability for netem configuration
+        if not check_sudo_available():
+            logger.warning("")
+            logger.warning("=" * 80)
+            logger.warning("SUDO ACCESS REQUIRED")
+            logger.warning("=" * 80)
+            logger.warning("")
+            logger.warning("Network emulation (netem) requires sudo privileges to configure")
+            logger.warning("traffic control (tc) in container network namespaces.")
+            logger.warning("")
+            logger.warning("Sudo is needed to:")
+            logger.warning("  - Apply delay, jitter, and packet loss to wireless links")
+            logger.warning("  - Set bandwidth rate limits based on channel conditions")
+            logger.warning("")
+            logger.warning("Please run this command with sudo:")
+            logger.warning(f"  sudo uv run sine deploy {self.topology_path}")
+            logger.warning("")
+            logger.warning("Or configure passwordless sudo for nsenter and tc commands.")
+            logger.warning("See README.md for setup instructions.")
+            logger.warning("")
+            logger.warning("=" * 80)
+            logger.warning("")
+            logger.warning("Continuing deployment WITHOUT netem configuration...")
+            logger.warning("(Containers will be created but links will have no emulation)")
+            logger.warning("")
 
         # Load topology
         try:
@@ -127,6 +154,27 @@ class EmulationController:
         # Start mobility polling
         self._running = True
         self._mobility_task = asyncio.create_task(self._mobility_polling_loop())
+
+        # Report any netem failures
+        if self._netem_failures:
+            logger.warning("")
+            logger.warning("=" * 80)
+            logger.warning("NETEM CONFIGURATION INCOMPLETE")
+            logger.warning("=" * 80)
+            logger.warning("")
+            logger.warning(f"Failed to apply netem to {len(self._netem_failures)} wireless link(s):")
+            for tx, rx in self._netem_failures:
+                logger.warning(f"  - {tx} <-> {rx}")
+            logger.warning("")
+            logger.warning("These links will operate at full container bandwidth (~10+ Gbps)")
+            logger.warning("without delay, jitter, or packet loss emulation.")
+            logger.warning("")
+            logger.warning("To fix this, destroy the emulation and redeploy with sudo:")
+            logger.warning(f"  sudo uv run sine destroy {self.topology_path}")
+            logger.warning(f"  sudo uv run sine deploy {self.topology_path}")
+            logger.warning("")
+            logger.warning("=" * 80)
+            logger.warning("")
 
         logger.info("Emulation started successfully")
         return True
@@ -290,30 +338,46 @@ class EmulationController:
         rx_interface = self._find_link_interface(rx_container, tx_node)
 
         # Apply netem on both sides (wireless is bidirectional)
+        tx_success = False
+        rx_success = False
+
         if tx_interface:
-            self.netem_config.apply_config(
+            tx_success = self.netem_config.apply_config(
                 container_name=tx_container["name"],
                 interface=tx_interface,
                 params=params,
                 pid=tx_container["pid"],
             )
+            if not tx_success:
+                logger.error(
+                    f"Failed to apply netem to {tx_node}:{tx_interface} "
+                    f"(likely missing sudo privileges)"
+                )
+                self._netem_failures.append((tx_node, rx_node))
 
         if rx_interface:
-            self.netem_config.apply_config(
+            rx_success = self.netem_config.apply_config(
                 container_name=rx_container["name"],
                 interface=rx_interface,
                 params=params,
                 pid=rx_container["pid"],
             )
+            if not rx_success:
+                logger.error(
+                    f"Failed to apply netem to {rx_node}:{rx_interface} "
+                    f"(likely missing sudo privileges)"
+                )
+                if (tx_node, rx_node) not in self._netem_failures:
+                    self._netem_failures.append((tx_node, rx_node))
 
-        # Store state for change detection
-        self._link_states[(tx_node, rx_node)] = params
-
-        logger.debug(
-            f"Applied netem to {tx_node}<->{rx_node}: "
-            f"delay={params.delay_ms:.1f}ms, loss={params.loss_percent:.2f}%, "
-            f"rate={params.rate_mbps:.1f}Mbps"
-        )
+        # Store state for change detection only if at least one side succeeded
+        if tx_success or rx_success:
+            self._link_states[(tx_node, rx_node)] = params
+            logger.debug(
+                f"Applied netem to {tx_node}<->{rx_node}: "
+                f"delay={params.delay_ms:.1f}ms, loss={params.loss_percent:.2f}%, "
+                f"rate={params.rate_mbps:.1f}Mbps"
+            )
 
     def _find_link_interface(
         self, container_info: dict, peer_node: str
@@ -322,13 +386,29 @@ class EmulationController:
         Find interface connected to peer node.
 
         In containerlab, interfaces are named eth<N>.
-        For simplicity, we use the first non-loopback interface.
+        eth0 is reserved for management, so wireless links use eth1, eth2, etc.
+
+        Args:
+            container_info: Container information dict
+            peer_node: Name of the peer node (currently unused, reserved for future topology mapping)
+
+        Returns:
+            Interface name (e.g., "eth1") or None if not found
         """
         interfaces = container_info.get("interfaces", [])
+
+        # Find first non-management interface
+        # eth0 is the management interface in containerlab, skip it
         for iface in interfaces:
-            if iface.startswith("eth"):
+            if iface.startswith("eth") and iface != "eth0":
                 return iface
-        # Fallback
+
+        # If no interfaces found besides eth0, log warning and use eth1 as fallback
+        # This shouldn't happen in normal deployments but provides a safe default
+        logger.warning(
+            f"No wireless interfaces found for {container_info.get('name', 'unknown')}, "
+            f"using eth1 as fallback"
+        )
         return "eth1"
 
     async def _mobility_polling_loop(self) -> None:

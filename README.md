@@ -48,80 +48,64 @@ uv sync --extra dev
 
 ## Quick Start
 
-1. **Build the node image** (includes iperf3, tcpdump, etc.):
+1. **Build the node image**: Used to spin up container(s) representing the nodes (includes iperf3, tcpdump, etc.):
    ```bash
    docker build -t sine-node:latest docker/node/
    ```
 
-2. **Start the channel server**:
+2. **Start the channel server** Responsible for computing the link characteristics (delay, bandwidth, packet loss % etc.):
    ```bash
    uv run sine channel-server
    ```
 
 3. **Deploy an emulation** (in a separate terminal):
    ```bash
-   uv run sine deploy examples/two_room_wifi/network.yaml
+   # Note: Requires sudo for netem (network emulation) configuration
+   # Use full path to uv to avoid "command not found" with sudo
+   sudo $(which uv) run sine deploy examples/two_room_wifi/network.yaml
    ```
 
-4. **Test connectivity** (in separate terminals):
+   **Why sudo?** Network emulation requires sudo to use `nsenter` to access container network namespaces and configure traffic control (tc) with netem. Without sudo, containers will be created but links will operate at full bandwidth (~10+ Gbps) without any wireless channel emulation.
+
+   **Alternative**: Configure passwordless sudo (see "Sudo Configuration" section below) to run without `sudo` prefix.
+
+4. **Configure IP addresses** (containers have no IPs by default):
+
+   **Option A: IPv4 (recommended)**
    ```bash
-   # Server
-   docker exec -it clab-two-room-wifi-server iperf3 -s
-
-   # Client
-   docker exec -it clab-two-room-wifi-client iperf3 -c <server-ip>
+   # Assign IPv4 addresses to the wireless interfaces
+   docker exec -it clab-two-room-wifi-server ip addr add 192.168.1.1/24 dev eth1
+   docker exec -it clab-two-room-wifi-client ip addr add 192.168.1.2/24 dev eth1
    ```
 
-5. **Cleanup**:
+   **Option B: Use IPv6 link-local (auto-configured)**
+   ```bash
+   # Get server's IPv6 address
+   docker exec -it clab-two-room-wifi-server ip -6 addr show dev eth1 | grep fe80
+   # Example output: inet6 fe80::a8b9:48ff:fe4a:a1f6/64
+   ```
+
+   Note: No performance difference between IPv4 and IPv6 - same underlying veth and netem.
+
+5. **Test connectivity** (in separate terminals):
+   ```bash
+   # IPv4 method
+   docker exec -it clab-two-room-wifi-server iperf3 -s
+   docker exec -it clab-two-room-wifi-client iperf3 -c 192.168.1.1
+
+   # OR IPv6 method (use server's IPv6 address from step 4, with %eth1 suffix)
+   docker exec -it clab-two-room-wifi-server iperf3 -s
+   docker exec -it clab-two-room-wifi-client iperf3 -c fe80::a8b9:48ff:fe4a:a1f6%eth1
+   ```
+
+6. **Cleanup**:
    ```bash
    uv run sine destroy examples/two_room_wifi/network.yaml
    ```
 
-## Example Topology
+## Example Topoplogies
 
-```yaml
-name: two-room-wifi
-
-topology:
-  scene:
-    file: scenes/two_room_default.xml  # Mitsuba XML scene file
-
-  nodes:
-    server:
-      kind: linux
-      image: sine-node:latest
-      wireless:
-        rf_power_dbm: 23.0
-        frequency_ghz: 5.18
-        bandwidth_mhz: 80
-        modulation: 64qam
-        fec_type: ldpc
-        position:
-          x: 2.5
-          y: 2.0
-          z: 1.5
-
-    client:
-      kind: linux
-      image: sine-node:latest
-      wireless:
-        rf_power_dbm: 18.0
-        frequency_ghz: 5.18
-        bandwidth_mhz: 80
-        modulation: 64qam
-        fec_type: ldpc
-        position:
-          x: 7.5
-          y: 2.0
-          z: 1.0
-
-  wireless_links:
-    - endpoints: [server, client]
-```
-
-## Examples
-
-Two example topologies are provided:
+Topologies are described in yaml files. Two example topologies are provided:
 
 - **`examples/two_room_wifi/`** - Good link quality: nodes aligned with doorway (~5m separation, line-of-sight)
 - **`examples/two_room_wifi_poor/`** - Poor link quality: uses larger rooms (10m x 8m each), nodes in opposite corners (~22m separation, no line-of-sight)
@@ -135,7 +119,25 @@ Two example topologies are provided:
 - For GPU acceleration: NVIDIA GPU with CUDA support (use `./configure.sh --cuda`)
 - sudo access (required for netem to access container network namespaces)
 
-## CLI Tool
+### Sudo Configuration (Optional but Recommended)
+
+To avoid entering your password every time you deploy, you can configure passwordless sudo for the specific commands used by netem:
+
+```bash
+# Create a sudoers file for SiNE
+sudo tee /etc/sudoers.d/sine <<EOF
+# Allow netem configuration without password
+$USER ALL=(ALL) NOPASSWD: /usr/bin/nsenter
+$USER ALL=(ALL) NOPASSWD: /usr/sbin/tc
+EOF
+
+# Set proper permissions
+sudo chmod 0440 /etc/sudoers.d/sine
+```
+
+This allows `sine deploy` to run without `sudo` while still having the necessary privileges for netem configuration.
+
+## The `sine` CLI Tool
 
 This project provides the `sine` command-line tool. It's defined as a Python entry point in `pyproject.toml`:
 
@@ -144,9 +146,25 @@ This project provides the `sine` command-line tool. It's defined as a Python ent
 sine = "sine.cli:main"
 ```
 
-When you run `uv sync`, the installer creates `.venv/bin/sine` - a wrapper that imports and runs the `main()` function from [src/sine/cli.py](src/sine/cli.py). The CLI is built using [Click](https://click.palletsprojects.com/).
+The build system uses **Hatchling** as the build backend:
 
-### Available Commands
+```toml
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sine"]  # Tells Hatchling where to find the package
+```
+
+When you run `uv sync`, the process works like this:
+1. **uv** (the frontend) reads `pyproject.toml`
+2. **Hatchling** (the backend) builds the package from `src/sine/`
+3. The installer creates `.venv/bin/sine` - a wrapper that imports and runs the `main()` function from [src/sine/cli.py](src/sine/cli.py)
+
+The CLI is built using [Click](https://click.palletsprojects.com/).
+
+### Available Commands in `sine`
 
 ```bash
 uv run sine deploy <topology.yaml>   # Deploy emulation

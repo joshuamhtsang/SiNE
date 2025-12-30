@@ -100,7 +100,9 @@ uv sync
 uv run sine channel-server
 
 # Deploy emulation (prints deployment summary with containers, interfaces, netem params)
-uv run sine deploy examples/two_room_wifi/network.yaml
+# NOTE: Requires sudo for netem (network emulation) configuration
+# Use full path to avoid "uv: command not found" error with sudo
+sudo $(which uv) run sine deploy examples/two_room_wifi/network.yaml
 
 # Validate topology
 uv run sine validate examples/two_room_wifi/network.yaml
@@ -149,10 +151,11 @@ uv run ruff check src/sine
 
 ## Examples
 
-Two example topologies are provided in `examples/`:
+Three example topologies are provided in `examples/`:
 
 | Example | Description | Scene | Node Positions |
 |---------|-------------|-------|----------------|
+| `vacuum_20m/` | Baseline free-space | `vacuum.xml` (empty) | 20m apart, linear (0,0,1) to (20,0,1) |
 | `two_room_wifi/` | Good link quality | `two_room_default.xml` (5m x 4m rooms) | Aligned with doorway (~5m, LOS) |
 | `two_room_wifi_poor/` | Poor link quality | `two_room_large.xml` (10m x 8m rooms) | Opposite corners (~22m, NLOS) |
 

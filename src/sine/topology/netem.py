@@ -290,3 +290,27 @@ def check_tc_available() -> bool:
         return result.returncode == 0
     except FileNotFoundError:
         return False
+
+
+def check_sudo_available() -> bool:
+    """
+    Check if sudo is available and accessible without password prompt.
+
+    This is required for nsenter to access container network namespaces
+    for applying netem (network emulation) configuration.
+
+    Returns:
+        True if sudo can be used (either passwordless or password already cached)
+    """
+    try:
+        # Test if we can run a simple sudo command
+        # -n flag means non-interactive (fail if password required)
+        result = subprocess.run(
+            ["sudo", "-n", "true"],
+            capture_output=True,
+            text=True,
+            timeout=1,
+        )
+        return result.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
