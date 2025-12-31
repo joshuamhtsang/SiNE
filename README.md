@@ -50,6 +50,57 @@ uv sync --extra dev
 
 ## Quick Start
 
+### Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         SiNE Emulation System                       │
+└─────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────┐      ┌──────────────────────┐
+│  Channel Server      │      │  EmulationController │
+│  (Port 8000)         │      │  (sine deploy)       │
+│                      │      │                      │
+│  • Sionna RT Engine  │◄─────│  • Load topology     │
+│  • Ray Tracing       │ HTTP │  • Deploy containers │
+│  • SNR/BER/PER calc  │      │  • Apply netem       │
+└──────────────────────┘      │  • Position updates  │
+                              └──────────┬───────────┘
+                                         │
+                                         │ Containerlab
+                                         ▼
+                    ┌────────────────────────────────────┐
+                    │      Docker Containers (Nodes)     │
+                    ├────────────────┬───────────────────┤
+                    │   node1        │      node2        │
+                    │   (0, 0, 1)    │   (20, 0, 1)      │
+                    │                │                   │
+                    │  ┌──────────┐  │  ┌──────────┐     │
+                    │  │   eth1   │◄─┼─►│   eth1   │     │
+                    │  └──────────┘  │  └──────────┘     │
+                    │      ▲         │        ▲          │
+                    │      │ netem   │        │ netem    │
+                    │      │ (tc)    │        │ (tc)     │
+                    │      │         │        │          │
+                    │  • delay       │    • delay        │
+                    │  • jitter      │    • jitter       │
+                    │  • loss        │    • loss         │
+                    │  • rate limit  │    • rate limit   │
+                    └────────────────┴───────────────────┘
+                           ▲                   ▲
+                           │                   │
+                           └───────┬───────────┘
+                                   │ veth pair
+                          (wireless link emulation)
+
+Legend:
+  ◄──► : HTTP communication
+  ───  : Network links
+  netem: Linux network emulation (delay, jitter, loss, rate)
+```
+
+### Step-by-Step Setup
+
 1. **Build the node image**: Used to spin up container(s) representing the nodes (includes iperf3, tcpdump, etc.):
    ```bash
    docker build -t sine-node:latest docker/node/
@@ -108,6 +159,75 @@ uv sync --extra dev
 ## Mobility - Moving Nodes During Emulation
 
 SiNE supports real-time node mobility with automatic channel recomputation. As nodes move, link parameters (delay, jitter, loss, rate) are updated based on new positions.
+
+### Mobility Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                  SiNE Emulation with Mobility Control               │
+└─────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────┐      ┌──────────────────────┐
+│  Mobility Scripts    │      │  External Tools      │
+│                      │      │                      │
+│  • linear_movement   │      │  • curl/HTTP clients │
+│  • waypoint_movement │      │  • Custom scripts    │
+│  • Custom patterns   │      │  • Web UIs           │
+└──────────┬───────────┘      └──────────┬───────────┘
+           │                             │
+           │ HTTP POST                   │ HTTP POST
+           │ /api/mobility/update        │ /api/mobility/update
+           │ {node, x, y, z}             │ {node, x, y, z}
+           ▼                             ▼
+    ┌────────────────────────────────────────────────┐
+    │         Mobility API Server (Port 8001)        │
+    │                                                │
+    │  • Position update endpoints                  │
+    │  • EmulationController integration            │
+    │  • Automatic channel recomputation trigger    │
+    └────────────────────┬───────────────────────────┘
+                         │
+                         │ update_node_position()
+                         ▼
+    ┌────────────────────────────────────────────────┐
+    │           EmulationController                  │
+    │                                                │
+    │  • Update config positions                    │
+    │  • Trigger _update_all_links()                │
+    └──────────┬─────────────────────┬───────────────┘
+               │                     │
+               │ Batch request       │ Apply netem
+               │ with new positions  │ with new params
+               ▼                     ▼
+┌──────────────────────┐      ┌──────────────────────┐
+│  Channel Server      │      │  Docker Containers   │
+│  (Port 8000)         │      │                      │
+│                      │      │  ┌────────────────┐  │
+│  • Recompute paths   │      │  │ node1 @ (x,y,z)│  │
+│  • New SNR/BER/PER   │      │  │   eth1 ◄─────┐ │  │
+│  • Updated delays    │      │  │   (netem)    │ │  │
+└──────────────────────┘      │  └──────────────┘ │  │
+                              │         veth pair │  │
+                              │  ┌──────────────┐ │  │
+                              │  │ node2 @ (x,y,z)│  │
+                              │  │   eth1 ◄─────┘ │  │
+                              │  │   (netem)      │  │
+                              │  └────────────────┘  │
+                              └──────────────────────┘
+
+Flow:
+  1. Mobility script sends position update (100ms intervals)
+  2. Mobility API validates and updates internal config
+  3. EmulationController recomputes channels with new positions
+  4. Channel Server runs Sionna ray tracing with updated geometry
+  5. New channel parameters applied to netem (delay, jitter, loss, rate)
+  6. Wireless link behavior reflects new distance/geometry (~100ms total)
+
+Legend:
+  ───► : HTTP REST API calls
+  ═══► : Internal function calls
+  netem: Updated automatically as nodes move
+```
 
 ### Quick Start with Mobility
 
@@ -329,6 +449,84 @@ Response includes:
 - `strongest_path`: Path with highest received power
 - `shortest_path`: Path with lowest delay (fastest arrival)
 
+## FAQ - Frequently Asked Questions
+
+### How does netem (network emulation) work?
+
+**Q: Is netem configured per-link or per-interface?**
+
+A: Netem is configured **per-interface**, not per-link. SiNE applies netem to the `eth1` interface on each container. Importantly, netem only affects **egress (outbound) traffic** - packets leaving the interface.
+
+**Q: How does SiNE handle bidirectional wireless links?**
+
+A: SiNE applies netem to **both** sides of each wireless link:
+
+```
+Node1 → Node2: Packets leave Node1's eth1, experience Node1's netem
+Node2 → Node1: Packets leave Node2's eth1, experience Node2's netem
+```
+
+```
+┌─────────────┐                              ┌─────────────┐
+│   Node1     │                              │   Node2     │
+│             │                              │             │
+│  eth1       │                              │       eth1  │
+│  ┌───────┐  │                              │  ┌───────┐  │
+│  │ netem │──┼───► outbound traffic ────────┼─►│       │  │
+│  │(egress)│ │     affected here            │  │       │  │
+│  └───────┘  │                              │  └───────┘  │
+│             │                              │             │
+│  ┌───────┐  │                              │  ┌───────┐  │
+│  │       │◄─┼─────── outbound traffic ◄────┼──│ netem │  │
+│  │       │  │         affected here        │  │(egress)│  │
+│  └───────┘  │                              │  └───────┘  │
+└─────────────┘                              └─────────────┘
+```
+
+Both interfaces receive the same parameters (symmetric link). When link conditions change, SiNE updates netem on both nodes.
+
+**Q: What's the effective throughput with netem on both sides?**
+
+A: Each direction is independently limited. For TCP:
+- **Throughput**: Limited to the configured rate (e.g., 192 Mbps)
+- **Round-trip delay**: Sum of both directions (request + ACK)
+- **Packet loss**: Applied independently in each direction
+
+### Why does Containerlab use a Linux bridge?
+
+**Q: How are containers connected?**
+
+A: Containerlab uses a **Linux bridge** rather than direct veth pairs:
+
+```
+Containerlab architecture:
+┌─────────┐                              ┌─────────┐
+│  Node1  │                              │  Node2  │
+│  eth1 ══╪══╗                      ╔════╪══ eth1  │
+└─────────┘  ║                      ║    └─────────┘
+             ║    ┌────────────┐    ║
+             ╚════│Linux Bridge│════╝
+                  └────────────┘
+```
+
+**Q: What are the pros and cons of this architecture?**
+
+**Pros:**
+- Easy to add more nodes to the same network segment
+- Supports complex topologies (mesh, star, etc.)
+- Network namespace isolation between containers
+- Can attach tcpdump to bridge for debugging
+- Works with standard Linux networking tools
+
+**Cons:**
+- Extra hop through bridge (adds ~1-10 microseconds latency)
+- Small CPU overhead for bridge processing
+- MAC address table overhead (negligible for small topologies)
+- Technically a shared medium rather than point-to-point
+
+**Q: Does the bridge affect emulation accuracy?**
+
+A: The bridge adds negligible latency (~1-10 microseconds) compared to wireless delays (0.1-10+ milliseconds). This overhead is insignificant for wireless emulation.
 
 ## License
 

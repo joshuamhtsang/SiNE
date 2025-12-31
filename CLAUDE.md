@@ -285,3 +285,87 @@ Mitsuba XML scenes can be created with:
 3. **Hand-edit XML** - For simple modifications or custom geometries
 
 Key requirement: Material names must use `itu_` prefix (e.g., `itu_concrete`, `itu_glass`)
+
+## FAQ - Frequently Asked Questions
+
+### How does netem work with wireless links?
+
+**Q: Is netem set per-link or per-interface?**
+
+A: Netem is configured **per-interface**. In SiNE, we apply netem to the `eth1` interface on each container node. Netem only affects **egress (outbound) traffic** - packets leaving the interface.
+
+**Q: Does netem affect both directions of traffic?**
+
+A: Netem only affects **outbound** traffic on the interface where it's configured. For bidirectional wireless links, SiNE applies netem to `eth1` on **both** nodes:
+
+```
+Node1 → Node2: Affected by netem on Node1's eth1 (egress)
+Node2 → Node1: Affected by netem on Node2's eth1 (egress)
+```
+
+This means:
+- Packets leaving Node1 experience Node1's netem (delay, jitter, loss, rate)
+- Packets leaving Node2 experience Node2's netem (delay, jitter, loss, rate)
+- Incoming packets are NOT affected by the receiving node's netem
+
+**Q: If both interfaces have rate limits, what's the effective throughput?**
+
+A: Each direction is independently limited by its own interface's netem. For symmetric configuration (same params on both sides):
+- **TCP throughput**: Limited to the rate limit (e.g., 192 Mbps), with round-trip delay = 2× one-way delay (for ACKs)
+- **UDP throughput**: Each direction independently limited to the configured rate
+
+The link is effectively bottlenecked by the egress netem on the sending side for each direction.
+
+### Why does Containerlab use a Linux bridge?
+
+**Q: How are containers connected in Containerlab?**
+
+A: Containerlab connects containers via a **Linux bridge**, not direct veth pairs:
+
+```
+Direct veth (NOT how it works):
+Node1:eth1 ════════════════════ Node2:eth1
+         single veth pair
+
+Containerlab architecture (ACTUAL):
+Node1:eth1 ══════╗          ╔══════ Node2:eth1
+                 ║          ║
+            ┌────╨──────────╨────┐
+            │    Linux Bridge    │
+            └────────────────────┘
+```
+
+**Q: What are the implications of the bridge architecture?**
+
+**Pros:**
+- **Scalability**: Easy to add more nodes to the same network segment
+- **Flexibility**: Supports complex topologies (mesh, star, etc.)
+- **Isolation**: Bridge provides network namespace separation
+- **Monitoring**: Can attach tcpdump to the bridge for debugging
+- **Standard tooling**: Works with standard Linux networking tools
+
+**Cons:**
+- **Extra hop**: Packets traverse the bridge (minimal latency impact, ~microseconds)
+- **Bridge overhead**: Small CPU overhead for bridge processing
+- **MAC learning**: Bridge maintains MAC address table (negligible for small topologies)
+- **Not point-to-point**: Technically a shared medium, though with only 2 nodes it behaves like point-to-point
+
+**Q: Does the bridge affect netem accuracy?**
+
+A: The bridge adds negligible latency (~1-10 microseconds) compared to the wireless delays being emulated (typically 0.1-10+ milliseconds). For wireless network emulation purposes, this overhead is insignificant.
+
+### Channel updates and netem synchronization
+
+**Q: When link conditions change, does SiNE update netem on both nodes?**
+
+A: Yes. When channel conditions are recomputed (due to mobility, initial deployment, etc.), SiNE updates netem on **both** endpoints of each wireless link:
+
+```python
+# From controller.py _apply_link_config()
+# Apply to TX side
+self.netem_config.apply_config(tx_container, tx_interface, params, tx_pid)
+# Apply to RX side
+self.netem_config.apply_config(rx_container, rx_interface, params, rx_pid)
+```
+
+Both interfaces receive the same parameters (symmetric link). The update happens atomically for each interface but sequentially between interfaces (~10ms total for both sides).

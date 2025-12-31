@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SiNE Vacuum Scene: Free-Space Propagation
+
+  This is an empty scene with no geometry, representing
+  vacuum or free-space propagation conditions. Ray tracing
+  will compute direct line-of-sight path loss using the
+  Friis transmission equation.
+
+  Use this scene for:
+  - Testing baseline link performance
+  - Validating free-space path loss calculations (FSPL)
+  - Maximum range testing without obstacles
+  - Benchmarking against scenarios with reflections/obstacles
+
+  Expected behavior: Single LOS path only, no multipath.
+  Path loss follows: FSPL(dB) = 20*log10(d) + 20*log10(f) - 147.55
+-->
+<scene version="2.0.0">
+    <!-- Integrator for path tracing (minimal configuration) -->
+    <integrator type="path">
+        <integer name="max_depth" value="2"/>
+    </integrator>
+</scene>

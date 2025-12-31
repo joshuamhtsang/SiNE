@@ -1,0 +1,104 @@
+# SiNE Example: Vacuum (Free-Space) Link at 20m
+#
+# This example demonstrates free-space wireless propagation with:
+# - Two nodes in vacuum (no obstacles or reflections)
+# - 20m separation distance along X-axis
+# - Direct line-of-sight path only
+# - WiFi6 5GHz parameters (5.18 GHz, 80 MHz)
+#
+# This scenario is useful for:
+# - Baseline link performance testing
+# - Validating free-space path loss calculations (FSPL)
+# - Comparing against theoretical maximum range
+# - Benchmarking against scenarios with obstacles
+#
+# Expected behavior:
+# - Free-Space Path Loss (FSPL): ~68.3 dB at 20m and 5.18 GHz
+# - Received Power: ~-48.3 dBm (20 dBm TX - 68.3 dB path loss)
+# - Noise Floor: ~-88 dBm (80 MHz, 7 dB NF)
+# - SNR: ~39.7 dB (excellent link quality)
+# - BER/BLER: Near zero with 64-QAM LDPC
+# - Single LOS path, no multipath or reflections
+#
+# Usage:
+#   1. Build the node image:
+#      docker build -t sine-node:latest docker/node/
+#
+#   2. Start the channel server:
+#      uv run sine channel-server
+#
+#   3. Deploy the emulation:
+#      uv run sine deploy examples/vacuum_20m/network.yaml
+#
+#   4. Configure IP addresses (containers have no IPs by default):
+#      docker exec -it clab-vacuum-20m-node1 ip addr add 192.168.1.1/24 dev eth1
+#      docker exec -it clab-vacuum-20m-node2 ip addr add 192.168.1.2/24 dev eth1
+#
+#   5. Test connectivity:
+#      Terminal 1 (node1 server):
+#        docker exec -it clab-vacuum-20m-node1 iperf3 -s
+#
+#      Terminal 2 (node2 client):
+#        docker exec -it clab-vacuum-20m-node2 iperf3 -c 192.168.1.1
+#
+#   6. Cleanup (removes containers and all IP configuration):
+#      uv run sine destroy examples/vacuum_20m/network.yaml
+
+name: vacuum-20m
+prefix: clab
+
+topology:
+  # Scene configuration
+  # Empty vacuum scene (no geometry, free-space propagation)
+  scene:
+    file: scenes/vacuum.xml
+
+  # Node definitions
+  nodes:
+    # First node at origin
+    node1:
+      kind: linux
+      image: sine-node:latest
+      wireless:
+        rf_power_dbm: 20.0          # Standard transmit power
+        antenna_pattern: iso        # Isotropic antenna pattern (ideal for free space)
+        polarization: V             # Vertical polarization
+        antenna_gain_dbi: 0.0       # No antenna gain (0 dBi)
+        frequency_ghz: 5.18         # WiFi6 5GHz channel 36
+        bandwidth_mhz: 80           # 80 MHz channel width
+        modulation: 64qam           # 64-QAM modulation
+        fec_type: ldpc              # LDPC forward error correction
+        fec_code_rate: 0.5          # Rate-1/2 coding
+        position:
+          x: 0.0                    # Origin
+          y: 0.0
+          z: 1.0                    # 1m height (typical antenna height)
+
+    # Second node at 20m distance
+    node2:
+      kind: linux
+      image: sine-node:latest
+      wireless:
+        rf_power_dbm: 20.0          # Same transmit power
+        antenna_pattern: iso        # Isotropic antenna pattern
+        polarization: V             # Vertical polarization
+        antenna_gain_dbi: 0.0       # No antenna gain
+        frequency_ghz: 5.18         # Same channel as node1
+        bandwidth_mhz: 80           # 80 MHz channel width
+        modulation: 64qam           # 64-QAM modulation
+        fec_type: ldpc              # LDPC forward error correction
+        fec_code_rate: 0.5          # Rate-1/2 coding
+        position:
+          x: 20.0                   # 20m along X-axis (exactly 20m from origin)
+          y: 0.0                    # Same Y coordinate (linear alignment)
+          z: 1.0                    # Same height (level link for symmetry)
+
+  # Wireless links between nodes
+  wireless_links:
+    - endpoints: [node1, node2]
+
+  # Channel computation server URL
+  channel_server: "http://localhost:8000"
+
+  # Mobility polling interval (milliseconds)
+  mobility_poll_ms: 100
