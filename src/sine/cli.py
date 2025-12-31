@@ -47,37 +47,44 @@ def _print_deployment_summary(summary: dict) -> None:
         container_table.add_column("Image")
         container_table.add_column("PID", style="dim")
         container_table.add_column("Interfaces", style="green")
-        container_table.add_column("Position (x,y,z)")
+        container_table.add_column("Positions (iface: x,y,z)")
 
         for c in summary["containers"]:
             interfaces = ", ".join(c.get("interfaces", [])) or "eth0"
-            pos = ""
-            if c.get("position"):
-                p = c["position"]
-                pos = f"({p['x']:.1f}, {p['y']:.1f}, {p['z']:.1f})"
+            # Format positions per interface (new format)
+            pos_str = ""
+            if c.get("positions"):
+                pos_parts = []
+                for iface, p in c["positions"].items():
+                    pos_parts.append(f"{iface}: ({p['x']:.1f},{p['y']:.1f},{p['z']:.1f})")
+                pos_str = ", ".join(pos_parts)
             container_table.add_row(
                 c.get("name", ""),
                 c.get("image", ""),
                 str(c.get("pid", "")),
                 interfaces,
-                pos,
+                pos_str,
             )
 
         console.print(container_table)
 
-    # Wireless links table
-    if summary.get("wireless_links"):
+    # Links table (supports both wireless and fixed)
+    if summary.get("links"):
         console.print()
-        link_table = Table(title="Wireless Link Parameters (netem)")
+        link_table = Table(title="Link Parameters (netem)")
         link_table.add_column("Link", style="cyan")
+        link_table.add_column("Type", style="magenta")
         link_table.add_column("Delay", justify="right")
         link_table.add_column("Jitter", justify="right")
         link_table.add_column("Loss %", justify="right")
         link_table.add_column("Rate", justify="right")
 
-        for link in summary["wireless_links"]:
+        for link in summary["links"]:
+            link_type = link.get("type", "unknown")
+            type_style = "[green]wireless[/]" if link_type == "wireless" else "[blue]fixed[/]"
             link_table.add_row(
                 link["link"],
+                type_style,
                 f"{link['delay_ms']:.2f} ms",
                 f"{link['jitter_ms']:.2f} ms",
                 f"{link['loss_percent']:.2f}%",
@@ -296,6 +303,19 @@ def validate(topology: Path) -> None:
         console.print(f"[red]✗ Topology validation failed:[/]\n{e}")
         sys.exit(1)
 
+    # Count wireless and fixed links
+    wireless_count = 0
+    fixed_count = 0
+    for link in config.topology.links:
+        from sine.config.schema import parse_endpoint
+        node1_name, iface1 = parse_endpoint(link.endpoints[0])
+        node1 = config.topology.nodes.get(node1_name)
+        if node1 and node1.interfaces and iface1 in node1.interfaces:
+            if node1.interfaces[iface1].is_wireless:
+                wireless_count += 1
+            else:
+                fixed_count += 1
+
     # Print summary
     table = Table(title="Topology Summary")
     table.add_column("Property", style="cyan")
@@ -304,47 +324,62 @@ def validate(topology: Path) -> None:
     table.add_row("Name", config.name)
     table.add_row("Prefix", config.container_prefix)
     table.add_row("Nodes", str(len(config.topology.nodes)))
-    table.add_row("Wireless Links", str(len(config.topology.wireless_links)))
-    table.add_row("Scene File", config.topology.scene.file)
+    table.add_row("Links", str(len(config.topology.links)))
+    table.add_row("  Wireless", str(wireless_count))
+    table.add_row("  Fixed", str(fixed_count))
+    scene_file = config.topology.scene.file if config.topology.scene else "(none)"
+    table.add_row("Scene File", scene_file)
     table.add_row("Channel Server", config.topology.channel_server)
     table.add_row("Mobility Poll", f"{config.topology.mobility_poll_ms}ms")
 
     console.print(table)
 
-    # List nodes
+    # List nodes and their interfaces
     if config.topology.nodes:
         node_table = Table(title="Nodes")
         node_table.add_column("Name", style="cyan")
         node_table.add_column("Image")
-        node_table.add_column("Position")
-        node_table.add_column("Wireless")
+        node_table.add_column("Interface", style="green")
+        node_table.add_column("Type", style="magenta")
+        node_table.add_column("Position / Config")
 
         for name, node in config.topology.nodes.items():
-            pos = ""
-            wireless = "No"
-            if node.wireless:
-                pos = f"({node.wireless.position.x:.1f}, {node.wireless.position.y:.1f}, {node.wireless.position.z:.1f})"
-                wireless = f"{node.wireless.modulation.value}, {node.wireless.fec_type.value}"
-            node_table.add_row(name, node.image, pos, wireless)
+            if node.interfaces:
+                for iface_name, iface_config in node.interfaces.items():
+                    if iface_config.is_wireless:
+                        w = iface_config.wireless
+                        pos = f"({w.position.x:.1f}, {w.position.y:.1f}, {w.position.z:.1f})"
+                        config_str = f"{pos} | {w.modulation.value}, {w.fec_type.value}"
+                        iface_type = "wireless"
+                    else:
+                        f = iface_config.fixed_netem
+                        config_str = f"delay={f.delay_ms}ms, rate={f.rate_mbps}Mbps"
+                        iface_type = "fixed"
+                    node_table.add_row(name, node.image, iface_name, iface_type, config_str)
+            else:
+                node_table.add_row(name, node.image, "-", "-", "-")
 
         console.print(node_table)
 
-    # Validate scene
-    scene_path = Path(config.topology.scene.file)
-    if scene_path.exists():
-        try:
-            builder = SceneBuilder()
-            builder.load_scene(scene_path)
-            warnings = builder.validate_scene()
-            if warnings:
-                for w in warnings:
-                    console.print(f"[yellow]⚠ Scene warning:[/] {w}")
-            else:
-                console.print(f"[green]✓ Scene valid:[/] {scene_path}")
-        except Exception as e:
-            console.print(f"[red]✗ Scene error:[/] {e}")
+    # Validate scene (only if present)
+    if not config.topology.scene:
+        console.print("[dim]No scene configured (fixed links only)[/]")
     else:
-        console.print(f"[red]✗ Scene file not found:[/] {scene_path}")
+        scene_path = Path(config.topology.scene.file)
+        if scene_path.exists():
+            try:
+                builder = SceneBuilder()
+                builder.load_scene(scene_path)
+                warnings = builder.validate_scene()
+                if warnings:
+                    for w in warnings:
+                        console.print(f"[yellow]⚠ Scene warning:[/] {w}")
+                else:
+                    console.print(f"[green]✓ Scene valid:[/] {scene_path}")
+            except Exception as e:
+                console.print(f"[red]✗ Scene error:[/] {e}")
+        else:
+            console.print(f"[red]✗ Scene file not found:[/] {scene_path}")
 
     console.print("\n[green]Validation complete[/]")
 
@@ -488,7 +523,10 @@ def render(
         console.print(f"[bold red]Topology error:[/] {e}")
         sys.exit(1)
 
-    # Check scene file
+    # Check scene file (required for rendering)
+    if not config.topology.scene:
+        console.print("[bold red]Scene file required for rendering[/]")
+        sys.exit(1)
     scene_path = Path(config.topology.scene.file)
     if not scene_path.exists():
         console.print(f"[bold red]Scene file not found:[/] {scene_path}")
@@ -504,30 +542,33 @@ def render(
         sys.exit(1)
 
     # Add TX/RX devices from wireless links
-    nodes_added = set()
-    for link in config.topology.wireless_links:
+    from sine.config.schema import parse_endpoint
+    devices_added = set()  # Track (node, interface) pairs
+    for link in config.topology.links:
         # Use get_node_names() to handle "node:interface" format
-        for node_name in link.get_node_names():
-            if node_name in nodes_added:
+        for endpoint in link.endpoints:
+            node_name, iface_name = parse_endpoint(endpoint)
+            device_key = (node_name, iface_name)
+            if device_key in devices_added:
                 continue
 
             node = config.topology.nodes.get(node_name)
-            if node and node.wireless:
-                pos = (
-                    node.wireless.position.x,
-                    node.wireless.position.y,
-                    node.wireless.position.z,
-                )
-                # Add as transmitter (for path computation, both ends need devices)
-                if len(nodes_added) % 2 == 0:
-                    engine.add_transmitter(node_name, pos)
-                else:
-                    engine.add_receiver(node_name, pos)
-                nodes_added.add(node_name)
-                console.print(f"[dim]Added device: {node_name} at ({pos[0]:.1f}, {pos[1]:.1f}, {pos[2]:.1f})[/]")
+            if node and node.interfaces and iface_name in node.interfaces:
+                iface_config = node.interfaces[iface_name]
+                if iface_config.is_wireless:
+                    w = iface_config.wireless
+                    pos = (w.position.x, w.position.y, w.position.z)
+                    # Add as transmitter or receiver alternately (both ends need devices for path computation)
+                    device_id = f"{node_name}_{iface_name}"
+                    if len(devices_added) % 2 == 0:
+                        engine.add_transmitter(device_id, pos)
+                    else:
+                        engine.add_receiver(device_id, pos)
+                    devices_added.add(device_key)
+                    console.print(f"[dim]Added device: {node_name}:{iface_name} at ({pos[0]:.1f}, {pos[1]:.1f}, {pos[2]:.1f})[/]")
 
-    if not nodes_added:
-        console.print("[yellow]Warning: No wireless nodes found in topology[/]")
+    if not devices_added:
+        console.print("[yellow]Warning: No wireless interfaces found in topology[/]")
 
     # Render scene
     try:

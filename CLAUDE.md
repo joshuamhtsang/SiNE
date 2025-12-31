@@ -88,7 +88,8 @@ network.yaml -> EmulationController -> Containerlab (Docker containers + veth li
 | Rate Limiting | tbf | netem lacks native rate control |
 | Sionna API | PathSolver, Scene | Sionna v1.2.1 API (use `Scene()` for empty) |
 | PER Formula | BLER for coded | Industry standard |
-| Scene Config | Explicit file path | Always require `scene.file` in network.yaml (no "default" option) |
+| Scene Config | Explicit file path | Required for wireless links, optional for fixed_netem links |
+| Interface Config | Per-interface on node | Each interface has either `wireless` or `fixed_netem` params |
 | netem Access | sudo nsenter | Required for container network namespace access |
 | Container Naming | `clab-<lab>-<node>` | Follows containerlab convention for consistency |
 
@@ -197,16 +198,15 @@ uv run ruff check src/sine
 
 ## Examples
 
-Four example topologies are provided in `examples/`:
+Example topologies are provided in `examples/`:
 
-| Example | Description | Scene | Node Positions |
-|---------|-------------|-------|----------------|
-| `vacuum_20m/` | Baseline free-space | `vacuum.xml` (empty) | 20m apart, linear (0,0,1) to (20,0,1) |
-| `two_room_wifi/` | Good link quality | `two_room_default.xml` (5m x 4m rooms) | Aligned with doorway (~5m, LOS) |
-| `two_room_wifi_poor/` | Poor link quality | `two_room_large.xml` (10m x 8m rooms) | Opposite corners (~22m, NLOS) |
-| `manet_triangle/` | 3-node MANET mesh | `vacuum.xml` (empty) | Equilateral triangle, 10m sides |
+| Example | Description | Link Type | Scene |
+|---------|-------------|-----------|-------|
+| `vacuum_20m/` | Baseline free-space wireless | wireless | `vacuum.xml` (empty) |
+| `manet_triangle/` | 3-node MANET mesh | wireless | `vacuum.xml` (empty) |
+| `fixed_link/` | Fixed netem parameters | fixed_netem | (none) |
 
-The examples demonstrate the effect of distance, propagation conditions, and multi-node topologies on link quality.
+The examples demonstrate wireless propagation, multi-node topologies, and fixed link emulation.
 
 ## Channel Server API
 
@@ -236,8 +236,10 @@ Returns detailed ray tracing path information including:
 
 ## Important Notes
 
-- **Wireless Link Endpoints**: Must use `node:interface` format (e.g., `endpoints: [node1:eth1, node2:eth1]`)
-- **Scene Configuration**: Always specify `scene.file` in network.yaml (e.g., `file: scenes/two_room_default.xml`)
+- **Interface Configuration**: Define per-interface on each node using `interfaces.<iface>.wireless` or `interfaces.<iface>.fixed_netem`
+- **Link Endpoints**: Must use `node:interface` format (e.g., `endpoints: [node1:eth1, node2:eth1]`)
+- **Link Type Consistency**: Both endpoints of a link must be same type (both wireless OR both fixed_netem)
+- **Scene Configuration**: Required for wireless links (specify `scene.file`), optional for fixed_netem-only topologies
 - **Sionna Scene Materials**: Must use ITU naming convention (e.g., `itu_concrete`, not `concrete`)
 - **netem Configuration**: Requires `sudo` for `nsenter` to access container network namespaces
 - **Sionna v1.2.1 API**: Use `Scene()` for empty scenes, `load_scene()` for files
@@ -408,12 +410,27 @@ Each wireless link is a separate veth pair with independent netem configuration:
 - Hidden node problem not naturally modeled
 - Multiple interfaces per node (real MANETs typically use single interface)
 
-### Explicit Interface Assignment (Required)
+### Interface Configuration Format
 
-Endpoints in `wireless_links` **must** use `node:interface` format:
+Each node defines its interfaces with either `wireless` or `fixed_netem` parameters:
 
 ```yaml
-wireless_links:
+nodes:
+  node1:
+    kind: linux
+    image: alpine:latest
+    interfaces:
+      eth1:
+        wireless:
+          position: {x: 0, y: 0, z: 1}
+          frequency_ghz: 5.18
+          # ... other wireless params
+      eth2:
+        wireless:
+          position: {x: 0, y: 0, z: 1}
+          # ... wireless params for another link
+
+links:
   - endpoints: [node1:eth1, node2:eth1]
   - endpoints: [node1:eth2, node3:eth1]
 ```
@@ -423,7 +440,7 @@ Benefits:
 - **Predictable**: You know exactly which interface connects to which peer
 - **Readable**: IP configuration matches interface names in the YAML
 - **Conflict detection**: Schema validates that no interface is used twice
-- **Less bugs**: No ambiguity about interface assignment order
+- **Type safety**: Each interface must have exactly one of `wireless` or `fixed_netem`
 
 ### Interface Mapping for MANET
 
@@ -476,3 +493,58 @@ Node3:eth1 ═╣   (single broadcast domain)   ╠═ Node4:eth1
 3. Broadcast packets see worst-case channel to any receiver
 
 This is not yet implemented but could be added for applications requiring true broadcast semantics.
+
+## Fixed Netem Links
+
+SiNE supports **fixed netem links** for non-wireless link emulation where you specify netem parameters directly instead of computing them via ray tracing.
+
+### When to Use Fixed Netem
+
+- Simulating wired links with specific characteristics
+- Testing applications with known/fixed link parameters
+- Quick prototyping without setting up a scene file
+- Mixed topologies with wireless and wired segments
+
+### Configuration
+
+```yaml
+nodes:
+  node1:
+    kind: linux
+    image: alpine:latest
+    interfaces:
+      eth1:
+        fixed_netem:
+          delay_ms: 10.0          # One-way delay
+          jitter_ms: 1.0          # Delay variation
+          loss_percent: 0.1       # Packet loss probability
+          rate_mbps: 100.0        # Bandwidth limit
+          correlation_percent: 25.0  # Loss correlation (optional, default: 25)
+
+  node2:
+    kind: linux
+    image: alpine:latest
+    interfaces:
+      eth1:
+        fixed_netem:
+          delay_ms: 10.0          # Same params for symmetric link
+          jitter_ms: 1.0
+          loss_percent: 0.1
+          rate_mbps: 100.0
+
+topology:
+  # No scene needed for fixed-only topologies
+  links:
+    - endpoints: [node1:eth1, node2:eth1]
+```
+
+### Key Points
+
+- **No channel server required**: Fixed links don't use ray tracing
+- **No scene file required**: Scene is optional for topologies with only fixed links
+- **Per-endpoint params**: Each side can have different netem values (asymmetric links)
+- **Mixed not allowed**: A single link cannot have one wireless and one fixed_netem endpoint
+
+### Example
+
+See `examples/fixed_link/network.yaml` for a complete fixed netem example.

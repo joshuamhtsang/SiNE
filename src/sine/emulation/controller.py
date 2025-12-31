@@ -19,7 +19,7 @@ from typing import Optional, Union
 import httpx
 
 from sine.config.loader import TopologyLoader
-from sine.config.schema import NetworkTopology
+from sine.config.schema import NetworkTopology, parse_endpoint
 from sine.topology.manager import ContainerlabManager
 from sine.topology.netem import NetemConfigurator, NetemParams, check_sudo_available
 from sine.scene.builder import SceneBuilder
@@ -109,13 +109,16 @@ class EmulationController:
 
         self.channel_server_url = self.config.topology.channel_server
 
-        # Load scene
-        try:
-            scene_config = self.config.topology.scene
-            self.scene_builder.load_scene(scene_config.file)
-        except Exception as e:
-            logger.error(f"Failed to load scene: {e}")
-            raise EmulationError(f"Failed to load scene: {e}") from e
+        # Load scene (only required if there are wireless links)
+        if self._has_wireless_links():
+            try:
+                scene_config = self.config.topology.scene
+                self.scene_builder.load_scene(scene_config.file)
+            except Exception as e:
+                logger.error(f"Failed to load scene: {e}")
+                raise EmulationError(f"Failed to load scene: {e}") from e
+        else:
+            logger.info("No wireless links - skipping scene loading")
 
         # Deploy containers via Containerlab
         try:
@@ -137,12 +140,13 @@ class EmulationController:
         except Exception as e:
             logger.warning(f"Failed to generate cleanup script: {e}")
 
-        # Initialize channel server with scene
-        try:
-            await self._initialize_scene()
-        except Exception as e:
-            logger.error(f"Failed to initialize scene on channel server: {e}")
-            raise EmulationError(f"Failed to initialize channel server: {e}") from e
+        # Initialize channel server with scene (only for wireless links)
+        if self._has_wireless_links():
+            try:
+                await self._initialize_scene()
+            except Exception as e:
+                logger.error(f"Failed to initialize scene on channel server: {e}")
+                raise EmulationError(f"Failed to initialize channel server: {e}") from e
 
         # Compute initial channel conditions and configure netem
         try:
@@ -199,18 +203,33 @@ class EmulationController:
 
         logger.info("Emulation stopped")
 
+    def _has_wireless_links(self) -> bool:
+        """Check if topology has any wireless links."""
+        for link in self.config.topology.links:
+            node1, iface1 = parse_endpoint(link.endpoints[0])
+            node = self.config.topology.nodes.get(node1)
+            if node and node.interfaces and iface1 in node.interfaces:
+                if node.interfaces[iface1].is_wireless:
+                    return True
+        return False
+
     async def _initialize_scene(self) -> None:
         """Initialize scene on channel server."""
         scene_config = self.config.topology.scene
 
-        # Get frequency from first node with wireless params
+        # Get frequency from first wireless interface
         frequency_hz = 5.18e9
         bandwidth_hz = 80e6
 
         for node in self.config.topology.nodes.values():
-            if node.wireless:
-                frequency_hz = node.wireless.frequency_hz
-                bandwidth_hz = node.wireless.bandwidth_hz
+            if node.interfaces:
+                for iface_config in node.interfaces.values():
+                    if iface_config.wireless:
+                        frequency_hz = iface_config.wireless.frequency_hz
+                        bandwidth_hz = iface_config.wireless.bandwidth_hz
+                        break
+                else:
+                    continue
                 break
 
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -226,20 +245,45 @@ class EmulationController:
             logger.info("Scene loaded on channel server")
 
     async def _update_all_links(self) -> None:
-        """Update channel conditions for all wireless links."""
-        links = self.config.topology.wireless_links
+        """Update channel conditions for all links."""
+        links = self.config.topology.links
         nodes = self.config.topology.nodes
 
         if not links:
-            logger.info("No wireless links to configure")
+            logger.info("No links to configure")
             return
 
-        # Build batch request for all links
-        link_requests = []
+        # Separate wireless and fixed links
+        wireless_links = []
+        fixed_links = []
 
         for link in links:
-            # Use get_node_names() to handle "node:interface" format
-            node1_name, node2_name = link.get_node_names()
+            node1_name, iface1 = parse_endpoint(link.endpoints[0])
+            node1 = nodes.get(node1_name)
+
+            if node1 and node1.interfaces and iface1 in node1.interfaces:
+                if node1.interfaces[iface1].is_wireless:
+                    wireless_links.append(link)
+                else:
+                    fixed_links.append(link)
+
+        # Process fixed links directly (no channel server needed)
+        for link in fixed_links:
+            await self._apply_fixed_link(link)
+
+        if fixed_links:
+            logger.info(f"Configured {len(fixed_links)} fixed link(s)")
+
+        # Process wireless links via channel server
+        if not wireless_links:
+            return
+
+        # Build batch request for wireless links
+        link_requests = []
+
+        for link in wireless_links:
+            node1_name, iface1 = parse_endpoint(link.endpoints[0])
+            node2_name, iface2 = parse_endpoint(link.endpoints[1])
             node1 = nodes.get(node1_name)
             node2 = nodes.get(node2_name)
 
@@ -247,11 +291,8 @@ class EmulationController:
                 logger.warning(f"Link references unknown nodes: {link.endpoints}")
                 continue
 
-            if not node1.wireless or not node2.wireless:
-                logger.warning(
-                    f"Link {node1_name}-{node2_name} missing wireless config"
-                )
-                continue
+            wireless1 = node1.interfaces[iface1].wireless
+            wireless2 = node2.interfaces[iface2].wireless
 
             # Use node1 as TX, node2 as RX (will apply to both directions)
             link_requests.append(
@@ -259,25 +300,25 @@ class EmulationController:
                     "tx_node": node1_name,
                     "rx_node": node2_name,
                     "tx_position": {
-                        "x": node1.wireless.position.x,
-                        "y": node1.wireless.position.y,
-                        "z": node1.wireless.position.z,
+                        "x": wireless1.position.x,
+                        "y": wireless1.position.y,
+                        "z": wireless1.position.z,
                     },
                     "rx_position": {
-                        "x": node2.wireless.position.x,
-                        "y": node2.wireless.position.y,
-                        "z": node2.wireless.position.z,
+                        "x": wireless2.position.x,
+                        "y": wireless2.position.y,
+                        "z": wireless2.position.z,
                     },
-                    "tx_power_dbm": node1.wireless.rf_power_dbm,
-                    "tx_gain_dbi": node1.wireless.antenna_gain_dbi,
-                    "rx_gain_dbi": node2.wireless.antenna_gain_dbi,
-                    "antenna_pattern": node1.wireless.antenna_pattern.value,
-                    "polarization": node1.wireless.polarization.value,
-                    "frequency_hz": node1.wireless.frequency_hz,
-                    "bandwidth_hz": node1.wireless.bandwidth_hz,
-                    "modulation": node1.wireless.modulation.value,
-                    "fec_type": node1.wireless.fec_type.value,
-                    "fec_code_rate": node1.wireless.fec_code_rate,
+                    "tx_power_dbm": wireless1.rf_power_dbm,
+                    "tx_gain_dbi": wireless1.antenna_gain_dbi,
+                    "rx_gain_dbi": wireless2.antenna_gain_dbi,
+                    "antenna_pattern": wireless1.antenna_pattern.value,
+                    "polarization": wireless1.polarization.value,
+                    "frequency_hz": wireless1.frequency_hz,
+                    "bandwidth_hz": wireless1.bandwidth_hz,
+                    "modulation": wireless1.modulation.value,
+                    "fec_type": wireless1.fec_type.value,
+                    "fec_code_rate": wireless1.fec_code_rate,
                 }
             )
 
@@ -304,15 +345,82 @@ class EmulationController:
 
         # Apply netem configurations
         for result in results.get("results", []):
-            await self._apply_link_config(result)
+            await self._apply_wireless_link_config(result)
 
         logger.info(
-            f"Updated {len(results.get('results', []))} links in "
+            f"Updated {len(results.get('results', []))} wireless link(s) in "
             f"{results.get('computation_time_ms', 0):.1f}ms"
         )
 
-    async def _apply_link_config(self, channel_result: dict) -> None:
-        """Apply netem configuration for a single link."""
+    async def _apply_fixed_link(self, link) -> None:
+        """Apply fixed netem parameters for a link."""
+        node1_name, iface1 = parse_endpoint(link.endpoints[0])
+        node2_name, iface2 = parse_endpoint(link.endpoints[1])
+
+        nodes = self.config.topology.nodes
+        fixed1 = nodes[node1_name].interfaces[iface1].fixed_netem
+        fixed2 = nodes[node2_name].interfaces[iface2].fixed_netem
+
+        # Create NetemParams from fixed config for each endpoint
+        params1 = NetemParams(
+            delay_ms=fixed1.delay_ms,
+            jitter_ms=fixed1.jitter_ms,
+            loss_percent=fixed1.loss_percent,
+            rate_mbps=fixed1.rate_mbps,
+            correlation_percent=fixed1.correlation_percent,
+        )
+        params2 = NetemParams(
+            delay_ms=fixed2.delay_ms,
+            jitter_ms=fixed2.jitter_ms,
+            loss_percent=fixed2.loss_percent,
+            rate_mbps=fixed2.rate_mbps,
+            correlation_percent=fixed2.correlation_percent,
+        )
+
+        # Get container info
+        container1 = self.clab_manager.get_container_info(node1_name)
+        container2 = self.clab_manager.get_container_info(node2_name)
+
+        if not container1 or not container2:
+            logger.warning(f"Container info not found for {node1_name} or {node2_name}")
+            return
+
+        # Apply netem on both sides
+        success1 = False
+        success2 = False
+
+        success1 = self.netem_config.apply_config(
+            container_name=container1["name"],
+            interface=iface1,
+            params=params1,
+            pid=container1["pid"],
+        )
+        if not success1:
+            logger.error(f"Failed to apply netem to {node1_name}:{iface1}")
+            self._netem_failures.append((node1_name, node2_name))
+
+        success2 = self.netem_config.apply_config(
+            container_name=container2["name"],
+            interface=iface2,
+            params=params2,
+            pid=container2["pid"],
+        )
+        if not success2:
+            logger.error(f"Failed to apply netem to {node2_name}:{iface2}")
+            if (node1_name, node2_name) not in self._netem_failures:
+                self._netem_failures.append((node1_name, node2_name))
+
+        # Store state for summary (use params1 as representative)
+        if success1 or success2:
+            self._link_states[(node1_name, node2_name)] = params1
+            logger.debug(
+                f"Applied fixed netem to {node1_name}<->{node2_name}: "
+                f"delay={params1.delay_ms:.1f}ms, loss={params1.loss_percent:.2f}%, "
+                f"rate={params1.rate_mbps:.1f}Mbps"
+            )
+
+    async def _apply_wireless_link_config(self, channel_result: dict) -> None:
+        """Apply netem configuration for a wireless link from channel server result."""
         tx_node = channel_result["tx_node"]
         rx_node = channel_result["rx_node"]
 
@@ -447,29 +555,32 @@ class EmulationController:
             # For now, this is a placeholder for future mobility support
 
     async def update_node_position(
-        self, node_name: str, x: float, y: float, z: float
+        self, node_name: str, interface: str, x: float, y: float, z: float
     ) -> None:
         """
-        Update a node's position and recompute affected channels.
+        Update a node interface's position and recompute affected channels.
 
         Called by mobility handler when a node moves.
 
         Args:
             node_name: Name of the node to update
+            interface: Interface name (e.g., "eth1")
             x: New X coordinate
             y: New Y coordinate
             z: New Z coordinate
         """
         node = self.config.topology.nodes.get(node_name)
-        if node and node.wireless:
-            node.wireless.position.x = x
-            node.wireless.position.y = y
-            node.wireless.position.z = z
+        if node and node.interfaces and interface in node.interfaces:
+            iface_config = node.interfaces[interface]
+            if iface_config.wireless:
+                iface_config.wireless.position.x = x
+                iface_config.wireless.position.y = y
+                iface_config.wireless.position.z = z
 
-            logger.info(f"Updated position of {node_name} to ({x}, {y}, {z})")
+                logger.info(f"Updated position of {node_name}:{interface} to ({x}, {y}, {z})")
 
-            # Recompute channels for all links involving this node
-            await self._update_all_links()
+                # Recompute channels for all links involving this node
+                await self._update_all_links()
 
     def get_link_status(self) -> dict[str, dict]:
         """
@@ -511,7 +622,7 @@ class EmulationController:
         summary = {
             "topology_name": self.config.name if self.config else "Unknown",
             "containers": [],
-            "wireless_links": [],
+            "links": [],
         }
 
         # Get container info
@@ -525,15 +636,21 @@ class EmulationController:
                     "interfaces": info.get("interfaces", []),
                     "ipv4": info.get("ipv4", ""),
                 }
-                # Add wireless position if available
+                # Add wireless positions if available (from interfaces)
                 short_name = name.replace(f"clab-{self.config.name}-", "")
                 node = self.config.topology.nodes.get(short_name)
-                if node and node.wireless:
-                    container_info["position"] = {
-                        "x": node.wireless.position.x,
-                        "y": node.wireless.position.y,
-                        "z": node.wireless.position.z,
-                    }
+                if node and node.interfaces:
+                    # Collect positions from all wireless interfaces
+                    positions = {}
+                    for iface_name, iface_config in node.interfaces.items():
+                        if iface_config.wireless:
+                            positions[iface_name] = {
+                                "x": iface_config.wireless.position.x,
+                                "y": iface_config.wireless.position.y,
+                                "z": iface_config.wireless.position.z,
+                            }
+                    if positions:
+                        container_info["positions"] = positions
                 summary["containers"].append(container_info)
 
         # Get link states with interface information
@@ -545,12 +662,20 @@ class EmulationController:
                 tx_iface = self.clab_manager.get_interface_for_peer(tx, rx)
                 rx_iface = self.clab_manager.get_interface_for_peer(rx, tx)
 
+            # Determine link type from interface config
+            link_type = "unknown"
+            tx_node = self.config.topology.nodes.get(tx)
+            if tx_node and tx_node.interfaces and tx_iface:
+                if tx_iface in tx_node.interfaces:
+                    link_type = "wireless" if tx_node.interfaces[tx_iface].is_wireless else "fixed"
+
             # Format link with interfaces: "node1 (eth1) <-> node2 (eth1)"
             tx_str = f"{tx} ({tx_iface})" if tx_iface else tx
             rx_str = f"{rx} ({rx_iface})" if rx_iface else rx
 
-            summary["wireless_links"].append({
+            summary["links"].append({
                 "link": f"{tx_str} <-> {rx_str}",
+                "type": link_type,
                 "tx_node": tx,
                 "rx_node": rx,
                 "tx_interface": tx_iface,

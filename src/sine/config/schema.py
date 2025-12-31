@@ -9,7 +9,7 @@ This module defines the schema for network.yaml files that describe:
 """
 
 from enum import Enum
-from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 
 class ModulationType(str, Enum):
@@ -124,11 +124,70 @@ class WirelessParams(BaseModel):
         return self.bandwidth_mhz * 1e6
 
 
+class FixedNetemParams(BaseModel):
+    """Fixed netem parameters for static link emulation.
+
+    Use this instead of wireless params when you want to specify
+    link characteristics directly without ray tracing computation.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    delay_ms: float = Field(
+        default=0.0, description="One-way delay in milliseconds", ge=0.0
+    )
+    jitter_ms: float = Field(
+        default=0.0, description="Delay variation in milliseconds", ge=0.0
+    )
+    loss_percent: float = Field(
+        default=0.0, description="Packet loss percentage", ge=0.0, le=100.0
+    )
+    rate_mbps: float = Field(
+        default=1000.0, description="Bandwidth limit in Mbps", gt=0.0
+    )
+    correlation_percent: float = Field(
+        default=25.0, description="Delay correlation for realistic jitter", ge=0.0, le=100.0
+    )
+
+
+class InterfaceConfig(BaseModel):
+    """Configuration for a single network interface.
+
+    Each interface must have exactly one of:
+    - wireless: Wireless parameters (computed via ray tracing)
+    - fixed_netem: Fixed netem parameters (applied directly)
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    wireless: WirelessParams | None = Field(
+        default=None, description="Wireless parameters (computed via ray tracing)"
+    )
+    fixed_netem: FixedNetemParams | None = Field(
+        default=None, description="Fixed netem parameters (applied directly)"
+    )
+
+    @model_validator(mode="after")
+    def validate_exactly_one(self) -> "InterfaceConfig":
+        """Ensure exactly one of wireless or fixed_netem is set."""
+        if self.wireless and self.fixed_netem:
+            raise ValueError("Interface cannot have both 'wireless' and 'fixed_netem'")
+        if not self.wireless and not self.fixed_netem:
+            raise ValueError("Interface must have either 'wireless' or 'fixed_netem'")
+        return self
+
+    @property
+    def is_wireless(self) -> bool:
+        """Return True if this interface uses wireless params."""
+        return self.wireless is not None
+
+
 class NodeConfig(BaseModel):
     """
-    Node definition extending Containerlab format with wireless parameters.
+    Node definition extending Containerlab format with interface parameters.
 
     A node represents a Docker container in the emulated network.
+    Interfaces are configured per-interface with either wireless or fixed_netem params.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -138,8 +197,8 @@ class NodeConfig(BaseModel):
     cmd: str | None = Field(default=None, description="Container command to run")
     binds: list[str] | None = Field(default=None, description="Volume mounts")
     env: dict[str, str] | None = Field(default=None, description="Environment variables")
-    wireless: WirelessParams | None = Field(
-        default=None, description="Wireless parameters (if this node has a wireless interface)"
+    interfaces: dict[str, InterfaceConfig] | None = Field(
+        default=None, description="Interface configurations (eth1, eth2, etc.)"
     )
 
 
@@ -166,14 +225,16 @@ def parse_endpoint(endpoint: str) -> tuple[str, str]:
     return (parts[0], parts[1])
 
 
-class WirelessLink(BaseModel):
+class Link(BaseModel):
     """
-    Definition of a wireless link between two nodes.
+    Definition of a link between two node interfaces.
 
     Endpoints must be specified in "node:interface" format.
+    The link type (wireless or fixed_netem) is determined by the
+    interface configurations on each node.
 
     Example:
-        wireless_links:
+        links:
           - endpoints: [node1:eth1, node2:eth1]
           - endpoints: [node1:eth2, node3:eth1]
     """
@@ -183,9 +244,6 @@ class WirelessLink(BaseModel):
     endpoints: tuple[str, str] = Field(
         ...,
         description="Tuple of endpoints in 'node:interface' format (e.g., 'node1:eth1')",
-    )
-    bandwidth_override_mbps: float | None = Field(
-        default=None, description="Override computed bandwidth limit (Mbps)"
     )
 
     @field_validator("endpoints", mode="after")
@@ -211,6 +269,10 @@ class WirelessLink(BaseModel):
         return (iface1, iface2)
 
 
+# Backwards compatibility alias
+WirelessLink = Link
+
+
 class SceneConfig(BaseModel):
     """Ray tracing scene configuration."""
 
@@ -229,10 +291,12 @@ class TopologyDefinition(BaseModel):
         default=None, description="Default settings per node kind"
     )
     nodes: dict[str, NodeConfig] = Field(..., description="Node definitions")
-    wireless_links: list[WirelessLink] = Field(
-        default_factory=list, description="Wireless links between nodes"
+    links: list[Link] = Field(
+        default_factory=list, description="Links between node interfaces"
     )
-    scene: SceneConfig = Field(default_factory=SceneConfig)
+    scene: SceneConfig | None = Field(
+        default=None, description="Ray tracing scene (required for wireless links)"
+    )
     channel_server: str = Field(
         default="http://localhost:8000", description="Channel computation server URL"
     )
@@ -243,12 +307,12 @@ class TopologyDefinition(BaseModel):
         le=10000,
     )
 
-    @field_validator("wireless_links", mode="after")
+    @field_validator("links", mode="after")
     @classmethod
-    def validate_link_nodes_exist(
-        cls, v: list[WirelessLink], info: ValidationInfo
-    ) -> list[WirelessLink]:
-        """Ensure all link endpoints reference existing nodes and no interface conflicts."""
+    def validate_links(
+        cls, v: list[Link], info: ValidationInfo
+    ) -> list[Link]:
+        """Validate links: nodes exist, interfaces configured, types match."""
         nodes = info.data.get("nodes", {})
 
         # Track interface assignments to detect conflicts
@@ -259,6 +323,8 @@ class TopologyDefinition(BaseModel):
             node_names = link.get_node_names()
             interfaces = link.get_interfaces()
 
+            endpoint_types: list[bool] = []  # True = wireless, False = fixed
+
             for i, (node_name, interface) in enumerate(zip(node_names, interfaces)):
                 # Check node exists
                 if node_name not in nodes:
@@ -266,6 +332,18 @@ class TopologyDefinition(BaseModel):
                         f"Link endpoint '{link.endpoints[i]}': "
                         f"node '{node_name}' not found in nodes"
                     )
+
+                node = nodes[node_name]
+
+                # Check interface is configured on node
+                if not node.interfaces or interface not in node.interfaces:
+                    raise ValueError(
+                        f"Link endpoint '{link.endpoints[i]}': "
+                        f"interface '{interface}' not configured on node '{node_name}'"
+                    )
+
+                # Track interface type
+                endpoint_types.append(node.interfaces[interface].is_wireless)
 
                 # Check for interface conflicts
                 key = (node_name, interface)
@@ -277,7 +355,32 @@ class TopologyDefinition(BaseModel):
                     )
                 interface_assignments[key] = link_idx
 
+            # Ensure both endpoints are same type
+            if len(endpoint_types) == 2 and endpoint_types[0] != endpoint_types[1]:
+                raise ValueError(
+                    f"Link {link.endpoints}: endpoints must be same type "
+                    f"(both wireless or both fixed_netem)"
+                )
+
         return v
+
+    @model_validator(mode="after")
+    def validate_scene_for_wireless(self) -> "TopologyDefinition":
+        """Ensure scene is configured if any wireless links exist."""
+        has_wireless_links = False
+
+        for link in self.links:
+            node1, iface1 = parse_endpoint(link.endpoints[0])
+            node = self.nodes.get(node1)
+            if node and node.interfaces and iface1 in node.interfaces:
+                if node.interfaces[iface1].is_wireless:
+                    has_wireless_links = True
+                    break
+
+        if has_wireless_links and not self.scene:
+            raise ValueError("Scene configuration required when using wireless links")
+
+        return self
 
 
 class NetworkTopology(BaseModel):

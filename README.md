@@ -13,7 +13,8 @@ SiNE creates realistic wireless network emulations by combining:
 
 ## Features
 
-- Define wireless networks in YAML format
+- Define wireless networks in YAML format with per-interface configuration
+- **Two link types**: Wireless (ray-traced) or Fixed netem (direct parameters)
 - Ray-traced channel computation using Sionna v1.2.1
 - Automatic netem configuration based on channel conditions
 - Support for various modulation schemes (BPSK, QPSK, 16/64/256-QAM)
@@ -269,12 +270,51 @@ curl -X POST http://localhost:8001/api/mobility/update \
 
 See [examples/mobility/README.md](examples/mobility/README.md) for detailed mobility documentation.
 
-## Example Topoplogies
+## Example Topologies
 
-Topologies are described in yaml files. Two example topologies are provided:
+Topologies are described in YAML files. Example topologies are provided:
 
-- **`examples/two_room_wifi/`** - Good link quality: nodes aligned with doorway (~5m separation, line-of-sight)
-- **`examples/two_room_wifi_poor/`** - Poor link quality: uses larger rooms (10m x 8m each), nodes in opposite corners (~22m separation, no line-of-sight)
+| Example | Description | Link Type |
+|---------|-------------|-----------|
+| `vacuum_20m/` | Baseline free-space wireless (20m apart) | wireless |
+| `manet_triangle/` | 3-node MANET mesh topology | wireless |
+| `fixed_link/` | Fixed netem parameters (no ray tracing) | fixed_netem |
+
+### Interface Configuration
+
+Each node defines its interfaces with either `wireless` or `fixed_netem` parameters:
+
+```yaml
+nodes:
+  node1:
+    kind: linux
+    image: alpine:latest
+    interfaces:
+      eth1:
+        wireless:                    # Option 1: Ray-traced wireless
+          position: {x: 0, y: 0, z: 1}
+          frequency_ghz: 5.18
+          bandwidth_mhz: 80
+          # ... other RF params
+
+  node2:
+    interfaces:
+      eth1:
+        fixed_netem:                 # Option 2: Direct netem values
+          delay_ms: 10.0
+          jitter_ms: 1.0
+          loss_percent: 0.5
+          rate_mbps: 100.0
+
+topology:
+  links:
+    - endpoints: [node1:eth1, node2:eth1]
+```
+
+**Key points:**
+- Each interface must have exactly one of `wireless` or `fixed_netem`
+- Both endpoints of a link must be the same type
+- Scene file only required for wireless links
 
 ## Requirements
 
@@ -548,21 +588,26 @@ Example 3-node triangle topology:
 
 **Q: How do I specify which interface connects to which peer?**
 
-A: Use the `node:interface` format in endpoints:
+A: Use the `node:interface` format in endpoints (required):
 
 ```yaml
-# Explicit interface assignment (recommended)
-wireless_links:
+nodes:
+  node1:
+    interfaces:
+      eth1:
+        wireless: { ... }  # Config for link to node2
+      eth2:
+        wireless: { ... }  # Config for link to node3
+
+links:
   - endpoints: [node1:eth1, node2:eth1]
   - endpoints: [node1:eth2, node3:eth1]
-
-# Auto-assigned (interfaces assigned in link order: eth1, eth2, ...)
-wireless_links:
-  - endpoints: [node1, node2]
-  - endpoints: [node1, node3]
 ```
 
-SiNE validates that no interface is used by multiple links. The interface mapping is used by `_find_link_interface()` to apply the correct netem parameters.
+SiNE validates that:
+- No interface is used by multiple links
+- All interfaces referenced in links are configured on the node
+- Both endpoints of a link have the same type (wireless or fixed_netem)
 
 **Q: How do I deploy a MANET example?**
 

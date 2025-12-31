@@ -85,15 +85,15 @@ class ContainerlabManager:
 
             clab_topology["topology"]["nodes"][node_name] = clab_node
 
-        # Convert wireless links to veth links
+        # Convert links to veth links
         # Containerlab link format: endpoints: ["node1:eth1", "node2:eth1"]
         # Endpoints must be in "node:interface" format (validated by schema)
 
         # Clear any previous interface mapping
         self._interface_mapping = {}
 
-        for wlink in topology_def.get("wireless_links", []):
-            endpoints = wlink.get("endpoints", [])
+        for link_def in topology_def.get("links", []):
+            endpoints = link_def.get("endpoints", [])
             if len(endpoints) != 2:
                 continue
 

@@ -1,0 +1,74 @@
+# SiNE Example: Fixed Link (Non-Wireless)
+#
+# This example demonstrates fixed netem parameters for non-wireless link
+# emulation. Instead of using ray tracing to compute channel conditions,
+# the netem parameters (delay, jitter, loss, rate) are specified directly.
+#
+# Use cases:
+# - Simulating wired links with specific characteristics
+# - Testing applications with known/fixed link parameters
+# - Bypassing ray tracing when wireless fidelity isn't needed
+# - Quick prototyping without a scene file
+#
+# This example creates two nodes with a fixed 10ms delay, 1ms jitter,
+# 0.1% packet loss, and 100 Mbps rate limit.
+#
+# Usage:
+#   # No channel server needed for fixed links!
+#
+#   # Deploy emulation (requires sudo for netem)
+#   sudo $(which uv) run sine deploy examples/fixed_link/network.yaml
+#
+#   # Configure IP addresses
+#   docker exec -it clab-fixed-link-node1 ip addr add 192.168.1.1/24 dev eth1
+#   docker exec -it clab-fixed-link-node2 ip addr add 192.168.1.2/24 dev eth1
+#
+#   # Test with ping (should see ~10ms RTT with jitter)
+#   docker exec -it clab-fixed-link-node1 ping -c 10 192.168.1.2
+#
+#   # Test with iperf3 (should see ~100 Mbps)
+#   docker exec -it clab-fixed-link-node1 iperf3 -s &
+#   docker exec -it clab-fixed-link-node2 iperf3 -c 192.168.1.1
+#
+#   # Cleanup
+#   uv run sine destroy examples/fixed_link/network.yaml
+
+name: fixed-link
+
+topology:
+  # No scene needed for fixed links
+  # scene: not required
+
+  channel_server: "http://localhost:8000"  # Not used for fixed links
+  mobility_poll_ms: 100
+
+  nodes:
+    node1:
+      kind: linux
+      image: alpine:latest
+      cmd: sleep infinity
+      interfaces:
+        eth1:
+          fixed_netem:
+            delay_ms: 10.0          # 10ms one-way delay
+            jitter_ms: 1.0          # 1ms jitter
+            loss_percent: 0.1       # 0.1% packet loss
+            rate_mbps: 100.0        # 100 Mbps bandwidth limit
+            correlation_percent: 25.0  # Loss correlation
+
+    node2:
+      kind: linux
+      image: alpine:latest
+      cmd: sleep infinity
+      interfaces:
+        eth1:
+          fixed_netem:
+            delay_ms: 10.0          # Same delay (symmetric link)
+            jitter_ms: 1.0
+            loss_percent: 0.1
+            rate_mbps: 100.0
+            correlation_percent: 25.0
+
+  # Links between nodes
+  links:
+    - endpoints: [node1:eth1, node2:eth1]
