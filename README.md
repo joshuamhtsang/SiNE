@@ -143,13 +143,17 @@ Legend:
 
 5. **Test connectivity** (in separate terminals):
    ```bash
-   # IPv4 method
+   ## IPv4 method
+   # iperf3 server on node 1
    docker exec -it clab-vacuum-20m-node1 iperf3 -s
+   # iperf3 client on node 2
    docker exec -it clab-vacuum-20m-node2 iperf3 -c 192.168.1.1
 
-   # OR IPv6 method (use node1's IPv6 address from step 4, with %eth1 suffix)
+   ## OR IPv6 method 
+   # iperf3 server on node 1
    docker exec -it clab-vacuum-20m-node1 iperf3 -s
-   docker exec -it clab-vacuum-20m-node2 iperf3 -c fe80::a8b9:48ff:fe4a:a1f6%eth1
+   # iperf3 client on node 2 (one-liner using node1's link-local address)
+   docker exec -it clab-vacuum-20m-node2 iperf3 -c $(docker exec clab-vacuum-20m-node1 ip -6 addr show dev eth1 | grep fe80 | awk '{print $2}' | cut -d'/' -f1)%eth1
    ```
 
 6. **Cleanup**:
