@@ -238,7 +238,8 @@ class EmulationController:
         link_requests = []
 
         for link in links:
-            node1_name, node2_name = link.endpoints
+            # Use get_node_names() to handle "node:interface" format
+            node1_name, node2_name = link.get_node_names()
             node1 = nodes.get(node1_name)
             node2 = nodes.get(node2_name)
 

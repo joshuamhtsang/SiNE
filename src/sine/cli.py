@@ -506,11 +506,12 @@ def render(
     # Add TX/RX devices from wireless links
     nodes_added = set()
     for link in config.topology.wireless_links:
-        for endpoint in link.endpoints:
-            if endpoint in nodes_added:
+        # Use get_node_names() to handle "node:interface" format
+        for node_name in link.get_node_names():
+            if node_name in nodes_added:
                 continue
 
-            node = config.topology.nodes.get(endpoint)
+            node = config.topology.nodes.get(node_name)
             if node and node.wireless:
                 pos = (
                     node.wireless.position.x,
@@ -519,11 +520,11 @@ def render(
                 )
                 # Add as transmitter (for path computation, both ends need devices)
                 if len(nodes_added) % 2 == 0:
-                    engine.add_transmitter(endpoint, pos)
+                    engine.add_transmitter(node_name, pos)
                 else:
-                    engine.add_receiver(endpoint, pos)
-                nodes_added.add(endpoint)
-                console.print(f"[dim]Added device: {endpoint} at ({pos[0]:.1f}, {pos[1]:.1f}, {pos[2]:.1f})[/]")
+                    engine.add_receiver(node_name, pos)
+                nodes_added.add(node_name)
+                console.print(f"[dim]Added device: {node_name} at ({pos[0]:.1f}, {pos[1]:.1f}, {pos[2]:.1f})[/]")
 
     if not nodes_added:
         console.print("[yellow]Warning: No wireless nodes found in topology[/]")

@@ -4,7 +4,7 @@
 # using SiNE's point-to-point link model. Each node has direct wireless links
 # to both other nodes, forming a fully-connected triangle mesh.
 #
-# Topology:
+# Topology (with explicit interface assignments):
 #
 #           node1 (0,0,1)
 #            /  \
@@ -17,6 +17,10 @@
 #
 # Node positions form an equilateral triangle with 10m sides.
 # Each node has 2 wireless interfaces connecting to the other 2 nodes.
+#
+# Interface assignment format:
+#   endpoints: [node1:eth1, node2:eth1]  # Explicit interfaces
+#   endpoints: [node1, node2]            # Auto-assigned (eth1, eth2, ...)
 #
 # Usage:
 #   # Terminal 1: Start channel server
@@ -66,13 +70,13 @@ topology:
           x: 0.0
           y: 0.0
           z: 1.0
-        frequency_hz: 5.18e9
-        bandwidth_hz: 80e6
+        frequency_ghz: 5.18
+        bandwidth_mhz: 80
         rf_power_dbm: 20.0
         antenna_gain_dbi: 2.0
         antenna_pattern: iso
         polarization: V
-        modulation: qam64
+        modulation: 64qam
         fec_type: ldpc
         fec_code_rate: 0.75
 
@@ -85,13 +89,13 @@ topology:
           x: 10.0
           y: 0.0
           z: 1.0
-        frequency_hz: 5.18e9
-        bandwidth_hz: 80e6
+        frequency_ghz: 5.18
+        bandwidth_mhz: 80
         rf_power_dbm: 20.0
         antenna_gain_dbi: 2.0
         antenna_pattern: iso
         polarization: V
-        modulation: qam64
+        modulation: 64qam
         fec_type: ldpc
         fec_code_rate: 0.75
 
@@ -106,19 +110,20 @@ topology:
           x: 5.0
           y: 8.66
           z: 1.0
-        frequency_hz: 5.18e9
-        bandwidth_hz: 80e6
+        frequency_ghz: 5.18
+        bandwidth_mhz: 80
         rf_power_dbm: 20.0
         antenna_gain_dbi: 2.0
         antenna_pattern: iso
         polarization: V
-        modulation: qam64
+        modulation: 64qam
         fec_type: ldpc
         fec_code_rate: 0.75
 
   # Full mesh: each node connects to both other nodes
   # This creates a point-to-point topology where each link is independent
+  # Using explicit interface assignment (node:interface format)
   wireless_links:
-    - endpoints: [node1, node2]  # node1:eth1 <-> node2:eth1, distance: 10m
-    - endpoints: [node1, node3]  # node1:eth2 <-> node3:eth1, distance: 10m
-    - endpoints: [node2, node3]  # node2:eth2 <-> node3:eth2, distance: 10m
+    - endpoints: [node1:eth1, node2:eth1]  # distance: 10m
+    - endpoints: [node1:eth2, node3:eth1]  # distance: 10m
+    - endpoints: [node2:eth2, node3:eth2]  # distance: 10m

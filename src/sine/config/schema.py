@@ -143,13 +143,45 @@ class NodeConfig(BaseModel):
     )
 
 
+def parse_endpoint(endpoint: str) -> tuple[str, str | None]:
+    """
+    Parse an endpoint string into (node_name, interface).
+
+    Supports two formats:
+    - "node1" -> ("node1", None) - interface auto-assigned
+    - "node1:eth1" -> ("node1", "eth1") - explicit interface
+
+    Args:
+        endpoint: Endpoint string like "node1" or "node1:eth1"
+
+    Returns:
+        Tuple of (node_name, interface_or_none)
+    """
+    if ":" in endpoint:
+        parts = endpoint.split(":", 1)
+        return (parts[0], parts[1])
+    return (endpoint, None)
+
+
 class WirelessLink(BaseModel):
-    """Definition of a wireless link between two nodes."""
+    """
+    Definition of a wireless link between two nodes.
+
+    Endpoints can be specified in two formats:
+    - Simple: ["node1", "node2"] - interfaces auto-assigned (eth1, eth2, etc.)
+    - Explicit: ["node1:eth1", "node2:eth1"] - specific interface assignment
+
+    Example with explicit interfaces:
+        wireless_links:
+          - endpoints: [node1:eth1, node2:eth1]
+          - endpoints: [node1:eth2, node3:eth1]
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     endpoints: tuple[str, str] = Field(
-        ..., description="Tuple of (node1_name, node2_name)"
+        ...,
+        description="Tuple of endpoints: 'node' or 'node:interface' format",
     )
     bandwidth_override_mbps: float | None = Field(
         default=None, description="Override computed bandwidth limit (Mbps)"
@@ -159,9 +191,23 @@ class WirelessLink(BaseModel):
     @classmethod
     def validate_endpoints(cls, v: tuple[str, str]) -> tuple[str, str]:
         """Ensure endpoints are different nodes."""
-        if v[0] == v[1]:
+        node1, _ = parse_endpoint(v[0])
+        node2, _ = parse_endpoint(v[1])
+        if node1 == node2:
             raise ValueError("Link endpoints must be different nodes")
         return v
+
+    def get_node_names(self) -> tuple[str, str]:
+        """Return just the node names (without interface suffixes)."""
+        node1, _ = parse_endpoint(self.endpoints[0])
+        node2, _ = parse_endpoint(self.endpoints[1])
+        return (node1, node2)
+
+    def get_interfaces(self) -> tuple[str | None, str | None]:
+        """Return the interface specifications (None if auto-assigned)."""
+        _, iface1 = parse_endpoint(self.endpoints[0])
+        _, iface2 = parse_endpoint(self.endpoints[1])
+        return (iface1, iface2)
 
 
 class SceneConfig(BaseModel):
@@ -201,14 +247,36 @@ class TopologyDefinition(BaseModel):
     def validate_link_nodes_exist(
         cls, v: list[WirelessLink], info: ValidationInfo
     ) -> list[WirelessLink]:
-        """Ensure all link endpoints reference existing nodes."""
+        """Ensure all link endpoints reference existing nodes and no interface conflicts."""
         nodes = info.data.get("nodes", {})
-        for link in v:
-            for endpoint in link.endpoints:
-                if endpoint not in nodes:
+
+        # Track interface assignments to detect conflicts
+        # Format: {(node, interface): link_index}
+        interface_assignments: dict[tuple[str, str], int] = {}
+
+        for link_idx, link in enumerate(v):
+            node_names = link.get_node_names()
+            interfaces = link.get_interfaces()
+
+            for i, (node_name, interface) in enumerate(zip(node_names, interfaces)):
+                # Check node exists
+                if node_name not in nodes:
                     raise ValueError(
-                        f"Link endpoint '{endpoint}' not found in nodes"
+                        f"Link endpoint '{link.endpoints[i]}': "
+                        f"node '{node_name}' not found in nodes"
                     )
+
+                # Check for interface conflicts (only for explicit interfaces)
+                if interface:
+                    key = (node_name, interface)
+                    if key in interface_assignments:
+                        prev_link_idx = interface_assignments[key]
+                        raise ValueError(
+                            f"Interface conflict: {node_name}:{interface} is used by "
+                            f"multiple links (link {prev_link_idx + 1} and link {link_idx + 1})"
+                        )
+                    interface_assignments[key] = link_idx
+
         return v
 
 

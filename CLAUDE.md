@@ -407,6 +407,27 @@ Each wireless link is a separate veth pair with independent netem configuration:
 - Hidden node problem not naturally modeled
 - Multiple interfaces per node (real MANETs typically use single interface)
 
+### Explicit Interface Assignment
+
+Endpoints in `wireless_links` support two formats:
+
+```yaml
+# Auto-assigned interfaces (eth1, eth2, ... based on link order)
+wireless_links:
+  - endpoints: [node1, node2]
+  - endpoints: [node1, node3]
+
+# Explicit interface assignment (recommended for clarity)
+wireless_links:
+  - endpoints: [node1:eth1, node2:eth1]
+  - endpoints: [node1:eth2, node3:eth1]
+```
+
+Benefits of explicit assignment:
+- **Predictable**: You know exactly which interface connects to which peer
+- **Readable**: IP configuration matches interface names in the YAML
+- **Conflict detection**: Schema validates that no interface is used twice
+
 ### Interface Mapping for MANET
 
 For topologies with 3+ nodes, SiNE tracks which interface connects to which peer:
