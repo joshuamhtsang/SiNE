@@ -333,9 +333,9 @@ class EmulationController:
 
         # Find the interfaces for this link
         # In containerlab, interfaces are named eth1, eth2, etc.
-        # We need to match them based on link topology
-        tx_interface = self._find_link_interface(tx_container, rx_node)
-        rx_interface = self._find_link_interface(rx_container, tx_node)
+        # We use the interface mapping to find the correct interface for each peer
+        tx_interface = self._find_link_interface(tx_container, tx_node, rx_node)
+        rx_interface = self._find_link_interface(rx_container, rx_node, tx_node)
 
         # Apply netem on both sides (wireless is bidirectional)
         tx_success = False
@@ -380,31 +380,47 @@ class EmulationController:
             )
 
     def _find_link_interface(
-        self, container_info: dict, peer_node: str
+        self, container_info: dict, node_name: str, peer_node: str
     ) -> Optional[str]:
         """
-        Find interface connected to peer node.
+        Find interface on node that connects to peer_node.
 
         In containerlab, interfaces are named eth<N>.
         eth0 is reserved for management, so wireless links use eth1, eth2, etc.
 
+        For MANET topologies with 3+ nodes, each node may have multiple wireless
+        interfaces (eth1, eth2, etc.) connecting to different peers. We use the
+        interface mapping from ContainerlabManager to find the correct one.
+
         Args:
             container_info: Container information dict
-            peer_node: Name of the peer node (currently unused, reserved for future topology mapping)
+            node_name: Name of this node
+            peer_node: Name of the peer node at the other end of the link
 
         Returns:
             Interface name (e.g., "eth1") or None if not found
         """
-        interfaces = container_info.get("interfaces", [])
+        # First, try to get the interface from the topology mapping
+        # This is the correct approach for MANET topologies
+        if self.clab_manager:
+            mapped_interface = self.clab_manager.get_interface_for_peer(
+                node_name, peer_node
+            )
+            if mapped_interface:
+                return mapped_interface
 
-        # Find first non-management interface
-        # eth0 is the management interface in containerlab, skip it
+        # Fallback: Find first non-management interface (for backwards compatibility)
+        # This works for 2-node topologies but may be incorrect for 3+ nodes
+        interfaces = container_info.get("interfaces", [])
         for iface in interfaces:
             if iface.startswith("eth") and iface != "eth0":
+                logger.warning(
+                    f"Using fallback interface {iface} for {node_name}->{peer_node} "
+                    f"(interface mapping not found)"
+                )
                 return iface
 
         # If no interfaces found besides eth0, log warning and use eth1 as fallback
-        # This shouldn't happen in normal deployments but provides a safe default
         logger.warning(
             f"No wireless interfaces found for {container_info.get('name', 'unknown')}, "
             f"using eth1 as fallback"

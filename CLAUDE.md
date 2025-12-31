@@ -197,15 +197,16 @@ uv run ruff check src/sine
 
 ## Examples
 
-Three example topologies are provided in `examples/`:
+Four example topologies are provided in `examples/`:
 
 | Example | Description | Scene | Node Positions |
 |---------|-------------|-------|----------------|
 | `vacuum_20m/` | Baseline free-space | `vacuum.xml` (empty) | 20m apart, linear (0,0,1) to (20,0,1) |
 | `two_room_wifi/` | Good link quality | `two_room_default.xml` (5m x 4m rooms) | Aligned with doorway (~5m, LOS) |
 | `two_room_wifi_poor/` | Poor link quality | `two_room_large.xml` (10m x 8m rooms) | Opposite corners (~22m, NLOS) |
+| `manet_triangle/` | 3-node MANET mesh | `vacuum.xml` (empty) | Equilateral triangle, 10m sides |
 
-The examples demonstrate the effect of distance and propagation conditions on link quality.
+The examples demonstrate the effect of distance, propagation conditions, and multi-node topologies on link quality.
 
 ## Channel Server API
 
@@ -369,3 +370,91 @@ self.netem_config.apply_config(rx_container, rx_interface, params, rx_pid)
 ```
 
 Both interfaces receive the same parameters (symmetric link). The update happens atomically for each interface but sequentially between interfaces (~10ms total for both sides).
+
+## MANET Support
+
+SiNE supports Mobile Ad-hoc Network (MANET) topologies using a **point-to-point link model**.
+
+### Point-to-Point Model (Current Implementation)
+
+Each wireless link is a separate veth pair with independent netem configuration:
+
+```
+           node1 (0,0,1)
+            /  \
+         eth1  eth2         ← Each node has multiple interfaces
+          /      \
+       eth1      eth1
+        /          \
+     node2 -------- node3
+   (10,0,1)  eth2   (5,8.66,1)
+```
+
+**Key characteristics:**
+- Each node has N-1 interfaces for N nodes in a fully-connected mesh
+- Interface mapping: `ContainerlabManager` tracks `(node, peer) → interface`
+- Independent channel computation per link (based on distance, scene geometry)
+- Netem applied per-interface based on specific link's channel conditions
+
+**Pros:**
+- Simple implementation using existing containerlab link model
+- Each link can have different channel conditions (accurate for directional scenarios)
+- Easy to understand and debug
+- Works well for testing MANET routing protocols
+
+**Cons:**
+- Not a true broadcast medium (no shared channel contention)
+- Hidden node problem not naturally modeled
+- Multiple interfaces per node (real MANETs typically use single interface)
+
+### Interface Mapping for MANET
+
+For topologies with 3+ nodes, SiNE tracks which interface connects to which peer:
+
+```python
+# In ContainerlabManager.generate_clab_topology()
+self._interface_mapping[(node1, node2)] = "eth1"  # node1 uses eth1 to reach node2
+self._interface_mapping[(node2, node1)] = "eth1"  # node2 uses eth1 to reach node1
+self._interface_mapping[(node1, node3)] = "eth2"  # node1 uses eth2 to reach node3
+# etc.
+```
+
+This mapping is used by `EmulationController._find_link_interface()` to apply the correct netem parameters to each interface.
+
+### MANET Example
+
+See `examples/manet_triangle/network.yaml` for a 3-node MANET topology:
+
+```bash
+# Deploy MANET example
+sudo $(which uv) run sine deploy examples/manet_triangle/network.yaml
+
+# Verify all 3 links have netem configured
+./CLAUDE_RESOURCES/check_netem.sh
+```
+
+### Shared Bridge Model (Future Enhancement)
+
+A more realistic MANET implementation would use a shared broadcast medium:
+
+```
+All nodes share a single Linux bridge (broadcast domain)
+            ╔═══════════════════════════════╗
+Node1:eth1 ═╣                               ╠═ Node2:eth1
+            ║       Shared Bridge           ║
+Node3:eth1 ═╣   (single broadcast domain)   ╠═ Node4:eth1
+            ╚═══════════════════════════════╝
+```
+
+**Key differences from point-to-point:**
+- Single interface per node (like real MANETs)
+- All nodes "hear" all transmissions (broadcast medium)
+- Requires per-destination filtering for netem (complex)
+- Hidden node problem can be modeled
+
+**Implementation approach:**
+1. Create single bridge connecting all wireless nodes
+2. Use eBPF/tc filters to apply per-destination netem rules
+3. Broadcast packets see worst-case channel to any receiver
+
+This is not yet implemented but could be added for applications requiring true broadcast semantics.

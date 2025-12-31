@@ -40,6 +40,9 @@ class ContainerlabManager:
         self._container_info: dict[str, dict] = {}
         self._clab_topology_path: Optional[Path] = None
         self._lab_name: Optional[str] = None
+        # Interface mapping: (node, peer_node) -> interface_name
+        # This enables correct interface selection for MANET topologies
+        self._interface_mapping: dict[tuple[str, str], str] = {}
 
     def generate_clab_topology(self, sine_config: dict) -> dict:
         """
@@ -86,6 +89,9 @@ class ContainerlabManager:
         # Containerlab link format: endpoints: ["node1:eth1", "node2:eth1"]
         interface_counters: dict[str, int] = {}
 
+        # Clear any previous interface mapping
+        self._interface_mapping = {}
+
         for wlink in topology_def.get("wireless_links", []):
             endpoints = wlink.get("endpoints", [])
             if len(endpoints) != 2:
@@ -99,8 +105,20 @@ class ContainerlabManager:
             interface_counters[node1] = if_num1 + 1
             interface_counters[node2] = if_num2 + 1
 
-            link = {"endpoints": [f"{node1}:eth{if_num1}", f"{node2}:eth{if_num2}"]}
+            iface1 = f"eth{if_num1}"
+            iface2 = f"eth{if_num2}"
+
+            # Store interface mapping for later use
+            # node1 uses iface1 to reach node2, and vice versa
+            self._interface_mapping[(node1, node2)] = iface1
+            self._interface_mapping[(node2, node1)] = iface2
+
+            link = {"endpoints": [f"{node1}:{iface1}", f"{node2}:{iface2}"]}
             clab_topology["topology"]["links"].append(link)
+
+            logger.debug(
+                f"Link {node1}<->{node2}: {node1}:{iface1} <-> {node2}:{iface2}"
+            )
 
         return clab_topology
 
@@ -243,6 +261,31 @@ class ContainerlabManager:
     def get_all_containers(self) -> dict[str, dict]:
         """Get info for all deployed containers."""
         return self._container_info.copy()
+
+    def get_interface_for_peer(self, node: str, peer_node: str) -> Optional[str]:
+        """
+        Get the interface on `node` that connects to `peer_node`.
+
+        This is essential for MANET topologies where a node may have multiple
+        wireless interfaces (eth1, eth2, etc.) connecting to different peers.
+
+        Args:
+            node: The node whose interface we want
+            peer_node: The peer node at the other end of the link
+
+        Returns:
+            Interface name (e.g., "eth1") or None if no direct link exists
+        """
+        return self._interface_mapping.get((node, peer_node))
+
+    def get_interface_mapping(self) -> dict[tuple[str, str], str]:
+        """
+        Get the full interface mapping.
+
+        Returns:
+            Dictionary mapping (node, peer_node) tuples to interface names
+        """
+        return self._interface_mapping.copy()
 
     def destroy(self) -> bool:
         """

@@ -528,6 +528,58 @@ Containerlab architecture:
 
 A: The bridge adds negligible latency (~1-10 microseconds) compared to wireless delays (0.1-10+ milliseconds). This overhead is insignificant for wireless emulation.
 
+### MANET (Mobile Ad-hoc Network) Support
+
+**Q: Does SiNE support MANET topologies with 3+ nodes?**
+
+A: Yes! SiNE supports MANET using a **point-to-point link model**. Each wireless link is a separate veth pair with independent netem configuration.
+
+Example 3-node triangle topology:
+```
+         node1 (0,0,1)
+          /  \
+       eth1  eth2      ← Each node has multiple interfaces
+        /      \
+     eth1      eth1
+      /          \
+   node2 -------- node3
+ (10,0,1) eth2   (5,8.66,1)
+```
+
+**Q: How does SiNE know which interface to configure for each link?**
+
+A: SiNE builds an interface mapping when generating the containerlab topology:
+- `(node1, node2) → eth1` (node1 uses eth1 to reach node2)
+- `(node1, node3) → eth2` (node1 uses eth2 to reach node3)
+- etc.
+
+This mapping is used by `_find_link_interface()` to apply the correct netem parameters to each interface.
+
+**Q: How do I deploy a MANET example?**
+
+```bash
+# Deploy 3-node triangle MANET
+sudo $(which uv) run sine deploy examples/manet_triangle/network.yaml
+
+# Verify netem on all interfaces
+./CLAUDE_RESOURCES/check_netem.sh
+```
+
+**Q: What are the limitations of the point-to-point model?**
+
+**Pros:**
+- Simple implementation using containerlab links
+- Each link has independent channel conditions
+- Easy to debug and understand
+- Works well for testing MANET routing protocols
+
+**Cons:**
+- Not a true broadcast medium (no shared channel contention)
+- Hidden node problem not naturally modeled
+- Multiple interfaces per node (real MANETs use single interface)
+
+For applications requiring true broadcast semantics, a shared bridge model could be implemented in the future. See [CLAUDE.md](CLAUDE.md) for technical details.
+
 ## License
 
 Apache License 2.0
