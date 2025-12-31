@@ -23,6 +23,21 @@ SiNE creates realistic wireless network emulations by combining:
 - Mobility support with 100ms update polling
 - Deployment summary showing containers, interfaces, and netem parameters
 
+## Requirements
+
+- Python 3.12+
+- Docker
+- Containerlab (installed via `./configure.sh`)
+- Sionna v1.2.1 (installed automatically via `uv sync`)
+- For GPU acceleration: NVIDIA GPU with CUDA support (use `./configure.sh --cuda`)
+- sudo access (required for netem to access container network namespaces)
+
+**Verify prerequisites:**
+```bash
+docker --version        # Docker must be installed and running
+python3 --version       # Must be 3.12 or higher
+```
+
 ## Installation
 
 ### 1. System Dependencies
@@ -50,6 +65,8 @@ uv sync --extra dev
 **Note**: Requires Python 3.12+ for Sionna v1.2.1 compatibility.
 
 ## Quick Start
+
+This quick start deploys a simple two-node wireless network with 20 meters of free-space separation using the `vacuum_20m` example. You'll run iperf3 to measure throughput over the emulated wireless link.
 
 ### Architecture Overview
 
@@ -128,8 +145,8 @@ Legend:
    **Option A: IPv4 (recommended)**
    ```bash
    # Assign IPv4 addresses to the wireless interfaces
-   docker exec -it clab-vacuum-20m-node1 ip addr add 192.168.1.1/24 dev eth1
-   docker exec -it clab-vacuum-20m-node2 ip addr add 192.168.1.2/24 dev eth1
+   docker exec -it clab-vacuum-20m-node1 ip addr add 18.0.0.1/24 dev eth1
+   docker exec -it clab-vacuum-20m-node2 ip addr add 18.0.0.2/24 dev eth1
    ```
 
    **Option B: Use IPv6 link-local (auto-configured)**
@@ -147,19 +164,103 @@ Legend:
    # iperf3 server on node 1
    docker exec -it clab-vacuum-20m-node1 iperf3 -s
    # iperf3 client on node 2
-   docker exec -it clab-vacuum-20m-node2 iperf3 -c 192.168.1.1
+   docker exec -it clab-vacuum-20m-node2 iperf3 -c 18.0.0.1
 
-   ## OR IPv6 method 
+   ## OR IPv6 method
    # iperf3 server on node 1
    docker exec -it clab-vacuum-20m-node1 iperf3 -s
    # iperf3 client on node 2 (one-liner using node1's link-local address)
    docker exec -it clab-vacuum-20m-node2 iperf3 -c $(docker exec clab-vacuum-20m-node1 ip -6 addr show dev eth1 | grep fe80 | awk '{print $2}' | cut -d'/' -f1)%eth1
    ```
 
+   **Expected output** (throughput limited by emulated wireless channel):
+   ```
+   [ ID] Interval           Transfer     Bitrate         Retr
+   [  5]   0.00-10.00  sec   224 MBytes   188 Mbits/sec   0    sender
+   [  5]   0.00-10.04  sec   224 MBytes   187 Mbits/sec        receiver
+   ```
+
+   The ~188 Mbps throughput reflects the emulated 80 MHz WiFi6 channel with 64-QAM modulation and rate-1/2 LDPC coding. Without netem (i.e., without sudo), you would see 10+ Gbps.
+
 6. **Cleanup**:
    ```bash
    uv run sine destroy examples/vacuum_20m/network.yaml
    ```
+
+## Workflow: Creating Your Own Network
+
+To create and run your own custom emulated network:
+
+### 1. Create a Scene File (Optional)
+
+Define the physical environment for ray tracing. Scene files use Mitsuba XML format (required by Sionna's ray tracing engine).
+
+- Use an existing scene from `scenes/` or create your own
+- Materials must use ITU naming convention (e.g., `itu_concrete`, `itu_glass`)
+- If omitted, use `scenes/vacuum.xml` for free-space propagation
+- For fixed netem links only, no scene file is required
+
+See `scenes/generate_room.py` for programmatic scene generation.
+
+### 2. Build Node Container Images
+
+Build Docker images containing the software your nodes will run:
+
+```bash
+# Use the provided base image (includes iperf3, tcpdump, etc.)
+docker build -t sine-node:latest docker/node/
+
+# Or build your own custom image
+docker build -t my-app:latest ./my-app/
+```
+
+### 3. Create a Network Topology (`network.yaml`)
+
+Define your network topology specifying:
+- **Nodes**: Container image, interfaces, and their configurations
+- **Interface type**: `wireless` (ray-traced) or `fixed_netem` (direct parameters)
+- **Links**: Connections between node interfaces
+- **Scene**: Path to your Mitsuba XML scene file (for wireless links)
+
+See `examples/` for reference topologies.
+
+### 4. Deploy the Emulation
+
+```bash
+# Terminal 1: Start the channel server (computes wireless link parameters)
+uv run sine channel-server
+
+# Terminal 2: Deploy containers and apply network emulation
+sudo $(which uv) run sine deploy path/to/network.yaml
+```
+
+### 5. Configure IP Addresses (Optional)
+
+Containers start with no IP addresses. Assign them manually:
+
+```bash
+docker exec -it clab-<topology>-<node> ip addr add <ip>/<mask> dev eth1
+```
+
+### 6. Run Applications and Tests
+
+Execute your applications, performance tests, or mobility scripts:
+
+```bash
+# Run commands inside containers
+docker exec -it clab-<topology>-<node> <command>
+
+# Use mobility API to move nodes (updates channel conditions in real-time)
+curl -X POST http://localhost:8001/api/mobility/update \
+     -H "Content-Type: application/json" \
+     -d '{"node": "node1", "x": 5.0, "y": 3.0, "z": 1.0}'
+```
+
+### 7. Cleanup
+
+```bash
+uv run sine destroy path/to/network.yaml
+```
 
 ## Mobility - Moving Nodes During Emulation
 
@@ -320,18 +421,9 @@ topology:
 - Both endpoints of a link must be the same type
 - Scene file only required for wireless links
 
-## Requirements
+### Sudo Configuration (Optional)
 
-- Python 3.12+
-- Docker
-- Containerlab (installed via `./configure.sh`)
-- Sionna v1.2.1 (installed automatically via `uv sync`)
-- For GPU acceleration: NVIDIA GPU with CUDA support (use `./configure.sh --cuda`)
-- sudo access (required for netem to access container network namespaces)
-
-### Sudo Configuration (Optional but Recommended)
-
-To avoid entering your password every time you deploy, you can configure passwordless sudo for the specific commands used by netem:
+To avoid entering your password every time you deploy, configure passwordless sudo:
 
 ```bash
 # Create a sudoers file for SiNE
@@ -345,36 +437,9 @@ EOF
 sudo chmod 0440 /etc/sudoers.d/sine
 ```
 
-This allows `sine deploy` to run without `sudo` while still having the necessary privileges for netem configuration.
+## CLI Commands
 
-## The `sine` CLI Tool
-
-This project provides the `sine` command-line tool. It's defined as a Python entry point in `pyproject.toml`:
-
-```toml
-[project.scripts]
-sine = "sine.cli:main"
-```
-
-The build system uses **Hatchling** as the build backend:
-
-```toml
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
-[tool.hatch.build.targets.wheel]
-packages = ["src/sine"]  # Tells Hatchling where to find the package
-```
-
-When you run `uv sync`, the process works like this:
-1. **uv** (the frontend) reads `pyproject.toml`
-2. **Hatchling** (the backend) builds the package from `src/sine/`
-3. The installer creates `.venv/bin/sine` - a wrapper that imports and runs the `main()` function from [src/sine/cli.py](src/sine/cli.py)
-
-The CLI is built using [Click](https://click.palletsprojects.com/).
-
-### Available Commands in `sine`
+Available commands (run with `uv run sine <command>`):
 
 ```bash
 uv run sine deploy <topology.yaml>   # Deploy emulation
@@ -423,37 +488,6 @@ The viewer notebook provides:
 Controls: Mouse left (rotate), scroll (zoom), mouse right (pan), Alt+click (pick coordinates)
 
 **Note**: Use `load_scene(file, merge_shapes=False)` to keep individual surfaces separate for inspection. The default `merge_shapes=True` combines surfaces with the same material for better performance.
-
-## Architecture
-
-```
-+-------------------+     +------------------------+     +------------------+
-|   network.yaml    | --> |  Emulation Controller  | --> |   Containerlab   |
-| (Topology + RF)   |     |   (Orchestrator)       |     |  (Docker nodes   |
-+-------------------+     +------------------------+     |   + veth links)  |
-                                    |                    +------------------+
-                                    |                            |
-                                    v                            v
-                          +------------------------+     +------------------+
-                          | Channel Computation    |     |   Linux netem    |
-                          | Server (FastAPI)       | --> | (applied to      |
-                          +------------------------+     |  veth interfaces)|
-                                    |                    +------------------+
-                                    v
-                          +------------------------+
-                          |    Sionna RT Engine    |
-                          | (Ray tracing + BER)    |
-                          +------------------------+
-```
-
-**Containerlab Integration**: SiNE uses containerlab as a required dependency to deploy the actual network topology. The workflow is:
-
-1. **Parse topology**: Read `network.yaml` with wireless parameters (position, RF power, antenna, etc.)
-2. **Generate containerlab config**: Strip wireless params, create `.sine_clab_topology.yaml`
-3. **Deploy via containerlab**: Run `containerlab deploy` to create Docker containers and veth links
-4. **Apply wireless emulation**: Configure netem on the containerlab-created interfaces based on Sionna ray tracing results
-
-Containerlab handles container lifecycle and network plumbing; SiNE adds the wireless channel model on top.
 
 ## Channel Server API
 
@@ -637,6 +671,68 @@ sudo $(which uv) run sine deploy examples/manet_triangle/network.yaml
 - Multiple interfaces per node (real MANETs use single interface)
 
 For applications requiring true broadcast semantics, a shared bridge model could be implemented in the future. See [CLAUDE.md](CLAUDE.md) for technical details.
+
+## Troubleshooting
+
+### "Permission denied" when running sine deploy
+
+**Cause**: netem requires sudo to access container network namespaces.
+
+**Solution**: Run with sudo using full path to uv:
+```bash
+sudo $(which uv) run sine deploy <topology.yaml>
+```
+
+Or configure passwordless sudo (see "Sudo Configuration" section above).
+
+### Channel server not responding / Connection refused
+
+**Cause**: Channel server not running or wrong port.
+
+**Solution**:
+1. Start the channel server in a separate terminal:
+   ```bash
+   uv run sine channel-server
+   ```
+2. Verify it's running: `curl http://localhost:8000/health`
+3. Check the `channel_server` URL in your network.yaml matches
+
+### Container not found / "No such container"
+
+**Cause**: Containers not deployed or wrong name.
+
+**Solution**:
+1. Check running containers: `uv run sine status`
+2. Container names follow pattern: `clab-<topology-name>-<node-name>`
+3. If no containers, deploy first: `sudo $(which uv) run sine deploy <topology.yaml>`
+
+### "No route to host" when pinging between containers
+
+**Cause**: IP addresses not configured on container interfaces.
+
+**Solution**: Assign IP addresses after deployment:
+```bash
+docker exec -it clab-<topology>-node1 ip addr add 18.0.0.1/24 dev eth1
+docker exec -it clab-<topology>-node2 ip addr add 18.0.0.2/24 dev eth1
+```
+
+### iperf3 shows 10+ Gbps instead of expected wireless rate
+
+**Cause**: netem not applied (deployment ran without sudo).
+
+**Solution**:
+1. Destroy the current deployment: `uv run sine destroy <topology.yaml>`
+2. Redeploy with sudo: `sudo $(which uv) run sine deploy <topology.yaml>`
+3. Verify netem: `./CLAUDE_RESOURCES/check_netem.sh`
+
+### Scene file not found
+
+**Cause**: Invalid path to Mitsuba XML scene file.
+
+**Solution**:
+1. Check the `scene.file` path in your network.yaml
+2. Paths are relative to where you run the command
+3. Use `scenes/vacuum.xml` for free-space propagation testing
 
 ## License
 

@@ -11,34 +11,35 @@ SiNE is a wireless network emulation package that combines:
 
 SiNE uses containerlab as a core component for deploying the network topology:
 
-1. **Topology Conversion** ([src/sine/topology/manager.py:44-105](src/sine/topology/manager.py#L44-L105)):
-   - SiNE topology YAML extends containerlab format with wireless parameters (position, RF power, antenna, etc.)
-   - `ContainerlabManager.generate_clab_topology()` strips wireless params to create pure containerlab YAML
-   - Wireless links become standard veth links: `endpoints: ["node1:eth1", "node2:eth1"]`
+1. **Topology Conversion** (`ContainerlabManager.generate_clab_topology()`):
+   - SiNE topology YAML extends containerlab format with wireless/fixed_netem parameters
+   - Strips interface params to create pure containerlab YAML
+   - Links become standard veth links: `endpoints: ["node1:eth1", "node2:eth1"]`
    - Output: `.sine_clab_topology.yaml` file
 
-2. **Container Deployment** ([src/sine/topology/manager.py:107-146](src/sine/topology/manager.py#L107-L146)):
+2. **Container Deployment**:
    - Executes `containerlab deploy -t .sine_clab_topology.yaml`
-   - Containerlab creates Docker containers with naming pattern: `clab-<lab_name>-<node_name>`
+   - Creates Docker containers with naming pattern: `clab-<lab_name>-<node_name>`
    - Creates veth pairs connecting containers (eth1, eth2, etc.)
    - eth0 reserved for management interface
 
-3. **Container Discovery** ([src/sine/topology/manager.py:148-229](src/sine/topology/manager.py#L148-L229)):
-   - After deployment, discovers containers using Docker API or subprocess fallback
+3. **Container Discovery**:
+   - Discovers containers using Docker API or subprocess fallback
    - Extracts container ID, name, PID, and network interfaces
    - Stores info for later netem configuration
 
-4. **Wireless Channel Application** ([src/sine/emulation/controller.py:313-381](src/sine/emulation/controller.py#L313-L381)):
-   - Uses Sionna ray tracing to compute channel conditions (SNR, BER, BLER)
+4. **Channel Application**:
+   - **Wireless links**: Uses Sionna ray tracing to compute channel conditions (SNR, BER, BLER)
+   - **Fixed links**: Uses directly specified netem parameters
    - Converts to netem parameters (delay, jitter, loss %, rate)
    - Applies netem to containerlab-created veth interfaces using `nsenter` (requires sudo)
    - Bidirectional: applies same params to both TX and RX interfaces
 
-5. **Cleanup** ([src/sine/topology/manager.py:247-285](src/sine/topology/manager.py#L247-L285)):
+5. **Cleanup**:
    - Executes `containerlab destroy -t .sine_clab_topology.yaml --cleanup`
    - Removes containers, networks, and temp files
 
-**Key Point**: Containerlab is NOT optional - it's the foundation for container and network management. SiNE adds the wireless propagation model layer on top of containerlab's basic networking.
+**Key Point**: Containerlab is NOT optional - it's the foundation for container and network management. SiNE adds the wireless/fixed channel model layer on top.
 
 ## Architecture
 
@@ -149,17 +150,13 @@ uv run sine channel-server
 # Deploy emulation (prints deployment summary with containers, interfaces, netem params)
 # NOTE: Requires sudo for netem (network emulation) configuration
 # Use full path to avoid "uv: command not found" error with sudo
-sudo $(which uv) run sine deploy examples/two_room_wifi/network.yaml
+sudo $(which uv) run sine deploy examples/vacuum_20m/network.yaml
 
 # Validate topology
-uv run sine validate examples/two_room_wifi/network.yaml
+uv run sine validate examples/vacuum_20m/network.yaml
 
 # Render scene to image (does NOT require channel server)
-uv run sine render examples/two_room_wifi/network.yaml -o scene.png
-
-# Render with options: custom camera, clip ceiling, high resolution
-uv run sine render examples/two_room_wifi/network.yaml -o scene.png \
-    --camera-position 5,2,10 --look-at 5,2,1 --clip-at 2.0 --resolution 1920x1080
+uv run sine render examples/vacuum_20m/network.yaml -o scene.png
 
 # Check system info
 uv run sine info
@@ -168,7 +165,7 @@ uv run sine info
 uv run sine status
 
 # Destroy emulation
-uv run sine destroy examples/two_room_wifi/network.yaml
+uv run sine destroy examples/vacuum_20m/network.yaml
 
 # Interactive scene viewer (Jupyter notebook)
 uv run --with jupyter jupyter notebook scenes/viewer.ipynb
@@ -177,8 +174,8 @@ uv run --with jupyter jupyter notebook scenes/viewer.ipynb
 ## Deployment Output
 
 When deploying, SiNE displays a summary showing:
-- **Deployed Containers**: Name, image, PID, interfaces, position (x,y,z)
-- **Wireless Link Parameters**: Link endpoints, delay (ms), jitter (ms), loss %, rate (Mbps)
+- **Deployed Containers**: Name, image, PID, interfaces, positions per interface
+- **Link Parameters**: Link endpoints, type (wireless/fixed), delay (ms), jitter (ms), loss %, rate (Mbps)
 
 ## Development
 
@@ -362,17 +359,7 @@ A: The bridge adds negligible latency (~1-10 microseconds) compared to the wirel
 
 **Q: When link conditions change, does SiNE update netem on both nodes?**
 
-A: Yes. When channel conditions are recomputed (due to mobility, initial deployment, etc.), SiNE updates netem on **both** endpoints of each wireless link:
-
-```python
-# From controller.py _apply_link_config()
-# Apply to TX side
-self.netem_config.apply_config(tx_container, tx_interface, params, tx_pid)
-# Apply to RX side
-self.netem_config.apply_config(rx_container, rx_interface, params, rx_pid)
-```
-
-Both interfaces receive the same parameters (symmetric link). The update happens atomically for each interface but sequentially between interfaces (~10ms total for both sides).
+A: Yes. When channel conditions are recomputed (due to mobility, initial deployment, etc.), SiNE updates netem on **both** endpoints of each link. Both interfaces receive the same parameters (symmetric link). The update happens atomically for each interface but sequentially between interfaces.
 
 ## MANET Support
 
@@ -444,17 +431,7 @@ Benefits:
 
 ### Interface Mapping for MANET
 
-For topologies with 3+ nodes, SiNE tracks which interface connects to which peer:
-
-```python
-# In ContainerlabManager.generate_clab_topology()
-self._interface_mapping[(node1, node2)] = "eth1"  # node1 uses eth1 to reach node2
-self._interface_mapping[(node2, node1)] = "eth1"  # node2 uses eth1 to reach node1
-self._interface_mapping[(node1, node3)] = "eth2"  # node1 uses eth2 to reach node3
-# etc.
-```
-
-This mapping is used by `EmulationController._find_link_interface()` to apply the correct netem parameters to each interface.
+For topologies with 3+ nodes, SiNE tracks which interface connects to which peer via `ContainerlabManager._interface_mapping`. This allows the controller to apply the correct netem parameters to each interface based on the link endpoint.
 
 ### MANET Example
 
