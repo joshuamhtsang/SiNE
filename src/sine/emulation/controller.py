@@ -536,10 +536,25 @@ class EmulationController:
                     }
                 summary["containers"].append(container_info)
 
-        # Get link states
+        # Get link states with interface information
         for (tx, rx), params in self._link_states.items():
+            # Get interface names from the mapping
+            tx_iface = None
+            rx_iface = None
+            if self.clab_manager:
+                tx_iface = self.clab_manager.get_interface_for_peer(tx, rx)
+                rx_iface = self.clab_manager.get_interface_for_peer(rx, tx)
+
+            # Format link with interfaces: "node1 (eth1) <-> node2 (eth1)"
+            tx_str = f"{tx} ({tx_iface})" if tx_iface else tx
+            rx_str = f"{rx} ({rx_iface})" if rx_iface else rx
+
             summary["wireless_links"].append({
-                "link": f"{tx} <-> {rx}",
+                "link": f"{tx_str} <-> {rx_str}",
+                "tx_node": tx,
+                "rx_node": rx,
+                "tx_interface": tx_iface,
+                "rx_interface": rx_iface,
                 "delay_ms": params.delay_ms,
                 "jitter_ms": params.jitter_ms,
                 "loss_percent": params.loss_percent,

@@ -236,6 +236,7 @@ Returns detailed ray tracing path information including:
 
 ## Important Notes
 
+- **Wireless Link Endpoints**: Must use `node:interface` format (e.g., `endpoints: [node1:eth1, node2:eth1]`)
 - **Scene Configuration**: Always specify `scene.file` in network.yaml (e.g., `file: scenes/two_room_default.xml`)
 - **Sionna Scene Materials**: Must use ITU naming convention (e.g., `itu_concrete`, not `concrete`)
 - **netem Configuration**: Requires `sudo` for `nsenter` to access container network namespaces
@@ -407,26 +408,22 @@ Each wireless link is a separate veth pair with independent netem configuration:
 - Hidden node problem not naturally modeled
 - Multiple interfaces per node (real MANETs typically use single interface)
 
-### Explicit Interface Assignment
+### Explicit Interface Assignment (Required)
 
-Endpoints in `wireless_links` support two formats:
+Endpoints in `wireless_links` **must** use `node:interface` format:
 
 ```yaml
-# Auto-assigned interfaces (eth1, eth2, ... based on link order)
-wireless_links:
-  - endpoints: [node1, node2]
-  - endpoints: [node1, node3]
-
-# Explicit interface assignment (recommended for clarity)
 wireless_links:
   - endpoints: [node1:eth1, node2:eth1]
   - endpoints: [node1:eth2, node3:eth1]
 ```
 
-Benefits of explicit assignment:
+Benefits:
+- **Explicit**: No auto-assignment magic, topology is self-documenting
 - **Predictable**: You know exactly which interface connects to which peer
 - **Readable**: IP configuration matches interface names in the YAML
 - **Conflict detection**: Schema validates that no interface is used twice
+- **Less bugs**: No ambiguity about interface assignment order
 
 ### Interface Mapping for MANET
 

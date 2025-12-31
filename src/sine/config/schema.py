@@ -143,35 +143,36 @@ class NodeConfig(BaseModel):
     )
 
 
-def parse_endpoint(endpoint: str) -> tuple[str, str | None]:
+def parse_endpoint(endpoint: str) -> tuple[str, str]:
     """
     Parse an endpoint string into (node_name, interface).
 
-    Supports two formats:
-    - "node1" -> ("node1", None) - interface auto-assigned
-    - "node1:eth1" -> ("node1", "eth1") - explicit interface
+    Required format: "node:interface" (e.g., "node1:eth1")
 
     Args:
-        endpoint: Endpoint string like "node1" or "node1:eth1"
+        endpoint: Endpoint string like "node1:eth1"
 
     Returns:
-        Tuple of (node_name, interface_or_none)
+        Tuple of (node_name, interface)
+
+    Raises:
+        ValueError: If endpoint doesn't include interface specification
     """
-    if ":" in endpoint:
-        parts = endpoint.split(":", 1)
-        return (parts[0], parts[1])
-    return (endpoint, None)
+    if ":" not in endpoint:
+        raise ValueError(
+            f"Endpoint '{endpoint}' must specify interface (e.g., '{endpoint}:eth1')"
+        )
+    parts = endpoint.split(":", 1)
+    return (parts[0], parts[1])
 
 
 class WirelessLink(BaseModel):
     """
     Definition of a wireless link between two nodes.
 
-    Endpoints can be specified in two formats:
-    - Simple: ["node1", "node2"] - interfaces auto-assigned (eth1, eth2, etc.)
-    - Explicit: ["node1:eth1", "node2:eth1"] - specific interface assignment
+    Endpoints must be specified in "node:interface" format.
 
-    Example with explicit interfaces:
+    Example:
         wireless_links:
           - endpoints: [node1:eth1, node2:eth1]
           - endpoints: [node1:eth2, node3:eth1]
@@ -181,7 +182,7 @@ class WirelessLink(BaseModel):
 
     endpoints: tuple[str, str] = Field(
         ...,
-        description="Tuple of endpoints: 'node' or 'node:interface' format",
+        description="Tuple of endpoints in 'node:interface' format (e.g., 'node1:eth1')",
     )
     bandwidth_override_mbps: float | None = Field(
         default=None, description="Override computed bandwidth limit (Mbps)"
@@ -203,8 +204,8 @@ class WirelessLink(BaseModel):
         node2, _ = parse_endpoint(self.endpoints[1])
         return (node1, node2)
 
-    def get_interfaces(self) -> tuple[str | None, str | None]:
-        """Return the interface specifications (None if auto-assigned)."""
+    def get_interfaces(self) -> tuple[str, str]:
+        """Return the interface specifications."""
         _, iface1 = parse_endpoint(self.endpoints[0])
         _, iface2 = parse_endpoint(self.endpoints[1])
         return (iface1, iface2)
@@ -266,16 +267,15 @@ class TopologyDefinition(BaseModel):
                         f"node '{node_name}' not found in nodes"
                     )
 
-                # Check for interface conflicts (only for explicit interfaces)
-                if interface:
-                    key = (node_name, interface)
-                    if key in interface_assignments:
-                        prev_link_idx = interface_assignments[key]
-                        raise ValueError(
-                            f"Interface conflict: {node_name}:{interface} is used by "
-                            f"multiple links (link {prev_link_idx + 1} and link {link_idx + 1})"
-                        )
-                    interface_assignments[key] = link_idx
+                # Check for interface conflicts
+                key = (node_name, interface)
+                if key in interface_assignments:
+                    prev_link_idx = interface_assignments[key]
+                    raise ValueError(
+                        f"Interface conflict: {node_name}:{interface} is used by "
+                        f"multiple links (link {prev_link_idx + 1} and link {link_idx + 1})"
+                    )
+                interface_assignments[key] = link_idx
 
         return v
 

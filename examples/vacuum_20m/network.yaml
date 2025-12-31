@@ -94,8 +94,9 @@ topology:
           z: 1.0                    # Same height (level link for symmetry)
 
   # Wireless links between nodes
+  # Endpoints must be in "node:interface" format
   wireless_links:
-    - endpoints: [node1, node2]
+    - endpoints: [node1:eth1, node2:eth1]
 
   # Channel computation server URL
   channel_server: "http://localhost:8000"

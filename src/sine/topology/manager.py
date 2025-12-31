@@ -87,11 +87,7 @@ class ContainerlabManager:
 
         # Convert wireless links to veth links
         # Containerlab link format: endpoints: ["node1:eth1", "node2:eth1"]
-        #
-        # Endpoints can be specified as:
-        # - "node1" (auto-assign interface starting from eth1)
-        # - "node1:eth2" (explicit interface assignment)
-        interface_counters: dict[str, int] = {}
+        # Endpoints must be in "node:interface" format (validated by schema)
 
         # Clear any previous interface mapping
         self._interface_mapping = {}
@@ -101,20 +97,9 @@ class ContainerlabManager:
             if len(endpoints) != 2:
                 continue
 
-            # Parse endpoints - may include interface specification
+            # Parse endpoints - interface specification is required
             node1, iface1 = self._parse_endpoint(endpoints[0])
             node2, iface2 = self._parse_endpoint(endpoints[1])
-
-            # Auto-assign interfaces if not explicitly specified
-            if iface1 is None:
-                if_num1 = interface_counters.get(node1, 1)
-                interface_counters[node1] = if_num1 + 1
-                iface1 = f"eth{if_num1}"
-
-            if iface2 is None:
-                if_num2 = interface_counters.get(node2, 1)
-                interface_counters[node2] = if_num2 + 1
-                iface2 = f"eth{if_num2}"
 
             # Store interface mapping for later use
             # node1 uses iface1 to reach node2, and vice versa
@@ -131,24 +116,20 @@ class ContainerlabManager:
         return clab_topology
 
     @staticmethod
-    def _parse_endpoint(endpoint: str) -> tuple[str, Optional[str]]:
+    def _parse_endpoint(endpoint: str) -> tuple[str, str]:
         """
         Parse an endpoint string into (node_name, interface).
 
-        Supports two formats:
-        - "node1" -> ("node1", None) - interface will be auto-assigned
-        - "node1:eth1" -> ("node1", "eth1") - explicit interface
+        Required format: "node:interface" (e.g., "node1:eth1")
 
         Args:
-            endpoint: Endpoint string like "node1" or "node1:eth1"
+            endpoint: Endpoint string like "node1:eth1"
 
         Returns:
-            Tuple of (node_name, interface_or_none)
+            Tuple of (node_name, interface)
         """
-        if ":" in endpoint:
-            parts = endpoint.split(":", 1)
-            return (parts[0], parts[1])
-        return (endpoint, None)
+        parts = endpoint.split(":", 1)
+        return (parts[0], parts[1])
 
     def deploy(self, clab_topology: dict) -> bool:
         """

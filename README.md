@@ -546,14 +546,23 @@ Example 3-node triangle topology:
  (10,0,1) eth2   (5,8.66,1)
 ```
 
-**Q: How does SiNE know which interface to configure for each link?**
+**Q: How do I specify which interface connects to which peer?**
 
-A: SiNE builds an interface mapping when generating the containerlab topology:
-- `(node1, node2) → eth1` (node1 uses eth1 to reach node2)
-- `(node1, node3) → eth2` (node1 uses eth2 to reach node3)
-- etc.
+A: Use the `node:interface` format in endpoints:
 
-This mapping is used by `_find_link_interface()` to apply the correct netem parameters to each interface.
+```yaml
+# Explicit interface assignment (recommended)
+wireless_links:
+  - endpoints: [node1:eth1, node2:eth1]
+  - endpoints: [node1:eth2, node3:eth1]
+
+# Auto-assigned (interfaces assigned in link order: eth1, eth2, ...)
+wireless_links:
+  - endpoints: [node1, node2]
+  - endpoints: [node1, node3]
+```
+
+SiNE validates that no interface is used by multiple links. The interface mapping is used by `_find_link_interface()` to apply the correct netem parameters.
 
 **Q: How do I deploy a MANET example?**
 
