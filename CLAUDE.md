@@ -231,6 +231,115 @@ Returns detailed ray tracing path information including:
 - `strongest_path`: Path with highest power
 - `shortest_path`: Path with lowest delay
 
+## Channel Computation Pipeline
+
+For wireless links, SiNE computes channel conditions through a multi-stage pipeline that converts ray tracing results into netem parameters.
+
+### 1. Channel Impulse Response (CIR)
+
+The channel server uses Sionna's `PathSolver` to compute the CIR:
+
+```python
+# In src/sine/channel/sionna_engine.py
+paths = self.path_solver(tx_pos, rx_pos)
+a, tau = paths.cir()  # Complex amplitudes and delays
+```
+
+- `a`: Complex path amplitudes (magnitude and phase per path)
+- `tau`: Path delays in seconds
+- Multiple paths represent multipath propagation (LOS + reflections)
+
+### 2. SNR Calculation
+
+Signal-to-Noise Ratio is computed from the link budget (`src/sine/channel/snr.py`):
+
+```
+SNR (dB) = TX_power + TX_gain + RX_gain - Path_loss - Noise_floor
+
+Where:
+- TX_power: Transmit power in dBm (e.g., 20 dBm)
+- TX_gain, RX_gain: Antenna gains in dBi
+- Path_loss: From ray tracing (sum of path powers)
+- Noise_floor: Thermal noise = -174 dBm/Hz + 10*log10(bandwidth)
+```
+
+### 3. BER Calculation
+
+Bit Error Rate is computed using theoretical AWGN formulas (`src/sine/channel/modulation.py`):
+
+| Modulation | BER Formula |
+|------------|-------------|
+| BPSK | Q(√(2·SNR)) |
+| QPSK | Q(√(2·SNR)) |
+| 16-QAM | (3/8)·erfc(√(SNR/5)) |
+| 64-QAM | (7/24)·erfc(√(SNR/21)) |
+| 256-QAM | (15/64)·erfc(√(SNR/85)) |
+
+### 4. BLER Calculation (for coded systems)
+
+Block Error Rate accounts for FEC coding gains:
+
+```python
+# Coding gain applied to SNR before BER calculation
+coding_gain = {
+    "ldpc": 7.0,   # dB gain at typical code rates
+    "polar": 6.5,
+    "turbo": 6.0,
+    "none": 0.0
+}
+
+effective_snr = snr_db + coding_gain[fec_type]
+bler = 1 - (1 - ber_coded)^block_size
+```
+
+### 5. PER Calculation
+
+Packet Error Rate is derived from BER or BLER (`src/sine/channel/per_calculator.py`):
+
+```python
+# For uncoded systems: PER from BER
+per = 1 - (1 - ber)^(packet_size_bits)
+
+# For coded systems: PER ≈ BLER (block = packet assumption)
+per = bler
+```
+
+### 6. Netem Parameter Conversion
+
+The final PER is converted to netem parameters:
+
+| Parameter | Calculation |
+|-----------|-------------|
+| **delay_ms** | Propagation delay from strongest path (distance/c) |
+| **jitter_ms** | Delay spread from multipath (τ_max - τ_min) |
+| **loss_percent** | PER × 100 (packet loss probability) |
+| **rate_mbps** | Shannon capacity or modulation-based rate |
+
+### Data Rate Calculation
+
+The achievable data rate is computed from modulation and bandwidth:
+
+```
+Rate (Mbps) = bandwidth_hz × bits_per_symbol × code_rate × (1 - overhead)
+
+Example (80 MHz, 64-QAM, rate-1/2 LDPC):
+= 80e6 × 6 × 0.5 × 0.8 = 192 Mbps
+```
+
+### Pipeline Summary
+
+```
+Ray Tracing → CIR (paths) → Path Loss → SNR
+                                         ↓
+                              BER (from modulation)
+                                         ↓
+                              BLER (with FEC gain)
+                                         ↓
+                              PER (packet errors)
+                                         ↓
+                    Netem Params (delay, jitter, loss%, rate)
+```
+
 ## Important Notes
 
 - **Interface Configuration**: Define per-interface on each node using `interfaces.<iface>.wireless` or `interfaces.<iface>.fixed_netem`

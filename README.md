@@ -182,6 +182,11 @@ Legend:
 
    The ~188 Mbps throughput reflects the emulated 80 MHz WiFi6 channel with 64-QAM modulation and rate-1/2 LDPC coding. Without netem (i.e., without sudo), you would see 10+ Gbps.
 
+   **Troubleshooting**: If iperf3 shows 10+ Gbps instead of ~188 Mbps, netem is not configured. Run the check script to diagnose:
+   ```bash
+   ./examples/vacuum_20m/check_netem.sh
+   ```
+
 6. **Cleanup**:
    ```bash
    uv run sine destroy examples/vacuum_20m/network.yaml
