@@ -23,8 +23,12 @@ from sine.channel.sionna_engine import get_engine, is_sionna_available, PathResu
 from sine.channel.snr import SNRCalculator
 from sine.channel.modulation import BERCalculator, BLERCalculator, get_bits_per_symbol
 from sine.channel.per_calculator import PERCalculator
+from sine.channel.mcs import MCSTable, MCSEntry
 
 logger = logging.getLogger(__name__)
+
+# Global MCS table cache
+_mcs_tables: dict[str, MCSTable] = {}
 
 # Global engine instance
 _engine = None
@@ -86,9 +90,13 @@ class WirelessLinkRequest(BaseModel):
     polarization: str = Field(default="V", description="Antenna polarization: V, H, VH, cross")
     frequency_hz: float = Field(default=5.18e9)
     bandwidth_hz: float = Field(default=80e6)
-    modulation: str = Field(default="64qam")
-    fec_type: str = Field(default="ldpc")
-    fec_code_rate: float = Field(default=0.5)
+    # Fixed modulation parameters (used when mcs_table_path is not set)
+    modulation: str | None = Field(default=None, description="Fixed modulation scheme")
+    fec_type: str | None = Field(default=None, description="Fixed FEC type")
+    fec_code_rate: float | None = Field(default=None, description="Fixed FEC code rate")
+    # MCS table for adaptive modulation
+    mcs_table_path: str | None = Field(default=None, description="Path to MCS table CSV for adaptive selection")
+    mcs_hysteresis_db: float = Field(default=2.0, description="MCS selection hysteresis in dB")
     packet_size_bits: int = Field(default=12000, description="Packet size in bits")
 
 
@@ -113,6 +121,12 @@ class ChannelResponse(BaseModel):
     netem_jitter_ms: float
     netem_loss_percent: float
     netem_rate_mbps: float
+    # MCS selection info (populated when using adaptive MCS)
+    selected_mcs_index: int | None = None
+    selected_modulation: str | None = None
+    selected_code_rate: float | None = None
+    selected_fec_type: str | None = None
+    selected_bandwidth_mhz: float | None = None
 
 
 class BatchChannelRequest(BaseModel):
@@ -188,11 +202,22 @@ class PathDetailsResponse(BaseModel):
 # ============================================================================
 
 
+def get_or_load_mcs_table(path: str, hysteresis_db: float = 2.0) -> MCSTable:
+    """Get cached MCS table or load from file."""
+    cache_key = f"{path}:{hysteresis_db}"
+    if cache_key not in _mcs_tables:
+        _mcs_tables[cache_key] = MCSTable.from_csv(path, hysteresis_db)
+    return _mcs_tables[cache_key]
+
+
 def compute_channel_for_link(
     link: WirelessLinkRequest, path_result: PathResult
 ) -> ChannelResponse:
     """
     Compute complete channel parameters for a link given path results.
+
+    Supports both adaptive MCS selection (when mcs_table_path is set) and
+    fixed modulation/coding (when modulation/fec_type/fec_code_rate are set).
 
     Args:
         link: Link parameters
@@ -201,7 +226,7 @@ def compute_channel_for_link(
     Returns:
         Complete channel response with netem parameters
     """
-    # Calculate SNR
+    # Calculate SNR first (needed for MCS selection)
     snr_calc = SNRCalculator(
         bandwidth_hz=link.bandwidth_hz, noise_figure_db=7.0  # Typical WiFi NF
     )
@@ -212,35 +237,69 @@ def compute_channel_for_link(
         path_loss_db=path_result.path_loss_db,
     )
 
-    # Calculate BER
-    ber_calc = BERCalculator(link.modulation)
+    # Determine modulation, FEC, and bandwidth based on MCS table or fixed params
+    selected_mcs_index: int | None = None
+    selected_bandwidth_mhz: float | None = None
+
+    if link.mcs_table_path:
+        # Adaptive MCS selection
+        mcs_table = get_or_load_mcs_table(link.mcs_table_path, link.mcs_hysteresis_db)
+        link_id = f"{link.tx_node}->{link.rx_node}"
+        mcs = mcs_table.select_mcs(snr_db, link_id)
+
+        modulation = mcs.modulation
+        fec_type = mcs.fec_type
+        fec_code_rate = mcs.code_rate
+        selected_mcs_index = mcs.mcs_index
+
+        # Use MCS bandwidth if specified, otherwise use link bandwidth
+        if mcs.bandwidth_mhz is not None:
+            bandwidth_hz = mcs.bandwidth_mhz * 1e6
+            selected_bandwidth_mhz = mcs.bandwidth_mhz
+        else:
+            bandwidth_hz = link.bandwidth_hz
+            selected_bandwidth_mhz = link.bandwidth_hz / 1e6
+
+        logger.debug(
+            f"Link {link_id}: SNR={snr_db:.1f}dB -> MCS{mcs.mcs_index} "
+            f"({mcs.modulation}, rate={mcs.code_rate})"
+        )
+    else:
+        # Fixed modulation/coding
+        modulation = link.modulation or "64qam"
+        fec_type = link.fec_type or "ldpc"
+        fec_code_rate = link.fec_code_rate if link.fec_code_rate is not None else 0.5
+        bandwidth_hz = link.bandwidth_hz
+
+    # Calculate BER with selected modulation
+    ber_calc = BERCalculator(modulation)
     ber = ber_calc.theoretical_ber_awgn(snr_db)
 
     # Calculate BLER if using FEC
     bler = None
-    if link.fec_type.lower() not in ["none", "uncoded"]:
+    if fec_type.lower() not in ["none", "uncoded"]:
         bler_calc = BLERCalculator(
-            fec_type=link.fec_type,
-            code_rate=link.fec_code_rate,
-            modulation=link.modulation,
+            fec_type=fec_type,
+            code_rate=fec_code_rate,
+            modulation=modulation,
             block_length=min(link.packet_size_bits, 8192),  # Max block size
         )
         bler = bler_calc.approximate_bler(snr_db)
 
     # Calculate PER
-    per_calc = PERCalculator(fec_type=link.fec_type)
+    per_calc = PERCalculator(fec_type=fec_type)
     per = per_calc.calculate_per(
-        ber=ber if link.fec_type.lower() in ["none", "uncoded"] else None,
+        ber=ber if fec_type.lower() in ["none", "uncoded"] else None,
         bler=bler,
         packet_bits=link.packet_size_bits,
     )
 
-    # Calculate effective rate
-    modulation_bits = get_bits_per_symbol(link.modulation)
+    # Calculate effective rate with selected modulation/coding/bandwidth
+    modulation_bits = get_bits_per_symbol(modulation)
     rate_mbps = PERCalculator.calculate_effective_rate(
-        bandwidth_mhz=link.bandwidth_hz / 1e6,
+        bandwidth_mhz=bandwidth_hz / 1e6,
         modulation_bits=modulation_bits,
-        code_rate=link.fec_code_rate if link.fec_type.lower() != "none" else 1.0,
+        code_rate=fec_code_rate if fec_type.lower() != "none" else 1.0,
         per=per,
     )
 
@@ -264,6 +323,12 @@ def compute_channel_for_link(
         netem_jitter_ms=jitter_ms,
         netem_loss_percent=loss_percent,
         netem_rate_mbps=rate_mbps,
+        # MCS selection info
+        selected_mcs_index=selected_mcs_index,
+        selected_modulation=modulation,
+        selected_code_rate=fec_code_rate,
+        selected_fec_type=fec_type,
+        selected_bandwidth_mhz=selected_bandwidth_mhz,
     )
 
 

@@ -1,0 +1,13 @@
+mcs_index,modulation,code_rate,min_snr_db,fec_type,bandwidth_mhz
+0,bpsk,0.5,5.0,ldpc,80
+1,qpsk,0.5,8.0,ldpc,80
+2,qpsk,0.75,11.0,ldpc,80
+3,16qam,0.5,14.0,ldpc,80
+4,16qam,0.75,17.0,ldpc,80
+5,64qam,0.667,20.0,ldpc,80
+6,64qam,0.75,23.0,ldpc,80
+7,64qam,0.833,26.0,ldpc,80
+8,256qam,0.75,29.0,ldpc,80
+9,256qam,0.833,32.0,ldpc,80
+10,1024qam,0.75,35.0,ldpc,80
+11,1024qam,0.833,38.0,ldpc,80

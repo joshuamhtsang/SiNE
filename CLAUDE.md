@@ -202,6 +202,7 @@ Example topologies are provided in `examples/`:
 | `vacuum_20m/` | Baseline free-space wireless | wireless | `vacuum.xml` (empty) |
 | `manet_triangle/` | 3-node MANET mesh | wireless | `vacuum.xml` (empty) |
 | `fixed_link/` | Fixed netem parameters | fixed_netem | (none) |
+| `wifi6_adaptive/` | Adaptive MCS selection (WiFi 6) | wireless | `vacuum.xml` (empty) |
 
 The examples demonstrate wireless propagation, multi-node topologies, and fixed link emulation.
 
@@ -274,6 +275,7 @@ Bit Error Rate is computed using theoretical AWGN formulas (`src/sine/channel/mo
 | 16-QAM | (3/8)·erfc(√(SNR/5)) |
 | 64-QAM | (7/24)·erfc(√(SNR/21)) |
 | 256-QAM | (15/64)·erfc(√(SNR/85)) |
+| 1024-QAM | WiFi 6 (802.11ax) support |
 
 ### 4. BLER Calculation (for coded systems)
 
@@ -634,3 +636,140 @@ topology:
 ### Example
 
 See `examples/fixed_link/network.yaml` for a complete fixed netem example.
+
+## Adaptive MCS Selection
+
+SiNE supports **adaptive MCS (Modulation and Coding Scheme) selection** similar to WiFi 6 (802.11ax). The system automatically selects the optimal modulation and coding based on current SNR conditions.
+
+### How It Works
+
+1. **MCS Table**: A CSV file defines available MCS options with SNR thresholds
+2. **SNR-Based Selection**: After ray tracing computes SNR, the highest MCS where SNR ≥ min_snr_db is selected
+3. **Hysteresis**: Prevents rapid MCS switching by requiring extra SNR margin to upgrade
+
+### MCS Table Format
+
+```csv
+mcs_index,modulation,code_rate,min_snr_db,fec_type,bandwidth_mhz
+0,bpsk,0.5,5.0,ldpc,80
+1,qpsk,0.5,8.0,ldpc,80
+2,qpsk,0.75,11.0,ldpc,80
+3,16qam,0.5,14.0,ldpc,80
+4,16qam,0.75,17.0,ldpc,80
+5,64qam,0.667,20.0,ldpc,80
+6,64qam,0.75,23.0,ldpc,80
+7,64qam,0.833,26.0,ldpc,80
+8,256qam,0.75,29.0,ldpc,80
+9,256qam,0.833,32.0,ldpc,80
+10,1024qam,0.75,35.0,ldpc,80
+11,1024qam,0.833,38.0,ldpc,80
+```
+
+**Required columns:**
+- `mcs_index`: MCS index (integer, must be unique)
+- `modulation`: bpsk, qpsk, 16qam, 64qam, 256qam, 1024qam
+- `code_rate`: FEC code rate (0.0 to 1.0)
+- `min_snr_db`: Minimum SNR threshold for this MCS
+
+**Optional columns:**
+- `fec_type`: FEC type (ldpc, polar, turbo, none) - defaults to ldpc
+- `bandwidth_mhz`: Channel bandwidth - for documentation/reference
+
+### Configuration
+
+Wireless interfaces must specify **either** an MCS table **or** fixed modulation/FEC parameters:
+
+**Option 1: Adaptive MCS (recommended)**
+```yaml
+nodes:
+  node1:
+    interfaces:
+      eth1:
+        wireless:
+          mcs_table: examples/wifi6_adaptive/data/wifi6_mcs.csv
+          mcs_hysteresis_db: 2.0    # Optional, default: 2.0 dB
+          rf_power_dbm: 20.0
+          frequency_ghz: 5.18
+          bandwidth_mhz: 80
+          # ... other params
+```
+
+**Option 2: Fixed modulation/FEC**
+```yaml
+nodes:
+  node1:
+    interfaces:
+      eth1:
+        wireless:
+          modulation: 64qam
+          fec_type: ldpc
+          fec_code_rate: 0.5
+          rf_power_dbm: 20.0
+          frequency_ghz: 5.18
+          bandwidth_mhz: 80
+          # ... other params
+```
+
+**Important**: If neither `mcs_table` nor explicit `modulation`/`fec_type`/`fec_code_rate` are provided, validation will fail. There are no defaults.
+
+### Hysteresis Behavior
+
+Hysteresis prevents rapid MCS switching when SNR fluctuates near thresholds:
+
+- **Upgrade**: To move to a higher MCS, SNR must exceed threshold by `mcs_hysteresis_db`
+- **Downgrade**: Immediate when SNR drops below current MCS threshold
+- **Per-link tracking**: Each link maintains its current MCS index
+
+Example with 2 dB hysteresis:
+- Currently at MCS 5 (min_snr=20 dB), MCS 6 threshold is 23 dB
+- To upgrade to MCS 6: SNR must be ≥ 25 dB (23 + 2)
+- To stay at MCS 5: SNR can be 20-24.99 dB
+- To downgrade: SNR < 20 dB
+
+### Deployment Output
+
+When using adaptive MCS, the deployment summary shows selected MCS info:
+
+```
+Link Parameters:
+  node1:eth1 ↔ node2:eth1 [wireless]
+    MCS: 11 (1024qam, rate-0.833, ldpc)
+    Delay: 0.07 ms | Jitter: 0.00 ms | Loss: 0.00% | Rate: 532.5 Mbps
+```
+
+### Example
+
+See `examples/wifi6_adaptive/` for a complete adaptive MCS example:
+
+```bash
+# Start channel server
+uv run sine channel-server
+
+# Deploy (in another terminal)
+sudo $(which uv) run sine deploy examples/wifi6_adaptive/network.yaml
+
+# Test throughput
+docker exec -it clab-wifi6-adaptive-node1 ip addr add 192.168.1.1/24 dev eth1
+docker exec -it clab-wifi6-adaptive-node2 ip addr add 192.168.1.2/24 dev eth1
+docker exec -it clab-wifi6-adaptive-node1 iperf3 -s &
+docker exec -it clab-wifi6-adaptive-node2 iperf3 -c 192.168.1.1
+
+# Cleanup
+sudo $(which uv) run sine destroy examples/wifi6_adaptive/network.yaml
+```
+
+### Data Rate Calculation with MCS
+
+With adaptive MCS, the data rate is computed from the selected MCS entry:
+
+```
+Rate (Mbps) = bandwidth_mhz × bits_per_symbol × code_rate × efficiency
+
+Example (MCS 11: 80 MHz, 1024-QAM, rate-5/6):
+= 80 × 10 × 0.833 × 0.8 = 533 Mbps
+```
+
+Where:
+- `bits_per_symbol`: From modulation (bpsk=1, qpsk=2, 16qam=4, 64qam=6, 256qam=8, 1024qam=10)
+- `code_rate`: FEC code rate from MCS table
+- `efficiency`: 0.8 (accounts for protocol overhead)

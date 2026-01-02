@@ -53,6 +53,7 @@ class EmulationController:
         self.channel_server_url: str = "http://localhost:8000"
         self._running = False
         self._link_states: dict[tuple[str, str], NetemParams] = {}
+        self._link_mcs_info: dict[tuple[str, str], dict] = {}  # MCS info for each link
         self._mobility_task: Optional[asyncio.Task] = None
         self._netem_failures: list[tuple[str, str]] = []  # Track failed netem applications
 
@@ -295,32 +296,38 @@ class EmulationController:
             wireless2 = node2.interfaces[iface2].wireless
 
             # Use node1 as TX, node2 as RX (will apply to both directions)
-            link_requests.append(
-                {
-                    "tx_node": node1_name,
-                    "rx_node": node2_name,
-                    "tx_position": {
-                        "x": wireless1.position.x,
-                        "y": wireless1.position.y,
-                        "z": wireless1.position.z,
-                    },
-                    "rx_position": {
-                        "x": wireless2.position.x,
-                        "y": wireless2.position.y,
-                        "z": wireless2.position.z,
-                    },
-                    "tx_power_dbm": wireless1.rf_power_dbm,
-                    "tx_gain_dbi": wireless1.antenna_gain_dbi,
-                    "rx_gain_dbi": wireless2.antenna_gain_dbi,
-                    "antenna_pattern": wireless1.antenna_pattern.value,
-                    "polarization": wireless1.polarization.value,
-                    "frequency_hz": wireless1.frequency_hz,
-                    "bandwidth_hz": wireless1.bandwidth_hz,
-                    "modulation": wireless1.modulation.value,
-                    "fec_type": wireless1.fec_type.value,
-                    "fec_code_rate": wireless1.fec_code_rate,
-                }
-            )
+            request = {
+                "tx_node": node1_name,
+                "rx_node": node2_name,
+                "tx_position": {
+                    "x": wireless1.position.x,
+                    "y": wireless1.position.y,
+                    "z": wireless1.position.z,
+                },
+                "rx_position": {
+                    "x": wireless2.position.x,
+                    "y": wireless2.position.y,
+                    "z": wireless2.position.z,
+                },
+                "tx_power_dbm": wireless1.rf_power_dbm,
+                "tx_gain_dbi": wireless1.antenna_gain_dbi,
+                "rx_gain_dbi": wireless2.antenna_gain_dbi,
+                "antenna_pattern": wireless1.antenna_pattern.value,
+                "polarization": wireless1.polarization.value,
+                "frequency_hz": wireless1.frequency_hz,
+                "bandwidth_hz": wireless1.bandwidth_hz,
+            }
+
+            # Add MCS table or fixed modulation parameters
+            if wireless1.uses_adaptive_mcs:
+                request["mcs_table_path"] = wireless1.mcs_table
+                request["mcs_hysteresis_db"] = wireless1.mcs_hysteresis_db
+            else:
+                request["modulation"] = wireless1.modulation.value if wireless1.modulation else None
+                request["fec_type"] = wireless1.fec_type.value if wireless1.fec_type else None
+                request["fec_code_rate"] = wireless1.fec_code_rate
+
+            link_requests.append(request)
 
         if not link_requests:
             return
@@ -482,10 +489,36 @@ class EmulationController:
         # Store state for change detection only if at least one side succeeded
         if tx_success or rx_success:
             self._link_states[(tx_node, rx_node)] = params
+
+            # Store MCS info if available
+            mcs_info = {}
+            if channel_result.get("selected_mcs_index") is not None:
+                mcs_info = {
+                    "mcs_index": channel_result.get("selected_mcs_index"),
+                    "modulation": channel_result.get("selected_modulation"),
+                    "code_rate": channel_result.get("selected_code_rate"),
+                    "fec_type": channel_result.get("selected_fec_type"),
+                    "bandwidth_mhz": channel_result.get("selected_bandwidth_mhz"),
+                    "snr_db": channel_result.get("snr_db"),
+                }
+            else:
+                # Fixed modulation - still store for display
+                mcs_info = {
+                    "modulation": channel_result.get("selected_modulation"),
+                    "code_rate": channel_result.get("selected_code_rate"),
+                    "fec_type": channel_result.get("selected_fec_type"),
+                    "snr_db": channel_result.get("snr_db"),
+                }
+            self._link_mcs_info[(tx_node, rx_node)] = mcs_info
+
+            # Log with MCS info if available
+            mcs_str = ""
+            if channel_result.get("selected_mcs_index") is not None:
+                mcs_str = f", MCS{channel_result['selected_mcs_index']}"
             logger.debug(
                 f"Applied netem to {tx_node}<->{rx_node}: "
                 f"delay={params.delay_ms:.1f}ms, loss={params.loss_percent:.2f}%, "
-                f"rate={params.rate_mbps:.1f}Mbps"
+                f"rate={params.rate_mbps:.1f}Mbps{mcs_str}"
             )
 
     def _find_link_interface(
@@ -673,7 +706,7 @@ class EmulationController:
             tx_str = f"{tx} ({tx_iface})" if tx_iface else tx
             rx_str = f"{rx} ({rx_iface})" if rx_iface else rx
 
-            summary["links"].append({
+            link_info = {
                 "link": f"{tx_str} <-> {rx_str}",
                 "type": link_type,
                 "tx_node": tx,
@@ -684,6 +717,20 @@ class EmulationController:
                 "jitter_ms": params.jitter_ms,
                 "loss_percent": params.loss_percent,
                 "rate_mbps": params.rate_mbps,
-            })
+            }
+
+            # Add MCS info if available
+            mcs_info = self._link_mcs_info.get((tx, rx), {})
+            if mcs_info:
+                link_info["snr_db"] = mcs_info.get("snr_db")
+                link_info["modulation"] = mcs_info.get("modulation")
+                link_info["code_rate"] = mcs_info.get("code_rate")
+                link_info["fec_type"] = mcs_info.get("fec_type")
+                if mcs_info.get("mcs_index") is not None:
+                    link_info["mcs_index"] = mcs_info.get("mcs_index")
+                if mcs_info.get("bandwidth_mhz") is not None:
+                    link_info["bandwidth_mhz"] = mcs_info.get("bandwidth_mhz")
+
+            summary["links"].append(link_info)
 
         return summary

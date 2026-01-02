@@ -1,7 +1,7 @@
 """
 BER and BLER calculation for various modulation and FEC schemes.
 
-Modulation schemes: BPSK, QPSK, 16-QAM, 64-QAM, 256-QAM
+Modulation schemes: BPSK, QPSK, 16-QAM, 64-QAM, 256-QAM, 1024-QAM
 FEC types: LDPC, Polar, Turbo (when Sionna is available)
 
 This module provides both theoretical BER calculations (no Sionna required)
@@ -22,6 +22,7 @@ class ModulationScheme(str, Enum):
     QAM16 = "16qam"
     QAM64 = "64qam"
     QAM256 = "256qam"
+    QAM1024 = "1024qam"  # WiFi 6 support
 
 
 # Mapping of modulation to bits per symbol
@@ -31,6 +32,7 @@ MODULATION_BITS = {
     "16qam": 4,
     "64qam": 6,
     "256qam": 8,
+    "1024qam": 10,
 }
 
 

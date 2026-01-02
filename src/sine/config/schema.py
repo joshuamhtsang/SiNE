@@ -20,6 +20,7 @@ class ModulationType(str, Enum):
     QAM16 = "16qam"
     QAM64 = "64qam"
     QAM256 = "256qam"
+    QAM1024 = "1024qam"  # WiFi 6 support
 
     @property
     def bits_per_symbol(self) -> int:
@@ -30,6 +31,7 @@ class ModulationType(str, Enum):
             ModulationType.QAM16: 4,
             ModulationType.QAM64: 6,
             ModulationType.QAM256: 8,
+            ModulationType.QAM1024: 10,
         }
         return mapping[self]
 
@@ -76,7 +78,14 @@ class Position(BaseModel):
 
 
 class WirelessParams(BaseModel):
-    """Wireless link parameters for a node."""
+    """Wireless link parameters for a node.
+
+    Configuration modes:
+    1. Adaptive MCS: Set mcs_table path, modulation/fec_type/fec_code_rate are ignored
+    2. Fixed modulation: Set modulation, fec_type, fec_code_rate explicitly
+
+    One of these modes must be configured - no defaults are provided.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -92,12 +101,53 @@ class WirelessParams(BaseModel):
     bandwidth_mhz: float = Field(
         default=20.0, description="Channel bandwidth in MHz", gt=0.0, le=1000.0
     )
-    modulation: ModulationType = Field(default=ModulationType.QAM64)
-    fec_type: FECType = Field(default=FECType.LDPC)
-    fec_code_rate: float = Field(
-        default=0.5, description="FEC code rate (k/n)", ge=0.0, le=1.0
+
+    # MCS table for adaptive modulation (takes precedence over fixed params)
+    mcs_table: str | None = Field(
+        default=None, description="Path to MCS table CSV file for adaptive MCS selection"
     )
+    mcs_hysteresis_db: float = Field(
+        default=2.0,
+        description="SNR hysteresis in dB to prevent rapid MCS switching",
+        ge=0.0,
+        le=10.0,
+    )
+
+    # Fixed modulation parameters (used when mcs_table is not set)
+    modulation: ModulationType | None = Field(
+        default=None, description="Fixed modulation scheme (ignored if mcs_table is set)"
+    )
+    fec_type: FECType | None = Field(
+        default=None, description="Fixed FEC type (ignored if mcs_table is set)"
+    )
+    fec_code_rate: float | None = Field(
+        default=None, description="Fixed FEC code rate (ignored if mcs_table is set)", ge=0.0, le=1.0
+    )
+
     position: Position
+
+    @model_validator(mode="after")
+    def validate_mcs_or_fixed(self) -> "WirelessParams":
+        """Ensure either MCS table or fixed modulation/fec is specified."""
+        has_mcs_table = self.mcs_table is not None
+        has_fixed = (
+            self.modulation is not None
+            and self.fec_type is not None
+            and self.fec_code_rate is not None
+        )
+
+        if not has_mcs_table and not has_fixed:
+            raise ValueError(
+                "Wireless interface requires either 'mcs_table' or all of "
+                "'modulation', 'fec_type', 'fec_code_rate' to be specified"
+            )
+
+        return self
+
+    @property
+    def uses_adaptive_mcs(self) -> bool:
+        """Return True if adaptive MCS selection is enabled."""
+        return self.mcs_table is not None
 
     @field_validator("frequency_ghz", mode="after")
     @classmethod
