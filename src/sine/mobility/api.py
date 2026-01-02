@@ -117,19 +117,28 @@ class MobilityAPIServer:
                     f"Available nodes: {available_nodes}",
                 )
 
-            # Validate node has wireless capability
+            # Validate node has wireless capability and find wireless interfaces
             node_config = self.controller.config.topology.nodes[update.node]
-            if not node_config.wireless:
+            wireless_interfaces = []
+            if node_config.interfaces:
+                wireless_interfaces = [
+                    iface_name
+                    for iface_name, iface in node_config.interfaces.items()
+                    if iface.is_wireless
+                ]
+
+            if not wireless_interfaces:
                 raise HTTPException(
                     status_code=400,
                     detail=f"Node '{update.node}' does not have wireless capability",
                 )
 
             try:
-                # Update position
-                await self.controller.update_node_position(
-                    update.node, update.x, update.y, update.z
-                )
+                # Update position for all wireless interfaces on this node
+                for iface_name in wireless_interfaces:
+                    await self.controller.update_node_position(
+                        update.node, iface_name, update.x, update.y, update.z
+                    )
 
                 return PositionResponse(
                     status="success",
@@ -152,12 +161,21 @@ class MobilityAPIServer:
                 raise HTTPException(status_code=404, detail=f"Node '{node}' not found")
 
             node_config = self.controller.config.topology.nodes[node]
-            if not node_config.wireless:
+
+            # Find first wireless interface for position query
+            wireless_iface = None
+            if node_config.interfaces:
+                for iface in node_config.interfaces.values():
+                    if iface.is_wireless:
+                        wireless_iface = iface
+                        break
+
+            if not wireless_iface:
                 raise HTTPException(
                     status_code=400, detail=f"Node '{node}' has no wireless capability"
                 )
 
-            pos = node_config.wireless.position
+            pos = wireless_iface.wireless.position
             return {
                 "node": node,
                 "position": {"x": pos.x, "y": pos.y, "z": pos.z},
@@ -171,14 +189,18 @@ class MobilityAPIServer:
 
             nodes = []
             for name, config in self.controller.config.topology.nodes.items():
-                if config.wireless:
-                    pos = config.wireless.position
-                    nodes.append(
-                        {
-                            "name": name,
-                            "position": {"x": pos.x, "y": pos.y, "z": pos.z},
-                        }
-                    )
+                # Find first wireless interface
+                if config.interfaces:
+                    for iface in config.interfaces.values():
+                        if iface.is_wireless:
+                            pos = iface.wireless.position
+                            nodes.append(
+                                {
+                                    "name": name,
+                                    "position": {"x": pos.x, "y": pos.y, "z": pos.z},
+                                }
+                            )
+                            break  # Only add each node once (using first wireless interface)
             return {"nodes": nodes}
 
     async def start(self, host: str = "0.0.0.0", port: int = 8001) -> None:

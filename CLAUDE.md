@@ -152,6 +152,9 @@ uv run sine channel-server
 # Use full path to avoid "uv: command not found" error with sudo
 sudo $(which uv) run sine deploy examples/vacuum_20m/network.yaml
 
+# Deploy with mobility API enabled (for dynamic position updates)
+sudo $(which uv) run sine deploy --enable-mobility examples/vacuum_20m/network.yaml
+
 # Validate topology
 uv run sine validate examples/vacuum_20m/network.yaml
 

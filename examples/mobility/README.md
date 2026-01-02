@@ -4,15 +4,17 @@ This directory contains example scripts demonstrating how to control node moveme
 
 ## Prerequisites
 
-1. **Channel Server** - Must be running:
+1. **Channel Server** - Must be running (Terminal 1):
    ```bash
    uv run sine channel-server
    ```
 
-2. **Mobility API Server** - Starts emulation with REST API:
+2. **Emulation with Mobility API** - Deploy with `--enable-mobility` flag (Terminal 2):
    ```bash
-   sudo $(which uv) run sine mobility-server examples/vacuum_20m/network.yaml
+   sudo $(which uv) run sine deploy --enable-mobility examples/vacuum_20m/network.yaml
    ```
+
+   This starts both the emulation and the mobility API server on port 8001.
 
 3. **Python dependencies** - Installed automatically:
    - `httpx` - For HTTP requests to mobility API
@@ -26,24 +28,23 @@ Moves a node linearly from one position to another at constant velocity.
 
 **Usage:**
 ```bash
-uv run python examples/mobility/linear_movement.py
+uv run python examples/mobility/linear_movement.py <node> <start_x> <start_y> <start_z> <end_x> <end_y> <end_z> <velocity>
+```
+
+**Examples:**
+```bash
+# Move node2 from (20, 0, 1) to (0, 0, 1) at 1 m/s
+uv run python examples/mobility/linear_movement.py node2 20.0 0.0 1.0 0.0 0.0 1.0 1.0
+
+# Move node2 from (0, 0, 1) to (20, 0, 1) at 2 m/s
+uv run python examples/mobility/linear_movement.py node2 0.0 0.0 1.0 20.0 0.0 1.0 2.0
 ```
 
 **What it does:**
-- Moves `node2` from (20, 0, 1) to (0, 0, 1) at 1 m/s
-- Takes 20 seconds (20 meters at 1 m/s)
+- Moves the specified node from start position to end position at constant velocity
 - Updates position every 100ms
 - Demonstrates how SNR/throughput changes with distance
-
-**Customization:**
-```python
-await mobility.move_linear(
-    node="node2",
-    start=(20.0, 0.0, 1.0),  # Starting position (x, y, z)
-    end=(0.0, 0.0, 1.0),     # Ending position
-    velocity=2.0,             # Speed in m/s
-)
-```
+- Example: Moving from (20, 0, 1) to (0, 0, 1) at 1 m/s takes 20 seconds
 
 ### 2. Waypoint Movement (`waypoint_movement.py`)
 
@@ -171,10 +172,16 @@ asyncio.run(my_custom_pattern())
 
 **Problem**: `Connection refused` error
 
-**Solution**: Make sure mobility server is running:
+**Solution**: Make sure you deployed with the `--enable-mobility` flag:
 ```bash
-sudo $(which uv) run sine mobility-server examples/vacuum_20m/network.yaml
+sudo $(which uv) run sine deploy --enable-mobility examples/vacuum_20m/network.yaml
 ```
+
+---
+
+**Problem**: `AttributeError: 'NodeConfig' object has no attribute 'wireless'`
+
+**Solution**: This was a bug in older versions. Update to the latest version of SiNE.
 
 ---
 
@@ -189,7 +196,7 @@ curl http://localhost:8001/api/nodes
 
 **Problem**: `503 Service Unavailable`
 
-**Solution**: Emulation may have stopped. Restart mobility server.
+**Solution**: Emulation may have stopped. Restart deployment with `--enable-mobility`.
 
 ---
 

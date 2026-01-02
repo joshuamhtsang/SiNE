@@ -113,14 +113,31 @@ def main(verbose: bool) -> None:
     default="http://localhost:8000",
     help="Channel computation server URL",
 )
-def deploy(topology: Path, channel_server: str) -> None:
+@click.option(
+    "--enable-mobility",
+    is_flag=True,
+    help="Start mobility API server on port 8001 for dynamic position updates",
+)
+@click.option(
+    "--mobility-port",
+    default=8001,
+    type=int,
+    help="Port for mobility API server (default: 8001)",
+)
+def deploy(topology: Path, channel_server: str, enable_mobility: bool, mobility_port: int) -> None:
     """Deploy wireless network emulation from topology file.
 
     TOPOLOGY is the path to a network.yaml file defining the emulation.
+
+    With --enable-mobility, the deployment also starts a REST API server
+    that allows external scripts to update node positions in real-time.
     """
     from sine.emulation.controller import EmulationController, EmulationError
 
     console.print(f"[bold blue]Deploying topology:[/] {topology}")
+
+    if enable_mobility:
+        console.print(f"[dim]Mobility API will be available on port {mobility_port}[/]")
 
     controller = EmulationController(topology)
 
@@ -135,6 +152,13 @@ def deploy(topology: Path, channel_server: str) -> None:
                 _print_deployment_summary(summary)
 
                 console.print(f"\n[dim]To destroy: uv run sine destroy {topology}[/]")
+
+                if enable_mobility:
+                    console.print(f"[green]Mobility API running on http://localhost:{mobility_port}[/]")
+                    console.print(f"[dim]Example: curl -X POST http://localhost:{mobility_port}/api/mobility/update \\")
+                    console.print(f"[dim]         -H 'Content-Type: application/json' \\")
+                    console.print(f"[dim]         -d '{{'\"node\": \"node2\", \"x\": 10.0, \"y\": 5.0, \"z\": 1.5}}'[/]")
+
                 console.print("[dim]Press Ctrl+C to stop emulation[/]")
 
                 # Keep running until interrupted
@@ -149,10 +173,60 @@ def deploy(topology: Path, channel_server: str) -> None:
             console.print(f"[bold red]Deployment failed:[/] {e}")
             sys.exit(1)
 
-    try:
-        asyncio.run(run_emulation())
-    except KeyboardInterrupt:
-        pass
+    # If mobility is enabled, run both emulation and mobility API server
+    if enable_mobility:
+        from sine.mobility.api import MobilityAPIServer
+        import uvicorn
+
+        async def run_with_mobility() -> None:
+            # Start emulation controller
+            controller_obj = EmulationController(topology)
+            await controller_obj.start()
+
+            console.print("[bold green]Emulation deployed successfully![/]")
+            summary = controller_obj.get_deployment_summary()
+            _print_deployment_summary(summary)
+
+            console.print(f"\n[green]Mobility API running on http://localhost:{mobility_port}[/]")
+            console.print(f"[dim]Example: curl -X POST http://localhost:{mobility_port}/api/mobility/update \\")
+            console.print(f"[dim]         -H 'Content-Type: application/json' \\")
+            console.print(f"[dim]         -d '{{'\"node\": \"node2\", \"x\": 10.0, \"y\": 5.0, \"z\": 1.5}}'[/]")
+            console.print(f"[dim]To destroy: uv run sine destroy {topology}[/]")
+            console.print("[dim]Press Ctrl+C to stop emulation[/]")
+
+            # Create mobility API server (but with already-started controller)
+            mobility_server = MobilityAPIServer(topology)
+            mobility_server.controller = controller_obj  # Use existing controller
+
+            # Start FastAPI server
+            config = uvicorn.Config(
+                mobility_server.app,
+                host="0.0.0.0",
+                port=mobility_port,
+                log_level="info",
+                access_log=False,
+            )
+            server = uvicorn.Server(config)
+
+            try:
+                await server.serve()
+            except KeyboardInterrupt:
+                console.print("\n[yellow]Stopping emulation...[/]")
+            finally:
+                if controller_obj:
+                    await controller_obj.stop()
+                console.print("[green]Emulation stopped[/]")
+
+        try:
+            asyncio.run(run_with_mobility())
+        except KeyboardInterrupt:
+            pass
+    else:
+        # Standard deployment without mobility API
+        try:
+            asyncio.run(run_emulation())
+        except KeyboardInterrupt:
+            pass
 
 
 @main.command()

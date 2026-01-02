@@ -13,19 +13,20 @@ Usage:
     sudo $(which uv) run sine mobility-server examples/vacuum_20m/network.yaml
 
     # Terminal 3: Run this mobility script
-    uv run python examples/mobility/linear_movement.py
+    uv run python examples/mobility/linear_movement.py <node> <start_x> <start_y> <start_z> <end_x> <end_y> <end_z> <velocity>
 
-Example:
-    Move node2 from (20, 0, 1) to (0, 0, 1) at 1 m/s:
-    - Distance: 20 meters
-    - Velocity: 1 m/s
-    - Time: 20 seconds
-    - Updates every 100ms
+Examples:
+    # Move node2 from (20, 0, 1) to (0, 0, 1) at 1 m/s
+    uv run python examples/mobility/linear_movement.py node2 20.0 0.0 1.0 0.0 0.0 1.0 1.0
+
+    # Move node2 from (0, 0, 1) to (20, 0, 1) at 2 m/s
+    uv run python examples/mobility/linear_movement.py node2 0.0 0.0 1.0 20.0 0.0 1.0 2.0
 """
 
 import asyncio
 import httpx
 import math
+import sys
 from typing import Tuple
 
 
@@ -152,27 +153,57 @@ class LinearMobility:
 
 
 async def main():
-    """Run example linear movement."""
+    """Run linear movement with command-line arguments."""
+    # Parse command-line arguments (skip script name at argv[0])
+    args = sys.argv[1:]  # Get all args after script name
+
+    if len(args) != 8:
+        print(f"Error: Invalid number of arguments (got {len(args)}, expected 8)")
+        print()
+        print("Usage:")
+        print("  uv run python examples/mobility/linear_movement.py <node> <start_x> <start_y> <start_z> <end_x> <end_y> <end_z> <velocity>")
+        print()
+        print("Examples:")
+        print("  uv run python examples/mobility/linear_movement.py node2 20.0 0.0 1.0 0.0 0.0 1.0 1.0")
+        print("  uv run python examples/mobility/linear_movement.py node2 0.0 0.0 1.0 20.0 0.0 1.0 2.0")
+        sys.exit(1)
+
+    try:
+        node = args[0]
+        start_x = float(args[1])
+        start_y = float(args[2])
+        start_z = float(args[3])
+        end_x = float(args[4])
+        end_y = float(args[5])
+        end_z = float(args[6])
+        velocity = float(args[7])
+
+        if velocity <= 0:
+            print("Error: Velocity must be positive")
+            sys.exit(1)
+
+    except ValueError as e:
+        print(f"Error: Invalid argument - {e}")
+        print("All coordinates and velocity must be valid numbers")
+        sys.exit(1)
+
     mobility = LinearMobility(
         api_url="http://localhost:8001",
         update_interval_ms=100,  # Update every 100ms
     )
 
     try:
-        # Example: Move node2 from (20, 0, 1) to (0, 0, 1) at 1 m/s
-        # This simulates node2 moving towards node1 along the X-axis
         await mobility.move_linear(
-            node="node2",
-            start=(20.0, 0.0, 1.0),  # Starting position
-            end=(0.0, 0.0, 1.0),  # Ending position (near node1)
-            velocity=1.0,  # 1 meter per second
+            node=node,
+            start=(start_x, start_y, start_z),
+            end=(end_x, end_y, end_z),
+            velocity=velocity,
         )
 
         print("\nMovement complete! Check iperf3 throughput at different distances.")
-        print("As node2 approaches node1, you should see:")
-        print("  - Decreasing path loss")
-        print("  - Increasing SNR")
-        print("  - Higher data rates (closer to theoretical maximum)")
+        print("To observe link quality changes:")
+        print("  - Watch netem: watch -n 0.5 './CLAUDE_RESOURCES/check_netem.sh'")
+        print("  - Monitor positions: watch -n 0.5 'curl -s http://localhost:8001/api/nodes | jq'")
 
     finally:
         await mobility.close()
@@ -187,8 +218,6 @@ if __name__ == "__main__":
     print("  1. Channel server running: uv run sine channel-server")
     print("  2. Mobility server running:")
     print("     sudo $(which uv) run sine mobility-server examples/vacuum_20m/network.yaml")
-    print()
-    print("Starting linear movement in 2 seconds...")
     print()
 
     asyncio.run(main())

@@ -75,15 +75,17 @@ This quick start deploys a simple two-node wireless network with 20 meters of fr
 │                         SiNE Emulation System                       │
 └─────────────────────────────────────────────────────────────────────┘
 
-┌──────────────────────┐      ┌──────────────────────┐
-│  Channel Server      │      │  EmulationController │
-│  (Port 8000)         │      │  (sine deploy)       │
-│                      │      │                      │
-│  • Sionna RT Engine  │◄─────│  • Load topology     │
-│  • Ray Tracing       │ HTTP │  • Deploy containers │
-│  • SNR/BER/PER calc  │      │  • Apply netem       │
-└──────────────────────┘      │  • Position updates  │
-                              └──────────┬───────────┘
+┌──────────────────────┐      ┌──────────────────────────────────────┐
+│  Channel Server      │      │  EmulationController                 │
+│  (sine channel-server)│      │  (sine deploy)                       │
+│  (Port 8000)         │      │                                      │
+│                      │      │  • Load topology                     │
+│  • Sionna RT Engine  │◄─────│  • Deploy containers                 │
+│  • Ray Tracing       │ HTTP │  • Query Channel Server to calculate │
+│  • SNR/BER/PER calc  │      │    netem parameters                  │
+└──────────────────────┘      │  • Apply netem to links              │
+                              │  • Position updates                  │
+                              └──────────┬───────────────────────────┘
                                          │
                                          │ Containerlab
                                          ▼
@@ -94,26 +96,31 @@ This quick start deploys a simple two-node wireless network with 20 meters of fr
                     │   (0, 0, 1)    │   (20, 0, 1)      │
                     │                │                   │
                     │  ┌──────────┐  │  ┌──────────┐     │
-                    │  │   eth1   │◄─┼─►│   eth1   │     │
-                    │  └──────────┘  │  └──────────┘     │
-                    │      ▲         │        ▲          │
-                    │      │ netem   │        │ netem    │
-                    │      │ (tc)    │        │ (tc)     │
-                    │      │         │        │          │
-                    │  • delay       │    • delay        │
-                    │  • jitter      │    • jitter       │
-                    │  • loss        │    • loss         │
-                    │  • rate limit  │    • rate limit   │
-                    └────────────────┴───────────────────┘
-                           ▲                   ▲
-                           │                   │
-                           └───────┬───────────┘
-                                   │ veth pair
-                          (wireless link emulation)
+                    │  │   eth1   │  │  │   eth1   │     │
+                    │  └─────┬────┘  │  └────┬─────┘     │
+                    │        │       │       │           │
+                    │        │ netem │       │ netem     │
+                    │        │ (tc)  │       │ (tc)      │
+                    │        │       │       │           │
+                    │    • delay     │   • delay         │
+                    │    • jitter    │   • jitter        │
+                    │    • loss      │   • loss          │
+                    │    • rate      │   • rate          │
+                    └────────┼───────┴───────┼───────────┘
+                             │               │
+                             │ veth pair     │ veth pair
+                             ▼               ▼
+                    ┌────────────────────────────────────┐
+                    │        Linux Bridge (br-xxx)       │
+                    │  (created by Containerlab)         │
+                    └────────────────────────────────────┘
+                             ▲
+                             │
+                    (wireless link emulation)
 
 Legend:
   ◄──► : HTTP communication
-  ───  : Network links
+  ───  : Network links / veth pairs
   netem: Linux network emulation (delay, jitter, loss, rate)
 ```
 
@@ -271,6 +278,27 @@ uv run sine destroy path/to/network.yaml
 
 SiNE supports real-time node mobility with automatic channel recomputation. As nodes move, link parameters (delay, jitter, loss, rate) are updated based on new positions.
 
+### What Mobility Does
+
+Mobility scripts **update virtual positions in 3D space** and trigger automatic channel recomputation:
+
+1. **Send HTTP POST requests** to Mobility API server (port 8001) with new `(x, y, z)` coordinates
+2. **Trigger Sionna ray tracing** to recompute wireless channel at new positions
+3. **Update netem parameters** on container interfaces based on new link conditions
+4. **Containers stay in place** - only the emulated wireless link behavior changes
+
+**Key point**: The Docker containers themselves don't move. Only their virtual positions in the ray-traced scene change, which affects the computed path loss, SNR, and resulting netem parameters (delay, jitter, loss%, rate).
+
+### Observable Effects
+
+As nodes move closer together:
+- Path loss **decreases** → SNR **increases** → Throughput **increases** (visible in iperf3)
+- Packet loss **decreases**, delay may change based on multipath
+
+As nodes move apart:
+- Path loss **increases** → SNR **decreases** → Throughput **decreases**
+- Packet loss may **increase**, potentially triggering MCS downgrade (if using adaptive MCS)
+
 ### Mobility Architecture
 
 ```
@@ -347,19 +375,23 @@ Legend:
    uv run sine channel-server
    ```
 
-2. **Start mobility API server** (Terminal 2):
+2. **Deploy emulation with mobility API** (Terminal 2):
    ```bash
-   sudo $(which uv) run sine mobility-server examples/vacuum_20m/network.yaml
+   sudo $(which uv) run sine deploy --enable-mobility examples/vacuum_20m/network.yaml
    ```
+
+   This starts both the emulation and the mobility API server on port 8001.
 
 3. **Run mobility script** (Terminal 3):
    ```bash
-   # Linear movement example
-   uv run python examples/mobility/linear_movement.py
+   # Linear movement: Move node2 from (0,0,1) to (20,0,1) at 1 m/s
+   uv run python examples/mobility/linear_movement.py node2 0.0 0.0 1.0 20.0 0.0 1.0 1.0
 
    # OR waypoint-based movement
    uv run python examples/mobility/waypoint_movement.py
    ```
+
+**Note**: The `--enable-mobility` flag is required to run mobility scripts. Without it, the REST API for position updates won't be available.
 
 ### Mobility Features
 
