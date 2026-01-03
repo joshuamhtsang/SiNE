@@ -1,0 +1,118 @@
+# SiNE Example: Two-Room Indoor Propagation
+#
+# This example demonstrates indoor RF propagation through a doorway between
+# two concrete rooms. The dividing wall creates significant attenuation,
+# while the doorway allows multipath propagation with reflections and
+# diffraction effects.
+#
+# Scene layout:
+# - Two 20m x 40m rooms separated by a concrete wall at x=20m
+# - 1.3m wide x 2m high doorway in center of dividing wall
+# - External walls and dividing wall: itu_concrete (10cm thick, 3m high)
+# - No ceiling (open top for visualization)
+# - Floor at z=0
+#
+# Node positions:
+# - node1: (10, 10, 1) - Room 1 (west room)
+# - node2: (30, 10, 1) - Room 2 (east room)
+# - Nodes are on opposite sides of the dividing wall
+#
+# RF Configuration:
+# - WiFi 6 (5.18 GHz, 80 MHz channel)
+# - 256-QAM modulation (higher order, sensitive to low SNR)
+# - LDPC coding (rate 0.75)
+# - Requires ~29 dB SNR for reliable operation
+#
+# Expected behavior:
+# - Through-wall path loss will be high (~20-30 dB attenuation from concrete)
+# - Primary propagation through doorway (multipath via reflections)
+# - Significant multipath delay spread due to reflections
+# - SNR may drop below 256-QAM threshold, causing high packet loss
+#
+# Mobility example:
+# - Move node2 from (30, 10, 1) to (30, 30, 1) - along east wall
+# - As node2 moves away from doorway, signal quality degrades
+# - Best signal when node2 is aligned with doorway (y=20m)
+#
+# Usage:
+#   1. Build node image:
+#      docker build -t sine-node:latest docker/node/
+#
+#   2. Start the channel server:
+#      uv run sine channel-server
+#
+#   3. Deploy the emulation with mobility:
+#      sudo $(which uv) run sine deploy --enable-mobility examples/two_rooms/network.yaml
+#
+#   4. Configure IP addresses:
+#      docker exec -it clab-two-rooms-node1 ip addr add 18.0.0.1/24 dev eth1
+#      docker exec -it clab-two-rooms-node2 ip addr add 18.0.0.2/24 dev eth1
+#
+#   5. Test connectivity:
+#      docker exec -it clab-two-rooms-node1 iperf3 -s
+#      docker exec -it clab-two-rooms-node2 iperf3 -c 18.0.0.1
+#
+#   6. Run mobility (move node2 along east wall):
+#      uv run python examples/mobility/linear_movement.py node2 30.0 10.0 1.0 30.0 30.0 1.0 1.0
+#
+#   7. Cleanup:
+#      uv run sine destroy examples/two_rooms/network.yaml
+
+name: two-rooms
+prefix: clab
+
+topology:
+  # Two-room indoor scene with concrete walls and doorway
+  scene:
+    file: scenes/two_rooms.xml
+
+  nodes:
+    # Node in Room 1 (west room)
+    node1:
+      kind: linux
+      image: sine-node:latest
+      interfaces:
+        eth1:
+          wireless:
+            rf_power_dbm: 20.0              # WiFi 6 typical TX power
+            antenna_pattern: iso            # Omnidirectional
+            polarization: V                 # Vertical polarization
+            antenna_gain_dbi: 2.0           # Small antenna gain
+            frequency_ghz: 5.18             # WiFi 6 channel 36 (5.18 GHz)
+            bandwidth_mhz: 80               # 80 MHz channel
+            # Higher-order modulation (256-QAM)
+            modulation: 256qam              # 8 bits/symbol, requires ~29 dB SNR
+            fec_type: ldpc                  # Low-density parity-check coding
+            fec_code_rate: 0.75             # 3/4 code rate
+            position:
+              x: 10.0                       # Center of Room 1
+              y: 10.0                       # South side of room
+              z: 1.0                        # Desktop height
+
+    # Node in Room 2 (east room)
+    node2:
+      kind: linux
+      image: sine-node:latest
+      interfaces:
+        eth1:
+          wireless:
+            rf_power_dbm: 20.0
+            antenna_pattern: iso
+            polarization: V
+            antenna_gain_dbi: 2.0
+            frequency_ghz: 5.18
+            bandwidth_mhz: 80
+            # Same modulation as node1 (symmetric link)
+            modulation: 256qam
+            fec_type: ldpc
+            fec_code_rate: 0.75
+            position:
+              x: 30.0                       # Center of Room 2
+              y: 10.0                       # South side of room (aligned with node1)
+              z: 1.0                        # Desktop height
+
+  links:
+    - endpoints: [node1:eth1, node2:eth1]
+
+  channel_server: "http://localhost:8000"
+  mobility_poll_ms: 100                     # Update channel every 100ms during mobility
