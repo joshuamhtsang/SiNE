@@ -2,21 +2,132 @@
 
 This directory contains example scripts demonstrating how to control node movement in SiNE wireless network emulations.
 
-## Prerequisites
+## Complete Mobility Workflow
 
-1. **Channel Server** - Must be running (Terminal 1):
+This guide walks you through a complete mobility experiment from setup to monitoring.
+
+### Step 1: Build Node Image
+
+First, build the Docker image for the nodes (contains iperf3, tcpdump, etc.):
+
+```bash
+docker build -t sine-node:latest docker/node/
+```
+
+### Step 2: Start Channel Server
+
+The channel server computes wireless link parameters (Terminal 1):
+
+```bash
+uv run sine channel-server
+```
+
+**Expected output:**
+```
+INFO:     Started server process [...]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000
+```
+
+### Step 3: Deploy with Mobility API
+
+Deploy the emulation with mobility API enabled (Terminal 2):
+
+```bash
+sudo $(which uv) run sine deploy --enable-mobility examples/vacuum_20m/network.yaml
+```
+
+**What this does:**
+- Creates Docker containers via Containerlab
+- Computes initial channel conditions via ray tracing
+- Applies netem to container interfaces
+- **Starts mobility API server on port 8001**
+- Keeps running to accept position updates
+
+**Expected output:**
+```
+Deployed Containers:
+  clab-vacuum-20m-node1 (sine-node:latest)
+    PID: 12345
+    Interfaces:
+      - eth1 @ position (0.0, 0.0, 1.0)
+
+  clab-vacuum-20m-node2 (sine-node:latest)
+    PID: 12346
+    Interfaces:
+      - eth1 @ position (20.0, 0.0, 1.0)
+
+Link Parameters:
+  node1:eth1 ↔ node2:eth1 [wireless]
+    Delay: 0.07 ms | Jitter: 0.00 ms | Loss: 0.00% | Rate: 192.0 Mbps
+
+INFO:     Uvicorn running on http://0.0.0.0:8001 (Press CTRL+C to quit)
+```
+
+### Step 4: Configure IP Addresses
+
+Containers start with no IP addresses. Assign them (Terminal 3):
+
+```bash
+docker exec -it clab-vacuum-20m-node1 ip addr add 18.0.0.1/24 dev eth1
+docker exec -it clab-vacuum-20m-node2 ip addr add 18.0.0.2/24 dev eth1
+
+# Verify connectivity
+docker exec clab-vacuum-20m-node2 ping -c 3 18.0.0.1
+```
+
+### Step 5: Start iperf3 Monitoring
+
+Start iperf3 server on node1 (Terminal 4):
+
+```bash
+docker exec -it clab-vacuum-20m-node1 iperf3 -s
+```
+
+Run continuous throughput tests from node2 (Terminal 5):
+
+```bash
+while true; do
+    docker exec clab-vacuum-20m-node2 iperf3 -c 18.0.0.1 -t 2
+    sleep 1
+done
+```
+
+### Step 6: Run Mobility Script
+
+Move node2 from 20m to 300m away (Terminal 6):
+
+```bash
+# Move at 3 m/s (takes ~93 seconds)
+uv run python examples/mobility/linear_movement.py node2 20.0 0.0 1.0 300.0 0.0 1.0 3.0
+```
+
+**What you'll see:**
+- Terminal 5 (iperf3): Throughput decreasing from ~188 Mbps to ~50-100 Mbps
+- Terminal 2 (deployment): Logs showing position updates and netem reconfigurations
+
+### Step 7: Cleanup
+
+When done, destroy the emulation:
+
+```bash
+uv run sine destroy examples/vacuum_20m/network.yaml
+```
+
+## Prerequisites Summary
+
+1. **Channel Server** - Computes link parameters (Terminal 1):
    ```bash
    uv run sine channel-server
    ```
 
-2. **Emulation with Mobility API** - Deploy with `--enable-mobility` flag (Terminal 2):
+2. **Emulation with Mobility API** - Deploy with `--enable-mobility` (Terminal 2):
    ```bash
    sudo $(which uv) run sine deploy --enable-mobility examples/vacuum_20m/network.yaml
    ```
 
-   This starts both the emulation and the mobility API server on port 8001.
-
-3. **Python dependencies** - Installed automatically:
+3. **Python dependencies** - Installed automatically via `uv sync`:
    - `httpx` - For HTTP requests to mobility API
    - `asyncio` - For async movement control
 
@@ -33,18 +144,23 @@ uv run python examples/mobility/linear_movement.py <node> <start_x> <start_y> <s
 
 **Examples:**
 ```bash
-# Move node2 from (20, 0, 1) to (0, 0, 1) at 1 m/s
-uv run python examples/mobility/linear_movement.py node2 20.0 0.0 1.0 0.0 0.0 1.0 1.0
+# Move node2 from (20, 0, 1) to (300, 0, 1) at 3 m/s (takes ~93 seconds)
+uv run python examples/mobility/linear_movement.py node2 20.0 0.0 1.0 300.0 0.0 1.0 3.0
 
-# Move node2 from (0, 0, 1) to (20, 0, 1) at 2 m/s
-uv run python examples/mobility/linear_movement.py node2 0.0 0.0 1.0 20.0 0.0 1.0 2.0
+# Move node2 back from (300, 0, 1) to (20, 0, 1) at 3 m/s
+uv run python examples/mobility/linear_movement.py node2 300.0 0.0 1.0 20.0 0.0 1.0 3.0
+
+# Move node2 from (20, 0, 1) to (0, 0, 1) at 1 m/s (takes 20 seconds)
+uv run python examples/mobility/linear_movement.py node2 20.0 0.0 1.0 0.0 0.0 1.0 1.0
 ```
 
 **What it does:**
 - Moves the specified node from start position to end position at constant velocity
-- Updates position every 100ms
+- Updates position every 100ms (configurable in the script)
 - Demonstrates how SNR/throughput changes with distance
-- Example: Moving from (20, 0, 1) to (0, 0, 1) at 1 m/s takes 20 seconds
+- Travel time = distance / velocity
+  - Example: 280 meters at 3 m/s = ~93 seconds
+  - Example: 20 meters at 1 m/s = 20 seconds
 
 ### 2. Waypoint Movement (`waypoint_movement.py`)
 
@@ -104,30 +220,108 @@ curl http://localhost:8001/health
 
 ## Monitoring Link Quality During Movement
 
-While running mobility scripts, you can monitor the changing link conditions:
+While running mobility scripts, you can monitor the changing link conditions in real-time:
 
-### Option 1: Check Netem Configuration
+### Option 1: Monitor with iperf3 (Recommended)
+
+**Setup** (run once after deployment):
 ```bash
-# Watch netem parameters update in real-time
-watch -n 0.5 './check_netem.sh'
+# Configure IP addresses
+docker exec -it clab-vacuum-20m-node1 ip addr add 18.0.0.1/24 dev eth1
+docker exec -it clab-vacuum-20m-node2 ip addr add 18.0.0.2/24 dev eth1
+
+# Start iperf3 server on node1 (Terminal 1)
+docker exec -it clab-vacuum-20m-node1 iperf3 -s
 ```
 
-### Option 2: Monitor with iperf3
+**Continuous monitoring** (Terminal 2):
 ```bash
-# Terminal 1: Start iperf3 server on node1
-docker exec -it clab-vacuum-20m-node1 iperf3 -s
-
-# Terminal 2: Continuous iperf3 tests from node2
+# Run continuous 2-second iperf3 tests
 while true; do
-    docker exec -it clab-vacuum-20m-node2 iperf3 -c 192.168.1.1 -t 2
+    docker exec clab-vacuum-20m-node2 iperf3 -c 18.0.0.1 -t 2
     sleep 1
 done
 ```
 
-### Option 3: Query Positions via API
-```bash
-watch -n 0.5 'curl -s http://localhost:8001/api/nodes | jq'
+**Expected behavior:**
+- **20m distance**: ~188 Mbps (good SNR, low loss)
+- **100m distance**: ~188 Mbps (still good with 64-QAM LDPC)
+- **200m distance**: ~150-180 Mbps (SNR degrading, increased loss)
+- **300m distance**: ~50-100 Mbps (significant degradation, high loss)
+
+**Interpreting iperf3 output:**
 ```
+[ ID] Interval           Transfer     Bitrate         Retr  Cwnd
+[  5]   0.00-2.00   sec  44.8 MBytes   188 Mbits/sec    0   1.12 MBytes
+                                      ^^^^^^^^^^^^^^^  ^^^
+                                      Throughput       Retransmissions
+```
+- **Bitrate**: Actual throughput (decreases with distance)
+- **Retr**: Retransmissions (increases when SNR drops, packet loss increases)
+- **Cwnd**: TCP congestion window (shrinks when experiencing loss)
+
+### Option 2: Query Positions via API
+```bash
+# Watch node positions update
+watch -n 0.5 'curl -s http://localhost:8001/api/nodes | jq'
+
+# Get single node position
+curl -s http://localhost:8001/api/mobility/position/node2 | jq
+```
+
+**Example output:**
+```json
+{
+  "node1": {
+    "interfaces": {
+      "eth1": {"x": 0.0, "y": 0.0, "z": 1.0}
+    }
+  },
+  "node2": {
+    "interfaces": {
+      "eth1": {"x": 150.5, "y": 0.0, "z": 1.0}
+    }
+  }
+}
+```
+
+### Option 3: Check Netem Configuration
+```bash
+# Watch netem parameters update in real-time
+watch -n 0.5 'docker exec clab-vacuum-20m-node1 tc -s qdisc show dev eth1'
+
+# OR use the check script
+cd examples/vacuum_20m
+watch -n 0.5 './check_netem.sh'
+```
+
+**What to look for:**
+```
+qdisc netem 1: root ... delay 100us ...
+qdisc tbf 2: parent 1: rate 192Mbit burst 98174b lat 50ms
+                            ^^^^^^^
+                            Rate decreases as distance increases
+```
+
+### Option 4: Debug Ray Tracing Paths
+
+Query detailed path information at specific positions:
+
+```bash
+# Get path details at current position
+curl -X POST http://localhost:8000/debug/paths \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tx_position": {"x": 0.0, "y": 0.0, "z": 1.0},
+    "rx_position": {"x": 100.0, "y": 0.0, "z": 1.0}
+  }' | jq
+```
+
+This shows:
+- `distance_m`: Direct line distance
+- `num_paths`: Number of propagation paths found
+- `strongest_path.power_db`: Received power
+- `paths[].delay_ns`: Propagation delay per path
 
 ## Expected Behavior
 

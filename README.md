@@ -380,18 +380,31 @@ Legend:
    sudo $(which uv) run sine deploy --enable-mobility examples/vacuum_20m/network.yaml
    ```
 
-   This starts both the emulation and the mobility API server on port 8001.
+   The `--enable-mobility` flag starts both the emulation and the mobility API server on port 8001.
 
 3. **Run mobility script** (Terminal 3):
    ```bash
-   # Linear movement: Move node2 from (0,0,1) to (20,0,1) at 1 m/s
-   uv run python examples/mobility/linear_movement.py node2 0.0 0.0 1.0 20.0 0.0 1.0 1.0
+   # Move node2 from (20, 0, 1) to (300, 0, 1) at 3 m/s (takes ~93 seconds)
+   uv run python examples/mobility/linear_movement.py node2 20.0 0.0 1.0 300.0 0.0 1.0 3.0
 
    # OR waypoint-based movement
    uv run python examples/mobility/waypoint_movement.py
    ```
 
-**Note**: The `--enable-mobility` flag is required to run mobility scripts. Without it, the REST API for position updates won't be available.
+4. **Monitor throughput** (Terminal 4 - optional):
+   ```bash
+   # Configure IP addresses first
+   docker exec -it clab-vacuum-20m-node1 ip addr add 18.0.0.1/24 dev eth1
+   docker exec -it clab-vacuum-20m-node2 ip addr add 18.0.0.2/24 dev eth1
+
+   # Start iperf3 server on node1
+   docker exec -it clab-vacuum-20m-node1 iperf3 -s
+
+   # In another terminal, run continuous iperf3 tests
+   while true; do docker exec clab-vacuum-20m-node2 iperf3 -c 18.0.0.1 -t 2; sleep 1; done
+   ```
+
+   You should see throughput decrease significantly as node2 moves from 20m to 300m away from node1.
 
 ### Mobility Features
 
