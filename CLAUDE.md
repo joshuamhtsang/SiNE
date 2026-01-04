@@ -31,7 +31,13 @@ SiNE uses containerlab as a core component for deploying the network topology:
 4. **Channel Application**:
    - **Wireless links**: Uses Sionna ray tracing to compute channel conditions (SNR, BER, BLER)
    - **Fixed links**: Uses directly specified netem parameters
-   - Converts to netem parameters (delay, jitter, loss %, rate)
+   - SiNE abstracts the outputs of Sionna RT and link-level simulation into netem parameters:
+     ```python
+     delay_ms = propagation_delay       # From strongest path computed in Sionna RT
+     jitter_ms = delay_spread           # RMS delay spread from multipath (Sionna RT)
+     loss_percent = PER × 100           # From BER/BLER calculation (AWGN formulas)
+     rate_mbps = modulation_based_rate  # BW × bits_per_symbol × code_rate × efficiency × (1-PER)
+     ```
    - Applies netem to containerlab-created veth interfaces using `nsenter` (requires sudo)
    - Bidirectional: applies same params to both TX and RX interfaces
 
@@ -344,6 +350,30 @@ Ray Tracing → CIR (paths) → Path Loss → SNR
                                          ↓
                     Netem Params (delay, jitter, loss%, rate)
 ```
+
+### Relationship Between Channel Metrics and Netem Parameters
+
+**Important:** SiNE operates as **network emulation** (application-layer testing), not **PHY simulation** (waveform-level). Enhanced channel metrics like RMS delay spread (τ_rms), coherence bandwidth (Bc), and Rician K-factor are **diagnostic only** for visualization and debugging.
+
+**These metrics do NOT directly influence netem configuration** - the netem parameters already account for or abstract physical channel effects:
+
+| Physical Effect | How It's Captured/Abstracted in Netem |
+|----------------|----------------------------------------|
+| **Delay spread (τ_rms)** | Directly used for `jitter_ms` parameter (packet timing variation) |
+| **Frequency selectivity (Bc)** | Not directly captured; SiNE uses AWGN BER formulas (frequency-flat assumption) |
+| **K-factor (LOS/NLOS)** | Indirectly via SNR (LOS has lower path loss → higher SNR → lower loss%) |
+| **Coherence time (Tc)** | May inform visualization update interval, not netem params |
+
+**Note on BER Calculation:** SiNE uses theoretical AWGN (frequency-flat) BER formulas based purely on SNR and modulation scheme. ISI and frequency selectivity are NOT modeled in the BER calculation - only the RMS delay spread is used for jitter. This is appropriate for network emulation where packet-level behavior matters more than symbol-level distortion.
+
+**Use diagnostic metrics to:**
+- Understand **why** certain netem parameters were chosen (e.g., high jitter from large delay spread)
+- Validate that netem parameters make sense given channel conditions
+- Determine appropriate visualization update rates for mobility scenarios
+- Debug link quality issues by understanding the underlying RF propagation
+- Identify when poor SNR (not ISI) is causing high packet loss
+
+**Example:** If visualization shows high loss_percent with τ_rms = 50 ns, this does NOT mean ISI is causing the loss. The τ_rms contributes to jitter_ms (packet timing variation), while loss_percent comes from low SNR. If SNR is low due to high path loss, increase TX power, improve antenna gains, or reduce distance. The delay spread itself does not directly cause packet loss in SiNE's abstraction model.
 
 ## Important Notes
 

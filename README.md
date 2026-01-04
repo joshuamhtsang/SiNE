@@ -9,7 +9,14 @@ SiNE creates realistic wireless network emulations by combining:
 - **Sionna v1.2.1**: Ray tracing for accurate wireless channel modeling
 - **Linux netem**: Apply computed channel conditions (delay, loss, bandwidth) to containerlab links
 
-**How it works**: SiNE converts your `network.yaml` topology to containerlab format, deploys containers via containerlab, then applies wireless channel emulation on top of the containerlab-created network interfaces using netem.
+**How it works**: SiNE converts your `network.yaml` topology to containerlab format, deploys containers via containerlab, then applies wireless channel emulation on top of the containerlab-created network interfaces using netem. SiNE abstracts the outputs of Sionna RT and link-level simulation (SNR, BER, BLER, multipath propagation) into netem parameters:
+
+```python
+delay_ms = propagation_delay       # From strongest path computed in Sionna RT
+jitter_ms = delay_spread           # RMS delay spread from multipath (Sionna RT)
+loss_percent = PER × 100           # From BER/BLER calculation (AWGN formulas)
+rate_mbps = modulation_based_rate  # BW × bits_per_symbol × code_rate × efficiency × (1-PER)
+```
 
 ## Features
 

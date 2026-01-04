@@ -109,25 +109,69 @@ _device_positions: dict[str, tuple[float, float, float]] = {}  # {device_name: (
 
 #### Step 2: Modify `/compute/single` to Cache Paths
 
-Update the existing `/compute/single` endpoint to store path details:
+Update the existing `/compute/single` endpoint to store path details **with enhanced wireless channel metrics**:
 
 ```python
+def calculate_k_factor(path_details: PathDetails) -> float | None:
+    """Calculate Rician K-factor (LOS/NLOS power ratio).
+
+    K = P_LOS / P_NLOS
+    K_dB = 10×log10(K)
+
+    Returns None if no LOS path exists.
+    """
+    los_paths = [p for p in path_details.paths if p.is_los]
+    nlos_paths = [p for p in path_details.paths if not p.is_los]
+
+    if not los_paths:
+        return None
+
+    # Convert dB to linear power
+    p_los = 10 ** (los_paths[0].power_db / 10)
+    p_nlos_total = sum(10 ** (p.power_db / 10) for p in nlos_paths)
+
+    if p_nlos_total < 1e-20:
+        return 100.0  # Very strong LOS, weak multipath
+
+    k_linear = p_los / p_nlos_total
+    k_db = 10 * np.log10(k_linear)
+
+    return float(k_db)
+
 @app.post("/compute/single", response_model=ChannelResponse)
 async def compute_single_channel(request: WirelessLinkRequest) -> ChannelResponse:
     global _engine, _mcs_tables, _path_cache, _device_positions
 
     # ... [existing computation code] ...
 
-    # NEW: Before clear_devices(), cache the path details
+    # Compute paths
+    path_result = _engine.compute_paths()
+
+    # NEW: Before clear_devices(), cache the path details with wireless metrics
     try:
         path_details = _engine.get_path_details()
 
         # Store in cache with link identifier
-        link_id = f"{request.tx_node}:{tx_node}->{request.rx_node}:{rx_node}"
+        link_id = f"{request.tx_node}:{request.tx_iface}->{request.rx_node}:{request.rx_iface}"
+
+        # Calculate Rician K-factor (LOS/NLOS characterization)
+        k_factor_db = calculate_k_factor(path_details)
+
+        # Calculate coherence bandwidth from RMS delay spread
+        # Bc ≈ 1/(5×τ_rms) - indicates frequency selectivity
+        if path_result.delay_spread_ns > 0:
+            coherence_bw_hz = 1.0 / (5.0 * path_result.delay_spread_ns * 1e-9)
+        else:
+            coherence_bw_hz = request.bandwidth_hz  # No multipath, flat channel
 
         # Limit to 5 strongest paths for visualization
         sorted_paths = sorted(path_details.paths, key=lambda p: p.power_db, reverse=True)
         limited_paths = sorted_paths[:5]
+
+        # Calculate power coverage of shown paths
+        total_power_linear = sum(10**(p.power_db/10) for p in path_details.paths)
+        shown_power_linear = sum(10**(p.power_db/10) for p in limited_paths)
+        power_coverage_pct = 100 * shown_power_linear / total_power_linear if total_power_linear > 0 else 0
 
         # Convert to JSON-serializable format
         paths_data = [{
@@ -135,23 +179,32 @@ async def compute_single_channel(request: WirelessLinkRequest) -> ChannelRespons
             "power_db": float(p.power_db),
             "vertices": [[float(v[0]), float(v[1]), float(v[2])] for v in p.vertices],
             "interaction_types": p.interaction_types,
-            "is_los": p.is_los
+            "is_los": p.is_los,
+            "doppler_hz": float(p.doppler_hz) if hasattr(p, 'doppler_hz') and p.doppler_hz is not None else None,
         } for p in limited_paths]
 
         _path_cache[link_id] = {
-            "tx_name": f"{request.tx_node}:{tx_node}",
-            "rx_name": f"{request.rx_node}:{rx_node}",
+            "tx_name": f"{request.tx_node}:{request.tx_iface}",
+            "rx_name": f"{request.rx_node}:{request.rx_iface}",
             "tx_position": [tx_pos[0], tx_pos[1], tx_pos[2]],
             "rx_position": [rx_pos[0], rx_pos[1], rx_pos[2]],
             "distance_m": float(path_details.distance_m),
             "num_paths_total": path_details.num_paths,
-            "num_paths_returned": len(paths_data),
+            "num_paths_shown": len(paths_data),
+            "power_coverage_percent": float(power_coverage_pct),
+
+            # NEW: Wireless channel metrics
+            "rms_delay_spread_ns": float(path_result.delay_spread_ns),
+            "coherence_bandwidth_hz": float(coherence_bw_hz),
+            "k_factor_db": float(k_factor_db) if k_factor_db is not None else None,
+            "dominant_path_type": path_result.dominant_path_type,
+
             "paths": paths_data
         }
 
         # Also store device positions
-        _device_positions[f"{request.tx_node}:{tx_node}"] = tx_pos
-        _device_positions[f"{request.rx_node}:{rx_node}"] = rx_pos
+        _device_positions[f"{request.tx_node}:{request.tx_iface}"] = tx_pos
+        _device_positions[f"{request.rx_node}:{request.rx_iface}"] = rx_pos
 
     except Exception as e:
         logger.warning(f"Failed to cache paths for visualization: {e}")
@@ -159,6 +212,13 @@ async def compute_single_channel(request: WirelessLinkRequest) -> ChannelRespons
     # ... [rest of existing code] ...
     return ChannelResponse(...)  # Existing return
 ```
+
+**Key Additions (Wireless Metrics):**
+- **RMS Delay Spread** (τ_rms): Indicates severity of inter-symbol interference (ISI)
+- **Coherence Bandwidth** (Bc ≈ 1/(5×τ_rms)): Determines if channel is frequency-selective
+- **Rician K-factor**: LOS/NLOS power ratio - characterizes channel type
+- **Power Coverage**: Percentage of total channel power captured by shown paths
+- **Doppler Shifts**: Per-path Doppler (for mobility scenarios)
 
 #### Step 3: New Endpoint - `GET /api/visualization/state`
 
@@ -210,7 +270,7 @@ async def get_visualization_state() -> dict:
 ```
 
 ```python
-# GET /api/visualization/state Response:
+# GET /api/visualization/state Response (ENHANCED):
 {
   "scene_file": str,                # Path to Mitsuba XML
   "scene_loaded": bool,
@@ -237,14 +297,23 @@ async def get_visualization_state() -> dict:
       "rx_position": [x, y, z],
       "distance_m": float,
       "num_paths_total": int,
-      "num_paths_returned": int,   # Limited to 5 strongest
+      "num_paths_shown": int,      # Limited to 5 strongest
+      "power_coverage_percent": float,  # NEW: % of total power in shown paths
+
+      # NEW: Wireless channel metrics
+      "rms_delay_spread_ns": float,     # RMS delay spread (ISI indicator)
+      "coherence_bandwidth_hz": float,  # Bc ≈ 1/(5×τ_rms)
+      "k_factor_db": float | null,      # Rician K-factor (LOS/NLOS ratio)
+      "dominant_path_type": str,        # "los", "nlos", "diffraction"
+
       "paths": [
         {
           "delay_ns": float,
           "power_db": float,
           "vertices": [[x, y, z], ...],
           "interaction_types": [str],
-          "is_los": bool
+          "is_los": bool,
+          "doppler_hz": float | null    # NEW: Per-path Doppler shift
         }
       ]
     }
@@ -305,10 +374,10 @@ async def fetch_metrics():
         return None  # Metrics are optional
 ```
 
-**Cell 3: Rendering Functions**
+**Cell 3: Rendering Functions (ENHANCED with Wireless Metrics)**
 ```python
 def display_visualization(viz_state, metrics=None):
-    """Display visualization state and optional metrics."""
+    """Display visualization state with wireless channel analysis."""
     print(f"=== Visualization State (Cache: {viz_state['cache_size']} links) ===\n")
 
     # Display device positions
@@ -317,23 +386,78 @@ def display_visualization(viz_state, metrics=None):
         pos = device["position"]
         print(f"  {device['name']}: ({pos['x']:.1f}, {pos['y']:.1f}, {pos['z']:.1f})")
 
-    # Display path information
-    print(f"\nPaths ({len(viz_state['paths'])} links):")
-    for path_data in viz_state["paths"]:
-        print(f"  {path_data['tx_name']} → {path_data['rx_name']}")
-        print(f"    Distance: {path_data['distance_m']:.1f} m")
-        print(f"    Paths: {path_data['num_paths_returned']}/{path_data['num_paths_total']}")
+    # Display detailed channel information
+    print(f"\n{'='*70}")
+    print("WIRELESS CHANNEL ANALYSIS")
+    print(f"{'='*70}")
 
-    # Display optional metrics
+    for link_data in viz_state["paths"]:
+        print(f"\nLink: {link_data['tx_name']} → {link_data['rx_name']}")
+        print(f"{'-'*70}")
+
+        # Basic link info
+        print(f"Distance: {link_data['distance_m']:.1f} m")
+        print(f"Paths: {link_data['num_paths_shown']}/{link_data['num_paths_total']} "
+              f"({link_data.get('power_coverage_percent', 100):.1f}% power)")
+
+        # Delay spread analysis (ISI characterization)
+        rms_ds_ns = link_data.get('rms_delay_spread_ns', 0)
+        bc_mhz = link_data.get('coherence_bandwidth_hz', 0) / 1e6
+
+        print(f"\nDelay Characteristics:")
+        print(f"  RMS Delay Spread (τ_rms): {rms_ds_ns:.2f} ns")
+        print(f"  Coherence Bandwidth (Bc): {bc_mhz:.1f} MHz")
+
+        # Frequency selectivity assessment
+        # Assume 80 MHz signal BW (adjust based on your config)
+        signal_bw_mhz = 80  # TODO: Get from link config
+        if bc_mhz > signal_bw_mhz:
+            print(f"  ✓ Frequency-flat channel (Bc > BW)")
+        else:
+            print(f"  ⚠ Frequency-selective channel (Bc ≈ BW)")
+            print(f"    ISI may be significant - OFDM recommended")
+
+        # LOS/NLOS classification via Rician K-factor
+        k_factor = link_data.get('k_factor_db')
+        dominant_type = link_data.get('dominant_path_type', 'unknown')
+
+        print(f"\nChannel Classification:")
+        if k_factor is not None:
+            print(f"  Rician K-factor: {k_factor:.1f} dB")
+            if k_factor > 10:
+                print(f"  → Strong LOS component (K > 10 dB)")
+            elif k_factor > 0:
+                print(f"  → Moderate LOS with multipath (0 < K < 10 dB)")
+            else:
+                print(f"  → NLOS dominant (K < 0 dB)")
+        else:
+            print(f"  Channel Type: NLOS (no direct path)")
+            print(f"  Dominant: {dominant_type}")
+
+        # Individual path details
+        print(f"\nPropagation Paths (strongest {link_data['num_paths_shown']}):")
+        for i, path in enumerate(link_data['paths'], 1):
+            los_marker = " [LOS]" if path['is_los'] else ""
+            interactions = ", ".join(path['interaction_types']) if path['interaction_types'] else "direct"
+            doppler = f", Doppler: {path.get('doppler_hz', 0):.1f} Hz" if path.get('doppler_hz') is not None else ""
+
+            print(f"  Path {i}: {path['delay_ns']:.2f} ns, {path['power_db']:.1f} dB{los_marker}")
+            print(f"          Interactions: {interactions}{doppler}")
+
+    # Display optional netem metrics
     if metrics:
-        print("\n=== Link Metrics ===")
+        print(f"\n{'='*70}")
+        print("NETEM CONFIGURATION")
+        print(f"{'='*70}")
         for link in metrics.get("links", []):
             print(f"\n{link['tx']} ↔ {link['rx']}")
             print(f"  Rate: {link['rate_mbps']:.1f} Mbps")
             print(f"  Loss: {link['loss_percent']:.2f}%")
+            print(f"  Delay: {link.get('delay_ms', 'N/A')} ms")
             print(f"  SNR: {link.get('snr_db', 'N/A')} dB")
             if link.get('modulation'):
-                print(f"  Modulation: {link['modulation']}")
+                mcs_idx = link.get('mcs_index', 'N/A')
+                print(f"  Modulation: {link['modulation']} (MCS {mcs_idx})")
 ```
 
 **Cell 4: Main Visualization Loop**
@@ -405,21 +529,34 @@ await render_snapshot()
 
 ## Critical Files to Modify
 
-1. **`src/sine/channel/server.py`** (MAIN - Caching & new endpoint)
+1. **`src/sine/channel/server.py`** (MAIN - Caching & new endpoint with wireless metrics)
    - Add global variables: `_path_cache`, `_device_positions`
-   - Modify `/compute/single` to cache paths after computation
+   - Add `calculate_k_factor()` helper function for Rician K-factor calculation
+   - Modify `/compute/single` to cache paths with enhanced wireless metrics:
+     - RMS delay spread (τ_rms)
+     - Coherence bandwidth (Bc ≈ 1/(5×τ_rms))
+     - Rician K-factor (LOS/NLOS power ratio)
+     - Power coverage percentage
+     - Per-path Doppler shifts (if available)
    - Add new endpoint: `GET /api/visualization/state`
 
-2. **`src/sine/channel/sionna_engine.py`** (Minor enhancement)
+2. **`src/sine/channel/sionna_engine.py`** (Minor enhancements)
    - Store `self.scene_path` in `load_scene()` method for later reference
+   - (Phase 2) Extract Doppler information from `paths.doppler` property
+   - (Phase 2) Add `doppler_hz` field to `SinglePathInfo` dataclass
 
 3. **`src/sine/mobility/api.py`** (OPTIONAL - metrics endpoint)
    - Optionally add `GET /api/emulation/metrics` endpoint
 
-4. **`scenes/viewer_live.ipynb`** (New file)
-   - Simple Jupyter notebook that polls `/api/visualization/state`
-   - Displays cached paths and device positions
-   - No computation in notebook
+4. **`scenes/viewer_live.ipynb`** (New file with wireless channel analysis)
+   - Jupyter notebook that polls `/api/visualization/state`
+   - Enhanced display with wireless channel metrics:
+     - Delay spread and coherence bandwidth analysis
+     - Frequency selectivity assessment (flat vs selective)
+     - LOS/NLOS classification via K-factor
+     - Per-path details with interaction types and Doppler
+     - Netem configuration overlay
+   - No computation in notebook - all data from cache
 
 ---
 
@@ -480,3 +617,136 @@ Based on user feedback:
 - Simpler notebook code (single endpoint call)
 
 **Trade-off**: Channel server memory usage increases slightly (storing path vertices for all links)
+
+---
+
+## Wireless Communications Engineering Review
+
+### Overview
+
+The plan was reviewed by a wireless communications specialist with expertise in Nvidia Sionna, channel estimation, MIMO systems, and O-RAN frameworks. The review identified several opportunities to enhance the visualization with critical wireless channel metrics that Sionna already computes during ray tracing.
+
+### Key Findings
+
+**✅ Strengths:**
+- Caching architecture is sound - zero redundant ray tracing
+- Efficient memory usage with 5-path limit
+- Instant visualization queries via cached data
+
+**⚠️ Enhancements Needed:**
+- Critical wireless metrics are computed but not exposed to visualization
+- Missing delay spread, coherence bandwidth, and K-factor calculations
+- No Doppler information cached (important for mobility scenarios)
+- Update interval may be too slow for high-mobility scenarios
+
+### Enhanced Wireless Metrics (Added to Plan)
+
+The following metrics have been integrated into Phase 2:
+
+| Metric | Formula | Purpose | Impact |
+|--------|---------|---------|--------|
+| **RMS Delay Spread** | τ_rms (from Sionna CIR) | Indicates ISI severity | **Critical** for debugging |
+| **Coherence Bandwidth** | Bc ≈ 1/(5×τ_rms) | Frequency selectivity | **High** - determines if OFDM needed |
+| **Rician K-factor** | K = P_LOS / P_NLOS | LOS/NLOS characterization | **Medium** - channel type |
+| **Power Coverage** | % of total power in shown paths | Validation metric | **Low** - confidence indicator |
+| **Doppler Shifts** | Per-path from Sionna | Channel dynamics | **High** for mobility |
+
+### Wireless Theory Context
+
+**Delay Spread and ISI:**
+```
+If τ_rms > symbol_period → Inter-Symbol Interference (ISI)
+Example: τ_rms = 50 ns, symbol_rate = 20 MHz (50 ns period) → Severe ISI
+Solution: OFDM (splits into narrowband subcarriers)
+```
+
+**Coherence Bandwidth:**
+```
+Bc ≈ 1/(5×τ_rms)
+If Bc >> signal_BW → Frequency-flat channel (simple equalization)
+If Bc ≈ signal_BW → Frequency-selective (OFDM recommended)
+
+Example: τ_rms = 50 ns → Bc = 4 MHz
+        If signal_BW = 80 MHz → Frequency-selective channel
+```
+
+**Rician K-factor:**
+```
+K_dB = 10·log10(P_LOS / P_NLOS)
+K > 10 dB → Strong LOS (low fading variance)
+0 < K < 10 dB → Mixed LOS + multipath
+K < 0 dB → NLOS dominant (Rayleigh-like fading)
+```
+
+**Coherence Time (for mobility):**
+```
+Tc ≈ 9 / (16π × fd_max)
+where fd = v × fc / c (Doppler spread)
+
+Example: v = 1 m/s, fc = 5.18 GHz
+→ fd = 17.3 Hz
+→ Tc = 10.3 ms
+→ Recommended update interval: ~5-10 ms (5-10× Nyquist)
+
+Current 1-second interval is adequate for pedestrian but too slow for vehicular.
+```
+
+### Implementation Priority
+
+**Phase 1 - Critical (Included in Current Plan):**
+1. ✅ Cache RMS delay spread from `path_result.delay_spread_ns`
+2. ✅ Calculate coherence bandwidth: `Bc = 1/(5×τ_rms)`
+3. ✅ Calculate Rician K-factor via `calculate_k_factor()` function
+4. ✅ Add power coverage percentage
+5. ✅ Enhanced notebook display with channel analysis
+
+**Phase 2 - Important (Future Enhancement):**
+1. Extract Doppler shifts from Sionna (`paths.doppler` property)
+2. Add `doppler_hz` to `SinglePathInfo` dataclass
+3. Adaptive update interval based on max Doppler spread
+4. Coherence time calculation and display
+
+**Phase 3 - Advanced (Out of Scope):**
+1. CFR-based coherence bandwidth (more accurate)
+2. Angular domain visualization (AoA/AoD scatter plots)
+3. Historical channel metrics tracking
+4. Link budget breakdown display
+
+### Modified Files Summary
+
+Based on wireless review, the following changes were made to the plan:
+
+**src/sine/channel/server.py:**
+- Added `calculate_k_factor()` helper function
+- Enhanced path caching with wireless metrics
+- Modified `/compute/single` to compute Bc and K-factor
+
+**src/sine/channel/sionna_engine.py (future):**
+- TODO: Extract Doppler information from `paths.doppler`
+- TODO: Add `doppler_hz` field to `SinglePathInfo`
+
+**scenes/viewer_live.ipynb:**
+- Enhanced display function with channel analysis
+- Frequency selectivity assessment (Bc vs BW)
+- LOS/NLOS classification via K-factor
+- Per-path details with Doppler (when available)
+
+### Testing Validation Criteria
+
+When implementing, verify:
+
+1. **RMS Delay Spread**: Compare against Sionna debug output (`/debug/paths` endpoint)
+2. **Coherence Bandwidth**: Validate Bc formula matches textbook values
+3. **K-factor**:
+   - LOS scenarios should show K > 10 dB
+   - Indoor NLOS should show K < 0 dB or None
+4. **Power Coverage**: Should be >90% for most scenarios with 5 paths
+5. **Doppler**: Zero for static nodes, proportional to velocity for mobile
+
+### References
+
+Wireless formulas sourced from:
+- Tse & Viswanath, "Fundamentals of Wireless Communication" (2005)
+- Goldsmith, "Wireless Communications" (2005)
+- 3GPP TR 38.901 (Channel modeling for 5G NR)
+- Sionna RT documentation (delay spread, Doppler computation)
