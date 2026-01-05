@@ -77,7 +77,7 @@ topology:
             rf_power_dbm: 20.0              # WiFi 6 typical TX power
             antenna_pattern: iso            # Omnidirectional
             polarization: V                 # Vertical polarization
-            antenna_gain_dbi: 2.0           # Small antenna gain
+            antenna_gain_dbi: 2.0           # Antenna pattern selection (NOT added to link budget)
             frequency_ghz: 5.18             # WiFi 6 channel 36 (5.18 GHz)
             bandwidth_mhz: 80               # 80 MHz channel
             # Higher-order modulation (256-QAM)
@@ -99,7 +99,7 @@ topology:
             rf_power_dbm: 20.0
             antenna_pattern: iso
             polarization: V
-            antenna_gain_dbi: 2.0
+            antenna_gain_dbi: 2.0           # Antenna pattern selection (NOT added to link budget)
             frequency_ghz: 5.18
             bandwidth_mhz: 80
             # Same modulation as node1 (symmetric link)

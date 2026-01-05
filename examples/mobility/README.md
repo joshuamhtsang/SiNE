@@ -426,6 +426,40 @@ await mobility.move_linear(node, (5, 0, 1), (15, 0, 1), 2.0)  # Fast
 await mobility.move_linear(node, (15, 0, 1), (20, 0, 1), 0.5) # Slow
 ```
 
+## Advanced Configuration
+
+### Packet Size Configuration
+
+The `packet_size_bits` parameter (default: 12000 bits = 1500 bytes MTU) affects PER calculation and thus the `loss_percent` netem parameter. Adjust this based on your application's typical packet size:
+
+```yaml
+interfaces:
+  eth1:
+    wireless:
+      packet_size_bits: 4800  # 600 byte packets for VoIP
+      # ... other wireless params
+```
+
+**Typical values:**
+- **VoIP/gaming**: 480-960 bits (60-120 bytes) - Low latency, small packets
+- **Standard Ethernet**: 12000 bits (1500 bytes) - Default MTU
+- **IoT sensors**: 160-800 bits (20-100 bytes) - Minimal payload
+- **Satellite links**: 4000-8000 bits (500-1000 bytes) - Reduce error probability
+- **Jumbo frames**: 72000 bits (9000 bytes) - High-throughput file transfer
+
+**Impact on PER:**
+Larger packets have higher error probability at the same BER:
+```
+PER = 1 - (1 - BER)^packet_size_bits
+```
+
+For example, at BER = 1e-5:
+- 480 bits → PER ≈ 0.48%
+- 4800 bits → PER ≈ 4.7%
+- 12000 bits → PER ≈ 11.3%
+
+Smaller packets improve reliability but increase protocol overhead.
+
 ## Documentation
 
 For more information, see:

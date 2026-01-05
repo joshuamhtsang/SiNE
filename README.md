@@ -590,11 +590,16 @@ Response includes:
 
 **Q: Is netem configured per-link or per-interface?**
 
-A: Netem is configured **per-interface**, not per-link. SiNE applies netem to the `eth1` interface on each container. Importantly, netem only affects **egress (outbound) traffic** - packets leaving the interface.
+A: Netem is configured **per-interface**, not per-link. SiNE applies netem to each interface that participates in a wireless link. Importantly, netem only affects **egress (outbound) traffic** - packets leaving the interface.
+
+**Which interfaces get netem?**
+- **Point-to-point topologies**: Typically `eth1` on both nodes
+- **MANET topologies**: All interfaces involved in wireless links (e.g., `eth1`, `eth2`, `eth3`, etc.)
+- **General rule**: For each link endpoint `node:ethN`, netem is applied to `ethN` on that node
 
 **Q: How does SiNE handle bidirectional wireless links?**
 
-A: SiNE applies netem to **both** sides of each wireless link:
+A: SiNE applies netem to **both** sides of each wireless link. For a simple point-to-point link:
 
 ```
 Node1 → Node2: Packets leave Node1's eth1, experience Node1's netem
@@ -618,7 +623,9 @@ Node2 → Node1: Packets leave Node2's eth1, experience Node2's netem
 └─────────────┘                              └─────────────┘
 ```
 
-Both interfaces receive the same parameters (symmetric link). When link conditions change, SiNE updates netem on both nodes.
+For MANET topologies with multiple interfaces per node, each interface involved in a link gets its own netem configuration based on that link's channel conditions.
+
+Both endpoints of a link receive the same parameters (symmetric link). When link conditions change, SiNE updates netem on both endpoints.
 
 **Q: What's the effective throughput with netem on both sides?**
 
@@ -695,9 +702,14 @@ nodes:
         wireless: { ... }  # Config for link to node3
 
 links:
-  - endpoints: [node1:eth1, node2:eth1]
-  - endpoints: [node1:eth2, node3:eth1]
+  - endpoints: [node1:eth1, node2:eth1]  # netem applied to node1:eth1 and node2:eth1
+  - endpoints: [node1:eth2, node3:eth1]  # netem applied to node1:eth2 and node3:eth1
 ```
+
+**Netem application in MANET:**
+- Each interface (`eth1`, `eth2`, etc.) gets netem configured independently
+- Channel conditions are computed per-link based on distance and scene geometry
+- A node with 2 links has netem on 2 interfaces (e.g., `eth1` and `eth2`)
 
 SiNE validates that:
 - No interface is used by multiple links

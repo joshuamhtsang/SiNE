@@ -65,16 +65,16 @@ Both nodes use high-order modulation that is sensitive to low SNR:
 | **FEC** | LDPC | Low-density parity-check coding |
 | **Code rate** | 0.75 | 3/4 rate |
 | **TX Power** | 20 dBm | Typical WiFi 6 transmit power |
-| **Antenna gain** | 2 dBi | Small omnidirectional antenna |
-| **Min SNR** | ~29 dB | Required for reliable 256-QAM operation |
+| **Antenna gain** | 2 dBi | Antenna pattern selection (NOT added to link budget) |
+| **Min SNR** | ~29 dB (uncoded) | ~22.5 dB with LDPC coding gain (6.5 dB) |
 
 **Expected behavior:**
 - **Theoretical rate**: 80 MHz × 8 bits × 0.75 × 0.8 = **384 Mbps**
 - **Wall attenuation**: Concrete wall adds ~20-30 dB path loss
 - **Doorway propagation**: Primary path via reflections through doorway
 - **Multipath effects**: Multiple reflections from walls create delay spread
-- **SNR degradation**: Through-wall path may drop below 29 dB threshold
-- **Packet loss**: Expected if SNR < 29 dB (256-QAM fails to demodulate)
+- **SNR degradation**: Through-wall path may drop below 29 dB (uncoded) / 22.5 dB (coded) threshold
+- **Packet loss**: Expected if SNR < 22.5 dB (256-QAM with LDPC fails to demodulate)
 
 ## Deployment and Testing
 
@@ -160,7 +160,7 @@ docker exec -it clab-two-rooms-node2 iperf3 -c 18.0.0.1 -t 10
 
 **Expected results:**
 - Throughput likely **lower than 384 Mbps** theoretical rate
-- Packet loss may occur if SNR < 29 dB (256-QAM threshold)
+- Packet loss may occur if SNR < 22.5 dB (256-QAM with LDPC coding threshold)
 - Higher delay and jitter compared to free-space due to multipath
 - Check deployment output for actual netem parameters
 
@@ -205,7 +205,7 @@ As `node2` moves from (30, 10, 1) to (30, 30, 1):
 1. **Best throughput at y=20m** when node2 aligns with doorway center
 2. **SNR decreases** as node2 moves away from doorway alignment
 3. **Packet loss increases** when off-axis (multipath becomes weaker)
-4. **256-QAM may fail** at extreme positions if SNR < 29 dB
+4. **256-QAM may fail** at extreme positions if SNR < 22.5 dB (with LDPC coding)
 
 ### Monitoring During Mobility
 
@@ -442,6 +442,40 @@ node3:
 ```
 
 This creates a 3-node MANET topology.
+
+## Advanced Configuration
+
+### Packet Size Configuration
+
+The `packet_size_bits` parameter (default: 12000 bits = 1500 bytes MTU) affects PER calculation and thus the `loss_percent` netem parameter. Adjust this based on your application's typical packet size:
+
+```yaml
+interfaces:
+  eth1:
+    wireless:
+      packet_size_bits: 4800  # 600 byte packets for VoIP
+      # ... other wireless params
+```
+
+**Typical values:**
+- **VoIP/gaming**: 480-960 bits (60-120 bytes) - Low latency, small packets
+- **Standard Ethernet**: 12000 bits (1500 bytes) - Default MTU
+- **IoT sensors**: 160-800 bits (20-100 bytes) - Minimal payload
+- **Satellite links**: 4000-8000 bits (500-1000 bytes) - Reduce error probability
+- **Jumbo frames**: 72000 bits (9000 bytes) - High-throughput file transfer
+
+**Impact on PER:**
+Larger packets have higher error probability at the same BER:
+```
+PER = 1 - (1 - BER)^packet_size_bits
+```
+
+For example, at BER = 1e-5:
+- 480 bits → PER ≈ 0.48%
+- 4800 bits → PER ≈ 4.7%
+- 12000 bits → PER ≈ 11.3%
+
+Smaller packets improve reliability but increase protocol overhead.
 
 ## References
 

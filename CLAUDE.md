@@ -125,6 +125,49 @@ Note: `.mcp.json` is gitignored since it contains user-specific paths.
 | **sionna-docs** | Sionna RT documentation (local). Source: https://codeberg.org/supermonkey/sionna_mcp_server |
 | **context7** | Up-to-date documentation for any library (Pydantic, FastAPI, etc.) |
 
+## Claude Code Specialized Agents
+
+SiNE includes specialized Claude Code agents for domain-specific expertise. These agents can be invoked via the Task tool when working on related topics.
+
+### Available Agents
+
+| Agent | File | Use Cases |
+|-------|------|-----------|
+| **wireless-comms-engineer** | `.claude/agents/wireless-comms-engineer.md` | RF link budgets, BER/PER/BLER analysis, Sionna RT validation, MCS table design, coding gain verification, MIMO/beamforming, O-RAN/SON |
+| **linux-networking-specialist** | `.claude/agents/linux-networking-specialist.md` | netem/tc debugging, MANET routing protocols (OLSR, BATMAN, AODV, Babel), SDN/OpenFlow (ONOS, OVS, P4), containerlab integration, network namespace operations |
+
+### When to Use Each Agent
+
+**wireless-comms-engineer**:
+- Validating channel computation pipeline (SNR, BER, BLER, PER)
+- Reviewing MCS tables and thresholds
+- Analyzing link budget calculations
+- Debugging RF-related issues (antenna gains, path loss, coding gains)
+- Designing adaptive modulation schemes
+- O-RAN and 3GPP resource management
+
+**linux-networking-specialist**:
+- Debugging netem configuration issues
+- Implementing MANET routing protocols in containers
+- Integrating SDN controllers (ONOS, ODL)
+- Troubleshooting veth pairs, bridges, and network namespaces
+- Optimizing container network performance
+- Setting up per-destination traffic control with tc filters
+- Wireless network emulation with IEEE 802.11s mesh
+
+### Example Usage
+
+```python
+# In Claude Code conversation, invoke an agent via Task tool:
+# For RF/wireless questions:
+Task(subagent_type="wireless-comms-engineer",
+     prompt="Validate the SNR calculation in this link budget...")
+
+# For Linux networking questions:
+Task(subagent_type="linux-networking-specialist",
+     prompt="Debug why netem is not applying to containerlab interfaces...")
+```
+
 ## CLI Tool
 
 This project provides the `sine` CLI tool, defined in `pyproject.toml`:

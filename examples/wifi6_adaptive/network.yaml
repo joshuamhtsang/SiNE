@@ -19,9 +19,9 @@
 # - bandwidth_mhz: Channel bandwidth
 #
 # At 20m in free-space with 20 dBm TX power:
-# - Expected SNR: ~40 dB
+# - Expected SNR: ~42 dB
 # - Expected MCS: MCS 11 (1024-QAM, rate-5/6)
-# - Expected rate: ~430 Mbps (80 MHz * 10 bits * 0.833 * 0.8)
+# - Expected rate: ~533 Mbps (80 MHz * 10 bits * 0.833 * 0.8)
 #
 # Usage:
 #   1. Start the channel server:
@@ -58,7 +58,7 @@ topology:
             rf_power_dbm: 20.0
             antenna_pattern: iso
             polarization: V
-            antenna_gain_dbi: 3.0           # AP with 3 dBi gain
+            antenna_gain_dbi: 3.0           # Antenna pattern selection (NOT added to link budget)
             frequency_ghz: 5.18
             bandwidth_mhz: 80
             # Adaptive MCS selection
@@ -79,7 +79,7 @@ topology:
             rf_power_dbm: 15.0              # Lower TX power (client device)
             antenna_pattern: iso
             polarization: V
-            antenna_gain_dbi: 0.0           # Client with no antenna gain
+            antenna_gain_dbi: 0.0           # Antenna pattern selection (NOT added to link budget)
             frequency_ghz: 5.18
             bandwidth_mhz: 80
             # Same MCS table for symmetric link
