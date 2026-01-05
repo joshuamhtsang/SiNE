@@ -262,9 +262,14 @@ class SionnaEngine:
             logger.error(f"Unexpected CIR result type: {type(cir_result)}")
             raise ValueError(f"Unexpected CIR result format: {type(cir_result)}")
 
-        # If a is returned as tuple of (real, imag), reconstruct complex
+        # Handle different formats for complex channel coefficients
         if isinstance(a_np, tuple) and len(a_np) == 2:
+            # Real and imaginary components returned separately
             a_np = a_np[0] + 1j * a_np[1]
+        elif not np.iscomplexobj(a_np):
+            # If we got a real array, convert to complex (shouldn't happen, but be safe)
+            logger.warning("CIR returned real amplitudes; expected complex. Converting to complex dtype.")
+            a_np = a_np.astype(np.complex128)
 
         # Check if we have valid paths
         num_valid_paths = int(np.sum(np.abs(a_np) > 1e-10))
@@ -296,24 +301,44 @@ class SionnaEngine:
             min_delay_ns = float(np.min(valid_taus) * 1e9)
             max_delay_ns = float(np.max(valid_taus) * 1e9)
 
-            # Compute RMS delay spread
-            mean_delay = np.average(valid_taus, weights=valid_powers)
-            delay_spread = np.sqrt(
-                np.average((valid_taus - mean_delay) ** 2, weights=valid_powers)
-            )
-            delay_spread_ns = float(delay_spread * 1e9)
+            # Compute RMS delay spread (second moment of power delay profile)
+            # Note: For single-path channels, delay spread is zero by definition
+            if len(valid_taus) > 1:
+                mean_delay = np.average(valid_taus, weights=valid_powers)
+                delay_variance = np.average((valid_taus - mean_delay) ** 2, weights=valid_powers)
+                delay_spread_ns = float(np.sqrt(delay_variance) * 1e9)
+            else:
+                # Single path - no multipath dispersion
+                delay_spread_ns = 0.0
         else:
             min_delay_ns = 0.0
             max_delay_ns = 0.0
             delay_spread_ns = 0.0
 
-        # Determine dominant path type
-        # This would require access to path interaction types from Sionna
-        # For now, use a simple heuristic
-        if min_delay_ns < 1.0 and num_valid_paths > 0:
-            dominant_path_type = "los"
-        else:
-            dominant_path_type = "nlos"
+        # Determine dominant path type from strongest path's interactions
+        dominant_path_type = "nlos"  # Default
+        try:
+            # Try to get actual interaction data from Sionna
+            interactions = paths.interactions.numpy()
+            # Find index of strongest path
+            strongest_idx = int(np.argmax(path_powers.flatten()))
+            # Get interactions for strongest path (first rx/tx antenna pair)
+            path_interactions = interactions[:, 0, 0, 0, 0, strongest_idx]
+
+            # Check interaction types
+            if np.all(path_interactions == 0):
+                dominant_path_type = "los"  # No interactions = line of sight
+            elif np.any(path_interactions == 3):
+                dominant_path_type = "diffraction"  # Diffraction present
+            else:
+                dominant_path_type = "nlos"  # Reflections, scattering, etc.
+        except (AttributeError, IndexError, Exception):
+            # Fallback heuristic: short delay likely indicates LOS
+            # Use 10 ns threshold (~3m indoor, reasonable for LOS detection)
+            if min_delay_ns < 10.0 and num_valid_paths > 0:
+                dominant_path_type = "los"
+            else:
+                dominant_path_type = "nlos"
 
         return PathResult(
             path_loss_db=float(path_loss_db),
@@ -360,12 +385,14 @@ class SionnaEngine:
             + (rx_pos[2] - tx_pos[2]) ** 2
         )
 
-        # Interaction type mapping
+        # Interaction type mapping from Sionna RT interaction codes
+        # Reference: Sionna RT documentation - Paths.interactions property
         interaction_map = {
-            0: "none",
-            1: "specular_reflection",
-            2: "diffuse_reflection",
-            4: "refraction",
+            0: "none",  # LOS path (no interactions)
+            1: "specular_reflection",  # Mirror-like reflection
+            2: "diffuse_reflection",  # Diffuse scattering
+            3: "diffraction",  # Edge/wedge diffraction
+            4: "refraction",  # Transmission through materials
         }
 
         # Extract path information
@@ -654,9 +681,12 @@ class FallbackEngine:
             + (rx_pos[2] - tx_pos[2]) ** 2
         )
 
-        # Free-space path loss
+        # Free-space path loss (Friis transmission equation)
+        # FSPL(dB) = 20·log₁₀(4πd/λ) = 20·log₁₀(d) + 20·log₁₀(f) + 20·log₁₀(4π/c)
+        #          = 20·log₁₀(d) + 20·log₁₀(f) - 147.55
+        # where 20·log₁₀(4π/(3×10⁸)) ≈ -147.55 dB
         if distance < 0.1:
-            distance = 0.1  # Minimum distance
+            distance = 0.1  # Minimum distance to avoid log(0)
         fspl = 20 * np.log10(distance) + 20 * np.log10(self._frequency_hz) - 147.55
 
         # Add indoor loss factor (rough estimate)

@@ -210,21 +210,81 @@ def get_or_load_mcs_table(path: str, hysteresis_db: float = 2.0) -> MCSTable:
     return _mcs_tables[cache_key]
 
 
+def _validate_channel_result(
+    snr_db: float,
+    per: float,
+    path_loss_db: float,
+    frequency_hz: float,
+    distance_m: float,
+) -> None:
+    """Validate channel computation results for physics sanity."""
+    # Check SNR range
+    if snr_db > 50.0:
+        logger.warning(
+            f"SNR={snr_db:.1f} dB exceeds typical range (< 50 dB) - "
+            f"possible antenna gain double-counting"
+        )
+
+    if snr_db < -20.0:
+        logger.warning(f"SNR={snr_db:.1f} dB very low - link likely unusable")
+
+    # Check PER vs SNR correlation
+    if snr_db > 25.0 and per > 0.1:
+        logger.warning(
+            f"High SNR ({snr_db:.1f} dB) but high PER ({per:.2%}) - "
+            f"possible BER calculation error"
+        )
+
+    # Check path loss vs FSPL (path loss should be >= FSPL)
+    if distance_m > 0:
+        from sine.channel.snr import SNRCalculator
+
+        fspl = SNRCalculator.free_space_path_loss(distance_m, frequency_hz)
+        if path_loss_db < fspl - 3.0:  # 3 dB margin for antenna gain
+            logger.warning(
+                f"Path loss ({path_loss_db:.1f} dB) less than FSPL "
+                f"({fspl:.1f} dB) - physics violation"
+            )
+
+
 def compute_channel_for_link(
     link: WirelessLinkRequest, path_result: PathResult
 ) -> ChannelResponse:
     """
-    Compute complete channel parameters for a link given path results.
+    Compute complete channel parameters for a wireless link.
+
+    This function converts ray tracing path results into netem parameters
+    via the complete link budget → SNR → BER → BLER → PER pipeline.
+
+    CRITICAL: Antenna Gain Handling
+    ================================
+    The antenna gains (tx_gain_dbi, rx_gain_dbi) are passed to SNRCalculator
+    with from_sionna=True, which means:
+
+    - Path loss from Sionna RT ALREADY INCLUDES antenna pattern gains
+    - Antenna gains are NOT added again in SNR calculation
+    - This prevents double-counting and ~6-12 dB SNR overestimation
+
+    Formula used (from_sionna=True):
+        P_rx = P_tx - channel_loss_db
+        (where channel_loss_db includes propagation + antenna effects)
+
+    The antenna gain parameters are accepted in the API for consistency
+    but are intentionally ignored when from_sionna=True.
 
     Supports both adaptive MCS selection (when mcs_table_path is set) and
     fixed modulation/coding (when modulation/fec_type/fec_code_rate are set).
 
     Args:
-        link: Link parameters
-        path_result: Ray tracing path results
+        link: Wireless link request with RF parameters
+        path_result: Ray tracing results from Sionna PathSolver
 
     Returns:
-        Complete channel response with netem parameters
+        ChannelResponse with SNR, BER, BLER, PER, and netem parameters
+
+    See Also:
+        - SNRCalculator.calculate_link_snr() for antenna gain handling
+        - CHANNEL_CODE_REVIEW.md Issue #1 for fix details
     """
     # Calculate SNR first (needed for MCS selection)
     snr_calc = SNRCalculator(
@@ -232,9 +292,10 @@ def compute_channel_for_link(
     )
     rx_power, snr_db = snr_calc.calculate_link_snr(
         tx_power_dbm=link.tx_power_dbm,
-        tx_gain_dbi=link.tx_gain_dbi,
-        rx_gain_dbi=link.rx_gain_dbi,
+        tx_gain_dbi=link.tx_gain_dbi,  # Passed for API consistency
+        rx_gain_dbi=link.rx_gain_dbi,  # Passed for API consistency
         path_loss_db=path_result.path_loss_db,
+        from_sionna=True,  # Path loss from RT includes antenna gains (do NOT add again)
     )
 
     # Determine modulation, FEC, and bandwidth based on MCS table or fixed params
@@ -307,6 +368,16 @@ def compute_channel_for_link(
     delay_ms = path_result.min_delay_ns / 1e6
     jitter_ms = path_result.delay_spread_ns / 1e6
     loss_percent = per * 100.0
+
+    # Validate results for physics sanity
+    distance_m = path_result.min_delay_ns * 3e8 / 1e9  # Approx distance from delay
+    _validate_channel_result(
+        snr_db=snr_db,
+        per=per,
+        path_loss_db=path_result.path_loss_db,
+        frequency_hz=link.frequency_hz,
+        distance_m=distance_m,
+    )
 
     return ChannelResponse(
         tx_node=link.tx_node,

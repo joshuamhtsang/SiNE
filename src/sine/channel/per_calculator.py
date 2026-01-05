@@ -87,7 +87,8 @@ class PERCalculator:
             # For uncoded: PER = 1 - (1 - BER)^packet_bits
             # Use log for numerical stability with small BER
             if ber < 1e-12:
-                per = packet_bits * ber  # Linear approximation for small BER
+                # Linear approximation for small BER, with upper bound check
+                per = min(packet_bits * ber, 1.0)
             elif ber > 0.5:
                 per = 1.0  # Essentially random
             else:
@@ -130,8 +131,16 @@ class PERCalculator:
         Returns:
             Effective data rate in Mbps
         """
-        # Simplified rate calculation
-        # Assumes ~80% efficiency for OFDM overhead, guard intervals, etc.
+        # Simplified OFDM efficiency for 802.11ax (WiFi 6)
+        # Breakdown:
+        # - Short guard interval (0.8 μs): ~94% symbol efficiency
+        # - Pilot tones, preamble, protocol overhead: ~85% data efficiency
+        # - Combined efficiency: 0.94 × 0.85 ≈ 0.8 (80%)
+        #
+        # Note: Actual WiFi 6 efficiency varies (72-90%) based on:
+        # - Guard interval: 0.8 μs (short), 1.6 μs (medium), 3.2 μs (long)
+        # - Bandwidth (20/40/80/160 MHz affects subcarrier count)
+        # - Frame aggregation (A-MPDU/A-MSDU improves efficiency)
         ofdm_efficiency = 0.8
 
         # Raw bit rate = bandwidth * bits_per_symbol * efficiency

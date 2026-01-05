@@ -124,7 +124,15 @@ class MCSTable:
         """
         Select optimal MCS for given SNR.
 
-        Uses hysteresis to prevent rapid switching if link_id is provided.
+        Uses hysteresis to prevent rapid switching if link_id is provided:
+        - UPGRADE: SNR must exceed new MCS threshold by hysteresis_db margin
+        - DOWNGRADE: SNR must drop below current MCS threshold by hysteresis_db margin
+
+        Example with 2 dB hysteresis:
+        - Currently at MCS 5 (min_snr=20 dB), MCS 6 threshold is 23 dB
+        - To upgrade to MCS 6: SNR must be ≥ 25 dB (23 + 2)
+        - To stay at MCS 5: SNR can be 18-24.99 dB
+        - To downgrade from MCS 5: SNR must be < 18 dB (20 - 2)
 
         Args:
             snr_db: Current SNR in dB
@@ -147,12 +155,22 @@ class MCSTable:
             current_idx = self._current_mcs[link_id]
             new_idx = selected.mcs_index
 
-            # Only allow downgrade if SNR dropped by hysteresis margin
-            if new_idx < current_idx:
+            if new_idx > current_idx:
+                # UPGRADE: Require SNR to exceed new threshold by hysteresis margin
+                # This prevents rapid switching when SNR hovers near threshold
+                if snr_db < (selected.min_snr_db + self.hysteresis_db):
+                    # SNR not high enough for stable upgrade, stay at current MCS
+                    current_entry = self.get_by_index(current_idx)
+                    if current_entry:
+                        selected = current_entry
+            elif new_idx < current_idx:
+                # DOWNGRADE: Allow if SNR dropped below current threshold minus margin
+                # This prevents immediate downgrade on small SNR fluctuations
                 current_entry = self.get_by_index(current_idx)
                 if current_entry and snr_db >= (
                     current_entry.min_snr_db - self.hysteresis_db
                 ):
+                    # SNR still within margin, stay at current MCS
                     selected = current_entry
 
         if link_id:

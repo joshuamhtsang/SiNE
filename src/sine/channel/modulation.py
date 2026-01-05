@@ -173,12 +173,13 @@ class BLERCalculator:
         self.ber_calc = BERCalculator(modulation)
 
         # Coding gain approximations (dB) for different FEC at code rate 0.5
-        # These are rough estimates; actual gains depend on specific code design
+        # Conservative estimates based on typical implementations at BER=10^-5
+        # Actual gains depend on block length, code rate, and decoder complexity
         self.coding_gains = {
             "none": 0.0,
-            "ldpc": 8.0,  # LDPC typically achieves ~1dB from capacity
-            "polar": 7.5,  # Polar codes similar to LDPC with SCL decoder
-            "turbo": 7.0,  # Turbo codes, good but slightly worse than LDPC
+            "ldpc": 6.5,  # LDPC at ~10^-5 BER with practical block lengths
+            "polar": 6.0,  # Polar codes with SCL decoder (list size 8-32)
+            "turbo": 5.5,  # Turbo codes with iterative MAP decoder
         }
 
     def approximate_bler(self, snr_db: float) -> float:

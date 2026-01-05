@@ -52,7 +52,7 @@ class EmulationController:
         self.scene_builder = SceneBuilder()
         self.channel_server_url: str = "http://localhost:8000"
         self._running = False
-        self._link_states: dict[tuple[str, str], NetemParams] = {}
+        self._link_states: dict[tuple[str, str], dict] = {}  # Stores netem and RF metrics
         self._link_mcs_info: dict[tuple[str, str], dict] = {}  # MCS info for each link
         self._mobility_task: Optional[asyncio.Task] = None
         self._netem_failures: list[tuple[str, str]] = []  # Track failed netem applications
@@ -419,24 +419,119 @@ class EmulationController:
 
         # Store state for summary (use params1 as representative)
         if success1 or success2:
-            self._link_states[(node1_name, node2_name)] = params1
+            # Store with consistent structure (no RF metrics for fixed links)
+            self._link_states[(node1_name, node2_name)] = {
+                "netem": params1,
+                "rf": None,  # Fixed links don't have RF computation
+            }
             logger.debug(
                 f"Applied fixed netem to {node1_name}<->{node2_name}: "
                 f"delay={params1.delay_ms:.1f}ms, loss={params1.loss_percent:.2f}%, "
                 f"rate={params1.rate_mbps:.1f}Mbps"
             )
 
+    def _validate_channel_result(self, result: dict, link_id: str) -> None:
+        """Validate channel server response for suspicious values."""
+        required_fields = [
+            "tx_node",
+            "rx_node",
+            "netem_delay_ms",
+            "netem_jitter_ms",
+            "netem_loss_percent",
+            "netem_rate_mbps",
+            "snr_db",
+            "per",
+            "path_loss_db",
+        ]
+
+        # Check all required fields present
+        for field in required_fields:
+            if field not in result:
+                raise ValueError(
+                    f"Channel server missing field '{field}' for link {link_id}"
+                )
+
+        # Sanity checks for RF metrics
+        snr = result["snr_db"]
+        per = result["per"]
+        loss_pct = result["netem_loss_percent"]
+
+        if snr > 50.0:
+            logger.warning(
+                f"Link {link_id}: SNR={snr:.1f} dB is unusually high "
+                f"(possible antenna gain double-counting)"
+            )
+
+        if snr < -20.0:
+            logger.warning(
+                f"Link {link_id}: SNR={snr:.1f} dB is very low (link likely unusable)"
+            )
+
+        if snr > 25.0 and loss_pct > 10.0:
+            logger.warning(
+                f"Link {link_id}: High SNR ({snr:.1f} dB) but high loss "
+                f"({loss_pct:.1f}%) - possible BER calculation error"
+            )
+
     async def _apply_wireless_link_config(self, channel_result: dict) -> None:
         """Apply netem configuration for a wireless link from channel server result."""
         tx_node = channel_result["tx_node"]
         rx_node = channel_result["rx_node"]
+        link_id = f"{tx_node}→{rx_node}"
+
+        # Validate response
+        self._validate_channel_result(channel_result, link_id)
+
+        # Log RF metrics for debugging
+        logger.debug(
+            f"Link {link_id} RF metrics: "
+            f"SNR={channel_result['snr_db']:.1f} dB, "
+            f"Rx_power={channel_result.get('received_power_dbm', 'N/A')} dBm, "
+            f"Path_loss={channel_result['path_loss_db']:.1f} dB, "
+            f"BER={channel_result.get('ber', 'N/A')}, "
+            f"PER={channel_result['per']:.4f}"
+        )
+
+        # Apply minimum and maximum thresholds with logging
+        delay_ms = channel_result["netem_delay_ms"]
+        rate_mbps = channel_result["netem_rate_mbps"]
+
+        # Minimum thresholds
+        if delay_ms < 0.1:
+            logger.debug(
+                f"Link {link_id}: Correcting delay {delay_ms:.4f}ms → 0.1ms "
+                f"(minimum threshold)"
+            )
+            delay_ms = 0.1
+
+        if rate_mbps < 0.1:
+            logger.warning(
+                f"Link {link_id}: Very low rate {rate_mbps:.4f} Mbps → 0.1 Mbps "
+                f"(link nearly unusable, SNR={channel_result['snr_db']:.1f} dB)"
+            )
+            rate_mbps = 0.1
+
+        # Maximum thresholds
+        if delay_ms > 1000.0:
+            logger.warning(
+                f"Link {link_id}: Delay {delay_ms:.1f}ms > 1000ms (satellite orbit?) "
+                f"- capping to 1000ms"
+            )
+            delay_ms = 1000.0
+
+        if rate_mbps > 10000.0:
+            logger.warning(
+                f"Link {link_id}: Rate {rate_mbps:.1f} Mbps exceeds WiFi 6E theoretical max "
+                f"- capping to 10000 Mbps"
+            )
+            rate_mbps = 10000.0
 
         # Create netem params from channel computation results
         params = NetemParams(
-            delay_ms=max(0.1, channel_result["netem_delay_ms"]),  # Min 0.1ms
+            delay_ms=delay_ms,
             jitter_ms=channel_result["netem_jitter_ms"],
             loss_percent=channel_result["netem_loss_percent"],
-            rate_mbps=max(0.1, channel_result["netem_rate_mbps"]),  # Min 0.1 Mbps
+            rate_mbps=rate_mbps,
         )
 
         # Get container info
@@ -488,7 +583,16 @@ class EmulationController:
 
         # Store state for change detection only if at least one side succeeded
         if tx_success or rx_success:
-            self._link_states[(tx_node, rx_node)] = params
+            # Store both netem and RF metrics
+            self._link_states[(tx_node, rx_node)] = {
+                "netem": params,
+                "rf": {
+                    "snr_db": channel_result["snr_db"],
+                    "path_loss_db": channel_result["path_loss_db"],
+                    "per": channel_result["per"],
+                    "rx_power_dbm": channel_result.get("received_power_dbm"),
+                },
+            }
 
             # Store MCS info if available
             mcs_info = {}
@@ -620,12 +724,15 @@ class EmulationController:
         Get current status of all wireless links.
 
         Returns:
-            Dictionary mapping link names to their current netem parameters
+            Dictionary mapping link names to their netem parameters and RF metrics
         """
         status = {}
-        for (tx, rx), params in self._link_states.items():
+        for (tx, rx), link_state in self._link_states.items():
             link_name = f"{tx}<->{rx}"
-            status[link_name] = params.to_dict()
+            status[link_name] = {
+                "netem": link_state["netem"].to_dict(),
+                "rf": link_state["rf"],
+            }
         return status
 
     def get_container_status(self) -> dict[str, dict]:
@@ -687,7 +794,10 @@ class EmulationController:
                 summary["containers"].append(container_info)
 
         # Get link states with interface information
-        for (tx, rx), params in self._link_states.items():
+        for (tx, rx), link_state in self._link_states.items():
+            params = link_state["netem"]
+            rf_metrics = link_state["rf"]
+
             # Get interface names from the mapping
             tx_iface = None
             rx_iface = None
@@ -719,10 +829,17 @@ class EmulationController:
                 "rate_mbps": params.rate_mbps,
             }
 
+            # Add RF metrics if available (wireless links only)
+            if rf_metrics:
+                link_info["snr_db"] = rf_metrics["snr_db"]
+                link_info["path_loss_db"] = rf_metrics["path_loss_db"]
+                link_info["per"] = rf_metrics["per"]
+                if rf_metrics["rx_power_dbm"] is not None:
+                    link_info["rx_power_dbm"] = rf_metrics["rx_power_dbm"]
+
             # Add MCS info if available
             mcs_info = self._link_mcs_info.get((tx, rx), {})
             if mcs_info:
-                link_info["snr_db"] = mcs_info.get("snr_db")
                 link_info["modulation"] = mcs_info.get("modulation")
                 link_info["code_rate"] = mcs_info.get("code_rate")
                 link_info["fec_type"] = mcs_info.get("fec_type")
