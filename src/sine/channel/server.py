@@ -10,6 +10,7 @@ Endpoints:
 - POST /scene/load - Load/reload ray tracing scene
 - POST /debug/paths - Get detailed path info for debugging (vertices, interactions)
 - GET /health - Health check with GPU status
+- GET /api/visualization/state - Get cached visualization data (scene, devices, paths)
 """
 
 import logging
@@ -32,6 +33,10 @@ _mcs_tables: dict[str, MCSTable] = {}
 
 # Global engine instance
 _engine = None
+
+# Global path cache for visualization (stores computed paths from channel computations)
+_path_cache: dict[str, dict] = {}  # {link_id: {tx_pos, rx_pos, path_details, wireless_metrics}}
+_device_positions: dict[str, tuple[float, float, float]] = {}  # {device_name: (x,y,z)}
 
 
 @asynccontextmanager
@@ -200,6 +205,46 @@ class PathDetailsResponse(BaseModel):
 # ============================================================================
 # Helper Functions
 # ============================================================================
+
+
+def calculate_k_factor(path_details: PathDetails) -> float | None:
+    """
+    Calculate Rician K-factor (LOS/NLOS power ratio).
+
+    K = P_LOS / P_NLOS
+    K_dB = 10×log10(K)
+
+    The K-factor characterizes the channel type:
+    - K > 10 dB: Strong LOS component (low fading variance)
+    - 0 < K < 10 dB: Mixed LOS + multipath
+    - K < 0 dB: NLOS dominant (Rayleigh-like fading)
+    - None: No LOS path exists
+
+    Args:
+        path_details: PathDetails object with propagation path information
+
+    Returns:
+        K-factor in dB, or None if no LOS path exists
+    """
+    import numpy as np
+
+    los_paths = [p for p in path_details.paths if p.is_los]
+    nlos_paths = [p for p in path_details.paths if not p.is_los]
+
+    if not los_paths:
+        return None
+
+    # Convert dB to linear power
+    p_los = 10 ** (los_paths[0].power_db / 10)
+    p_nlos_total = sum(10 ** (p.power_db / 10) for p in nlos_paths)
+
+    if p_nlos_total < 1e-20:
+        return 100.0  # Very strong LOS, weak multipath
+
+    k_linear = p_los / p_nlos_total
+    k_db = 10 * np.log10(k_linear)
+
+    return float(k_db)
 
 
 def get_or_load_mcs_table(path: str, hysteresis_db: float = 2.0) -> MCSTable:
@@ -464,7 +509,7 @@ async def load_scene(config: SceneConfig) -> SceneLoadResponse:
 @app.post("/compute/single", response_model=ChannelResponse)
 async def compute_single_link(request: WirelessLinkRequest):
     """Compute channel parameters for a single wireless link."""
-    global _engine
+    global _engine, _path_cache, _device_positions
 
     if _engine is None:
         _engine = get_engine()
@@ -476,21 +521,86 @@ async def compute_single_link(request: WirelessLinkRequest):
     try:
         # Clear previous devices and add new ones
         _engine.clear_devices()
+        tx_pos = request.tx_position.as_tuple()
+        rx_pos = request.rx_position.as_tuple()
+
         _engine.add_transmitter(
             name=request.tx_node,
-            position=request.tx_position.as_tuple(),
+            position=tx_pos,
             antenna_pattern=request.antenna_pattern,
             polarization=request.polarization,
         )
         _engine.add_receiver(
             name=request.rx_node,
-            position=request.rx_position.as_tuple(),
+            position=rx_pos,
             antenna_pattern=request.antenna_pattern,
             polarization=request.polarization,
         )
 
         # Compute paths
         path_result = _engine.compute_paths()
+
+        # Cache path details for visualization BEFORE clearing devices
+        try:
+            path_details = _engine.get_path_details()
+
+            # Create link identifier (tx_node -> rx_node)
+            link_id = f"{request.tx_node}->{request.rx_node}"
+
+            # Calculate Rician K-factor (LOS/NLOS characterization)
+            k_factor_db = calculate_k_factor(path_details)
+
+            # Calculate coherence bandwidth from RMS delay spread
+            # Bc ≈ 1/(5×τ_rms) - indicates frequency selectivity
+            if path_result.delay_spread_ns > 0:
+                coherence_bw_hz = 1.0 / (5.0 * path_result.delay_spread_ns * 1e-9)
+            else:
+                coherence_bw_hz = request.bandwidth_hz  # No multipath, flat channel
+
+            # Limit to 5 strongest paths for visualization
+            sorted_paths = sorted(path_details.paths, key=lambda p: p.power_db, reverse=True)
+            limited_paths = sorted_paths[:5]
+
+            # Calculate power coverage of shown paths
+            total_power_linear = sum(10**(p.power_db/10) for p in path_details.paths)
+            shown_power_linear = sum(10**(p.power_db/10) for p in limited_paths)
+            power_coverage_pct = 100 * shown_power_linear / total_power_linear if total_power_linear > 0 else 0
+
+            # Convert to JSON-serializable format
+            paths_data = [{
+                "delay_ns": float(p.delay_ns),
+                "power_db": float(p.power_db),
+                "vertices": [[float(v[0]), float(v[1]), float(v[2])] for v in p.vertices],
+                "interaction_types": p.interaction_types,
+                "is_los": p.is_los,
+                "doppler_hz": None,  # TODO: Extract from Sionna in Phase 2
+            } for p in limited_paths]
+
+            _path_cache[link_id] = {
+                "tx_name": request.tx_node,
+                "rx_name": request.rx_node,
+                "tx_position": [tx_pos[0], tx_pos[1], tx_pos[2]],
+                "rx_position": [rx_pos[0], rx_pos[1], rx_pos[2]],
+                "distance_m": float(path_details.distance_m),
+                "num_paths_total": path_details.num_paths,
+                "num_paths_shown": len(paths_data),
+                "power_coverage_percent": float(power_coverage_pct),
+
+                # Wireless channel metrics
+                "rms_delay_spread_ns": float(path_result.delay_spread_ns),
+                "coherence_bandwidth_hz": float(coherence_bw_hz),
+                "k_factor_db": float(k_factor_db) if k_factor_db is not None else None,
+                "dominant_path_type": path_result.dominant_path_type,
+
+                "paths": paths_data
+            }
+
+            # Also store device positions
+            _device_positions[request.tx_node] = tx_pos
+            _device_positions[request.rx_node] = rx_pos
+
+        except Exception as e:
+            logger.warning(f"Failed to cache paths for visualization: {e}")
 
         # Compute complete channel parameters
         return compute_channel_for_link(request, path_result)
@@ -648,6 +758,61 @@ async def get_path_details(request: PathDetailsRequest):
     except Exception as e:
         logger.error(f"Failed to get path details: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get path details: {str(e)}")
+
+
+@app.get("/api/visualization/state")
+async def get_visualization_state():
+    """
+    Get complete visualization state (scene, devices, paths).
+
+    Returns cached data from previous channel computations.
+    No ray tracing is performed - this is instant.
+
+    Returns:
+        dict: Visualization state containing scene geometry, device positions, and cached paths
+
+    Raises:
+        HTTPException: 404 if no scene is loaded
+    """
+    global _engine, _path_cache, _device_positions
+
+    if not _engine or not getattr(_engine, "_scene_loaded", False):
+        raise HTTPException(status_code=404, detail="No scene loaded")
+
+    # Extract scene geometry
+    scene_objects = []
+    try:
+        for name, obj in _engine.scene.objects.items():
+            pos = obj.position
+            bbox = obj.mi_mesh.bbox()
+            scene_objects.append({
+                "name": name,
+                "material": obj.radio_material.name,
+                "center": [float(pos[0][0]), float(pos[1][0]), float(pos[2][0])],
+                "bbox_min": [float(bbox.min[0]), float(bbox.min[1]), float(bbox.min[2])],
+                "bbox_max": [float(bbox.max[0]), float(bbox.max[1]), float(bbox.max[2])]
+            })
+    except Exception as e:
+        logger.warning(f"Failed to extract scene geometry: {e}")
+        scene_objects = []
+
+    # Convert device positions to simple dict
+    devices = [{
+        "name": name,
+        "position": {"x": pos[0], "y": pos[1], "z": pos[2]}
+    } for name, pos in _device_positions.items()]
+
+    # Return cached paths (already JSON-serializable)
+    paths = list(_path_cache.values())
+
+    return {
+        "scene_file": str(_engine.scene_path) if hasattr(_engine, 'scene_path') else None,
+        "scene_loaded": True,
+        "scene_objects": scene_objects,
+        "devices": devices,
+        "paths": paths,
+        "cache_size": len(_path_cache)
+    }
 
 
 # ============================================================================

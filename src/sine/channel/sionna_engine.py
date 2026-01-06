@@ -114,6 +114,7 @@ class SionnaEngine:
             )
 
         self.scene = None
+        self.scene_path: Optional[Path] = None
         self.path_solver = None
         self._scene_loaded = False
         self._transmitters: dict[str, tuple[float, float, float]] = {}
@@ -133,6 +134,9 @@ class SionnaEngine:
             frequency_hz: RF frequency for simulation
             bandwidth_hz: Channel bandwidth
         """
+        # Store scene path for later reference (for visualization)
+        self.scene_path = Path(scene_path) if scene_path else None
+
         if scene_path:
             self.scene = load_scene(scene_path)
         else:
