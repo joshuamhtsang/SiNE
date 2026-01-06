@@ -148,6 +148,10 @@ class SionnaEngine:
         self.scene.bandwidth = bandwidth_hz
 
         # Initialize PathSolver
+        # Note: synthetic_array defaults to True, which means antennas are collapsed
+        # to a single effective channel at the device center. This is appropriate for
+        # network emulation where we only care about aggregate channel statistics.
+        # Result: interactions/vertices are 4D/5D instead of 6D/7D.
         self.path_solver = PathSolver()
         self._scene_loaded = True
 
@@ -405,14 +409,25 @@ class SionnaEngine:
 
         # Get interactions and vertices if available
         try:
-            interactions = paths.interactions.numpy()  # [max_depth, num_rx, num_rx_ant, num_tx, num_tx_ant, num_paths]
-            vertices = paths.vertices.numpy()  # [max_depth, num_rx, num_rx_ant, num_tx, num_tx_ant, num_paths, 3]
+            interactions = paths.interactions.numpy()
+            vertices = paths.vertices.numpy()
             has_geometry = True
+
+            # Check array dimensions to determine indexing pattern
+            # synthetic_array=True: [max_depth, num_rx, num_tx, num_paths] (4D)
+            # synthetic_array=False: [max_depth, num_rx, num_rx_ant, num_tx,
+            #                         num_tx_ant, num_paths] (6D)
+            use_synthetic_indexing = interactions.ndim == 4
+            logger.debug(
+                f"interactions shape: {interactions.shape}, "
+                f"using synthetic_array indexing: {use_synthetic_indexing}"
+            )
         except (AttributeError, Exception) as e:
             logger.debug(f"Could not get path geometry: {e}")
             has_geometry = False
             interactions = None
             vertices = None
+            use_synthetic_indexing = True  # Default assumption
 
         path_infos = []
         num_paths = len(path_powers)
@@ -430,16 +445,27 @@ class SionnaEngine:
             path_vertices = []
 
             if has_geometry and interactions is not None:
-                # interactions shape: [max_depth, ...]
-                # Get interactions for first rx/tx antenna pair
-                path_interactions = interactions[:, 0, 0, 0, 0, i] if i < interactions.shape[-1] else []
+                # Index based on array dimensionality
+                if use_synthetic_indexing:
+                    # synthetic_array=True: [max_depth, num_rx, num_tx, num_paths]
+                    path_interactions = interactions[:, 0, 0, i] if i < interactions.shape[-1] else []
+                else:
+                    # synthetic_array=False: [max_depth, num_rx, num_rx_ant, num_tx, num_tx_ant, num_paths]
+                    path_interactions = interactions[:, 0, 0, 0, 0, i] if i < interactions.shape[-1] else []
+
                 for interaction_code in path_interactions:
                     if interaction_code in interaction_map and interaction_code != 0:
                         interaction_types.append(interaction_map[int(interaction_code)])
 
                 # Get vertices for this path
                 if vertices is not None and i < vertices.shape[-2]:
-                    path_verts = vertices[:, 0, 0, 0, 0, i, :]
+                    if use_synthetic_indexing:
+                        # synthetic_array=True: [max_depth, num_rx, num_tx, num_paths, 3]
+                        path_verts = vertices[:, 0, 0, i, :]
+                    else:
+                        # synthetic_array=False: [max_depth, num_rx, num_rx_ant, num_tx, num_tx_ant, num_paths, 3]
+                        path_verts = vertices[:, 0, 0, 0, 0, i, :]
+
                     for v in path_verts:
                         if not np.all(v == 0):  # Skip zero vertices
                             path_vertices.append((float(v[0]), float(v[1]), float(v[2])))

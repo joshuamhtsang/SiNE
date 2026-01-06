@@ -247,6 +247,99 @@ def calculate_k_factor(path_details: PathDetails) -> float | None:
     return float(k_db)
 
 
+def cache_path_for_visualization(
+    tx_node: str,
+    rx_node: str,
+    tx_pos: tuple[float, float, float],
+    rx_pos: tuple[float, float, float],
+    path_result: PathResult,
+    path_details: PathDetails,
+    bandwidth_hz: float
+) -> None:
+    """
+    Cache computed path data for visualization.
+
+    This function extracts and stores path information including wireless
+    channel metrics (K-factor, coherence bandwidth, delay spread) for later
+    retrieval by the visualization endpoint.
+
+    Args:
+        tx_node: Transmitter node name
+        rx_node: Receiver node name
+        tx_pos: Transmitter position (x, y, z)
+        rx_pos: Receiver position (x, y, z)
+        path_result: Ray tracing path computation results
+        path_details: Detailed path information with vertices and interactions
+        bandwidth_hz: Channel bandwidth in Hz
+    """
+    global _path_cache, _device_positions
+
+    logger.info(f"Caching visualization data for link {tx_node}->{rx_node}")
+
+    try:
+        # Create link identifier (tx_node -> rx_node)
+        link_id = f"{tx_node}->{rx_node}"
+
+        # Calculate Rician K-factor (LOS/NLOS characterization)
+        k_factor_db = calculate_k_factor(path_details)
+
+        # Calculate coherence bandwidth from RMS delay spread
+        # Bc ≈ 1/(5×τ_rms) - indicates frequency selectivity
+        if path_result.delay_spread_ns > 0:
+            coherence_bw_hz = 1.0 / (5.0 * path_result.delay_spread_ns * 1e-9)
+        else:
+            coherence_bw_hz = bandwidth_hz  # No multipath, flat channel
+
+        # Limit to 5 strongest paths for visualization
+        sorted_paths = sorted(path_details.paths, key=lambda p: p.power_db, reverse=True)
+        limited_paths = sorted_paths[:5]
+
+        # Calculate power coverage of shown paths
+        total_power_linear = sum(10**(p.power_db/10) for p in path_details.paths)
+        shown_power_linear = sum(10**(p.power_db/10) for p in limited_paths)
+        power_coverage_pct = 100 * shown_power_linear / total_power_linear if total_power_linear > 0 else 0
+
+        # Convert to JSON-serializable format
+        paths_data = [{
+            "delay_ns": float(p.delay_ns),
+            "power_db": float(p.power_db),
+            "vertices": [[float(v[0]), float(v[1]), float(v[2])] for v in p.vertices],
+            "interaction_types": p.interaction_types,
+            "is_los": p.is_los,
+            "doppler_hz": None,  # TODO: Extract from Sionna in Phase 2
+        } for p in limited_paths]
+
+        _path_cache[link_id] = {
+            "tx_name": tx_node,
+            "rx_name": rx_node,
+            "tx_position": [tx_pos[0], tx_pos[1], tx_pos[2]],
+            "rx_position": [rx_pos[0], rx_pos[1], rx_pos[2]],
+            "distance_m": float(path_details.distance_m),
+            "num_paths_total": path_details.num_paths,
+            "num_paths_shown": len(paths_data),
+            "power_coverage_percent": float(power_coverage_pct),
+
+            # Wireless channel metrics
+            "rms_delay_spread_ns": float(path_result.delay_spread_ns),
+            "coherence_bandwidth_hz": float(coherence_bw_hz),
+            "k_factor_db": float(k_factor_db) if k_factor_db is not None else None,
+            "dominant_path_type": path_result.dominant_path_type,
+
+            "paths": paths_data
+        }
+
+        # Also store device positions
+        _device_positions[tx_node] = tx_pos
+        _device_positions[rx_node] = rx_pos
+
+        logger.info(f"Cached {len(paths_data)} paths for link {link_id}. Total cache size: {len(_path_cache)}")
+
+    except Exception as e:
+        logger.warning(f"Failed to cache paths for visualization: {e}")
+        import traceback
+        logger.warning(traceback.format_exc())
+
+
 def get_or_load_mcs_table(path: str, hysteresis_db: float = 2.0) -> MCSTable:
     """Get cached MCS table or load from file."""
     cache_key = f"{path}:{hysteresis_db}"
@@ -540,67 +633,17 @@ async def compute_single_link(request: WirelessLinkRequest):
         # Compute paths
         path_result = _engine.compute_paths()
 
-        # Cache path details for visualization BEFORE clearing devices
-        try:
-            path_details = _engine.get_path_details()
-
-            # Create link identifier (tx_node -> rx_node)
-            link_id = f"{request.tx_node}->{request.rx_node}"
-
-            # Calculate Rician K-factor (LOS/NLOS characterization)
-            k_factor_db = calculate_k_factor(path_details)
-
-            # Calculate coherence bandwidth from RMS delay spread
-            # Bc ≈ 1/(5×τ_rms) - indicates frequency selectivity
-            if path_result.delay_spread_ns > 0:
-                coherence_bw_hz = 1.0 / (5.0 * path_result.delay_spread_ns * 1e-9)
-            else:
-                coherence_bw_hz = request.bandwidth_hz  # No multipath, flat channel
-
-            # Limit to 5 strongest paths for visualization
-            sorted_paths = sorted(path_details.paths, key=lambda p: p.power_db, reverse=True)
-            limited_paths = sorted_paths[:5]
-
-            # Calculate power coverage of shown paths
-            total_power_linear = sum(10**(p.power_db/10) for p in path_details.paths)
-            shown_power_linear = sum(10**(p.power_db/10) for p in limited_paths)
-            power_coverage_pct = 100 * shown_power_linear / total_power_linear if total_power_linear > 0 else 0
-
-            # Convert to JSON-serializable format
-            paths_data = [{
-                "delay_ns": float(p.delay_ns),
-                "power_db": float(p.power_db),
-                "vertices": [[float(v[0]), float(v[1]), float(v[2])] for v in p.vertices],
-                "interaction_types": p.interaction_types,
-                "is_los": p.is_los,
-                "doppler_hz": None,  # TODO: Extract from Sionna in Phase 2
-            } for p in limited_paths]
-
-            _path_cache[link_id] = {
-                "tx_name": request.tx_node,
-                "rx_name": request.rx_node,
-                "tx_position": [tx_pos[0], tx_pos[1], tx_pos[2]],
-                "rx_position": [rx_pos[0], rx_pos[1], rx_pos[2]],
-                "distance_m": float(path_details.distance_m),
-                "num_paths_total": path_details.num_paths,
-                "num_paths_shown": len(paths_data),
-                "power_coverage_percent": float(power_coverage_pct),
-
-                # Wireless channel metrics
-                "rms_delay_spread_ns": float(path_result.delay_spread_ns),
-                "coherence_bandwidth_hz": float(coherence_bw_hz),
-                "k_factor_db": float(k_factor_db) if k_factor_db is not None else None,
-                "dominant_path_type": path_result.dominant_path_type,
-
-                "paths": paths_data
-            }
-
-            # Also store device positions
-            _device_positions[request.tx_node] = tx_pos
-            _device_positions[request.rx_node] = rx_pos
-
-        except Exception as e:
-            logger.warning(f"Failed to cache paths for visualization: {e}")
+        # Cache path details for visualization
+        path_details = _engine.get_path_details()
+        cache_path_for_visualization(
+            tx_node=request.tx_node,
+            rx_node=request.rx_node,
+            tx_pos=tx_pos,
+            rx_pos=rx_pos,
+            path_result=path_result,
+            path_details=path_details,
+            bandwidth_hz=request.bandwidth_hz
+        )
 
         # Compute complete channel parameters
         return compute_channel_for_link(request, path_result)
@@ -638,21 +681,36 @@ async def compute_batch_links(request: BatchChannelRequest):
         try:
             # Clear and set up devices for this link
             _engine.clear_devices()
+            tx_pos = link.tx_position.as_tuple()
+            rx_pos = link.rx_position.as_tuple()
+
             _engine.add_transmitter(
                 name=link.tx_node,
-                position=link.tx_position.as_tuple(),
+                position=tx_pos,
                 antenna_pattern=link.antenna_pattern,
                 polarization=link.polarization,
             )
             _engine.add_receiver(
                 name=link.rx_node,
-                position=link.rx_position.as_tuple(),
+                position=rx_pos,
                 antenna_pattern=link.antenna_pattern,
                 polarization=link.polarization,
             )
 
             # Compute paths
             path_result = _engine.compute_paths()
+
+            # Cache path details for visualization
+            path_details = _engine.get_path_details()
+            cache_path_for_visualization(
+                tx_node=link.tx_node,
+                rx_node=link.rx_node,
+                tx_pos=tx_pos,
+                rx_pos=rx_pos,
+                path_result=path_result,
+                path_details=path_details,
+                bandwidth_hz=link.bandwidth_hz
+            )
 
             # Compute complete channel
             result = compute_channel_for_link(link, path_result)
