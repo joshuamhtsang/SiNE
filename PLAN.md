@@ -750,3 +750,144 @@ Wireless formulas sourced from:
 - Goldsmith, "Wireless Communications" (2005)
 - 3GPP TR 38.901 (Channel modeling for 5G NR)
 - Sionna RT documentation (delay spread, Doppler computation)
+
+---
+
+## Path Visualization in Jupyter Notebooks
+
+### Issue: Sionna `scene.preview(paths=...)` Requires `Paths` Object
+
+The `scene.preview()` method requires a Sionna `Paths` object to visualize propagation paths. This object cannot be easily reconstructed from cached vertex/interaction data.
+
+### Three Options for Path Visualization
+
+#### Option 1: Cache Full `Paths` Objects (Recommended for Production)
+
+**Approach**: Store the entire Sionna `Paths` object in the channel server cache instead of just extracting vertices.
+
+**Pros**:
+- Direct visualization support via `scene.preview(paths=cached_paths)`
+- Preserves all path metadata (coefficients, delays, angles, Doppler)
+- Can use `cir()`, `cfr()`, `taps()` methods on cached objects
+- Zero recomputation for visualization
+
+**Cons**:
+- Larger memory footprint (full `Paths` object vs. just vertices/interactions)
+- May need to manage Sionna/TensorFlow context across requests
+- Requires careful memory management for multi-link scenarios
+
+**Implementation**:
+```python
+# In channel server
+paths = self.path_solver(tx_pos, rx_pos)
+
+# Cache the entire Paths object (not just vertices)
+self.paths_cache[link_key] = paths
+
+# Later, for visualization
+scene.preview(paths=cached_paths)
+```
+
+**Status**: Future enhancement after basic visualization works.
+
+---
+
+#### Option 2: Re-compute Paths for Visualization (Quick Implementation)
+
+**Approach**: When visualization is requested, re-run `PathSolver` in the notebook using cached device positions.
+
+**Pros**:
+- Simple to implement immediately
+- No caching complexity
+- Works with existing infrastructure
+- Paths match current device positions
+
+**Cons**:
+- Re-computation overhead (~100-500ms per link)
+- Redundant ray tracing (already computed for netem)
+- Acceptable if visualization is infrequent (snapshot mode)
+
+**Implementation**:
+```python
+# In notebook (viewer_live.ipynb)
+async def render_scene_with_paths(viz_state):
+    # Load scene
+    scene = load_scene(viz_state['scene_file'])
+
+    # Add devices from cached positions
+    for link in viz_state["paths"]:
+        scene.add(Transmitter(name=link["tx_name"], position=link["tx_position"]))
+        scene.add(Receiver(name=link["rx_name"], position=link["rx_position"]))
+
+    # Re-compute paths in notebook
+    solver = PathSolver(scene=scene)
+    paths = solver()
+
+    # Preview with paths
+    scene.preview(paths=paths, clip_at=2.0)
+```
+
+**Status**: ✅ **CURRENT IMPLEMENTATION** - Use for initial deployment.
+
+---
+
+#### Option 3: Custom Matplotlib Visualization (Fallback)
+
+**Approach**: Create custom 3D visualization using matplotlib if `Paths` objects are unavailable.
+
+**Pros**:
+- Works with cached vertex data
+- Full control over visualization style
+- No dependency on Sionna's preview system
+
+**Cons**:
+- No scene geometry overlay (just paths in empty space)
+- Manual implementation required
+- Less interactive than Sionna's viewer
+
+**Implementation**:
+```python
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+
+def plot_paths_from_vertices(vertices_list, tx_pos, rx_pos):
+    """Visualize paths from cached vertex data."""
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+
+    # Plot TX and RX
+    ax.scatter(*tx_pos, c='blue', marker='^', s=100, label='TX')
+    ax.scatter(*rx_pos, c='green', marker='v', s=100, label='RX')
+
+    # Plot each path
+    for i, vertices in enumerate(vertices_list):
+        full_path = [tx_pos] + vertices + [rx_pos]
+        xs, ys, zs = zip(*full_path)
+        ax.plot(xs, ys, zs, alpha=0.6, label=f'Path {i}')
+
+    ax.set_xlabel('X [m]')
+    ax.set_ylabel('Y [m]')
+    ax.set_zlabel('Z [m]')
+    ax.legend()
+    plt.show()
+```
+
+**Status**: Backup option if Option 1/2 don't meet requirements.
+
+---
+
+### Implementation Priority
+
+1. **Phase 1** (Current): Use **Option 2** for quick deployment
+   - Re-compute paths in notebook using `PathSolver`
+   - Accept small overhead for visualization requests
+   - Works immediately with existing cache
+
+2. **Phase 2** (Future): Migrate to **Option 1** for production
+   - Cache full `Paths` objects in channel server
+   - Zero recomputation for visualization
+   - Better memory management for multi-link scenarios
+
+3. **Phase 3** (If needed): Add **Option 3** as alternative
+   - Custom matplotlib visualization
+   - For environments where Sionna preview doesn't work
