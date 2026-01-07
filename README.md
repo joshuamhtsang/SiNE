@@ -527,24 +527,59 @@ uv run sine render examples/two_room_wifi/network.yaml -o scene.png \
 
 Options: `--resolution WxH`, `--num-samples N`, `--camera-position X,Y,Z`, `--look-at X,Y,Z`, `--fov degrees`, `--clip-at Z`, `--no-paths`, `--no-devices`
 
-### Interactive Scene Viewer
+### Real-Time Network Visualization
 
-For interactive 3D scene exploration, use the Jupyter notebook in `scenes/viewer.ipynb`:
+Monitor your running emulation in real-time with `scenes/viewer_live.ipynb`:
 
 ```bash
-# Run with Jupyter (install temporarily)
-uv run --with jupyter jupyter notebook scenes/viewer.ipynb
+# 1. Start the channel server (if not already running)
+uv run sine channel-server
+
+# 2. Deploy an emulation
+sudo $(which uv) run sine deploy examples/two_rooms/network.yaml
+
+# 3. Open the live viewer in Jupyter Notebook (browser-based)
+uv run --with jupyter jupyter notebook scenes/viewer_live.ipynb
 ```
 
-The viewer notebook provides:
-- **Object listing**: Shows all scene surfaces with their IDs, positions, and sizes
-- **Axis markers**: Visual origin and axis indicators using TX/RX devices
-- **Path visualization**: Add devices and view propagation paths
-- **Clipping**: Cut away ceiling/walls to see interior
+**Important**: Run in standard Jupyter Notebook (browser), not VS Code's Jupyter extension. The 3D preview widget requires a browser environment.
 
-Controls: Mouse left (rotate), scroll (zoom), mouse right (pan), Alt+click (pick coordinates)
+The live viewer provides:
 
-**Note**: Use `load_scene(file, merge_shapes=False)` to keep individual surfaces separate for inspection. The default `merge_shapes=True` combines surfaces with the same material for better performance.
+**Cached Channel Metrics** (instant retrieval, no computation):
+- **RMS Delay Spread (τ_rms)**: Indicates inter-symbol interference severity
+- **Coherence Bandwidth (Bc)**: Determines if channel is frequency-flat or frequency-selective
+- **Rician K-factor**: LOS/NLOS power ratio for channel classification
+- **Propagation Paths**: Strongest 5 paths per link with interaction types (reflection, refraction, diffraction)
+- **Power Coverage**: Percentage of total channel power captured by shown paths
+
+**3D Scene Preview with Paths**:
+- **Cell 5**: One-time snapshot with 3D visualization and propagation paths
+- **Cell 7**: Continuous auto-refresh loop (updates every 1 second) for mobility scenarios
+
+**Usage**:
+
+```python
+# In the notebook:
+
+# Option A: Single snapshot with 3D preview
+await render_snapshot(show_3d=True, clip_at=2.0)
+
+# Option B: Text-only (faster, no 3D rendering)
+await render_text_only()
+
+# Option C: Continuous monitoring for mobility (auto-refresh every 1s)
+# Uncomment in Cell 7:
+await continuous_monitoring(update_interval_sec=1.0, max_iterations=60)
+```
+
+**How It Works**:
+- The channel server **caches paths** when computing netem parameters during deployment
+- The notebook queries `/api/visualization/state` to fetch cached data (instant, no ray tracing)
+- Paths are re-computed in the notebook from cached positions to generate the Sionna `Paths` object for 3D preview
+- Small overhead (~100-500ms) acceptable for snapshot/infrequent visualization
+
+**Note**: Path lines are visible in the 3D preview when using `scene.preview(paths=paths)`. The cached data from the channel server provides device positions and channel metrics, while the notebook re-runs `PathSolver` to get the `Paths` object needed for visualization.
 
 ## Channel Server API
 

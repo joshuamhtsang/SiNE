@@ -442,6 +442,47 @@ The Jupyter notebook provides:
 - Supports clipping planes to see interior (`scene.preview(clip_at=2.0)`)
 - Alt+click in preview to get coordinates of any point
 
+### Real-Time Network Visualization (`scenes/viewer_live.ipynb`)
+
+Monitor running emulations in real-time with cached channel metrics and 3D path visualization:
+
+```bash
+# 1. Start channel server
+uv run sine channel-server
+
+# 2. Deploy emulation
+sudo $(which uv) run sine deploy examples/two_rooms/network.yaml
+
+# 3. Open live viewer (browser-based Jupyter)
+uv run --with jupyter jupyter notebook scenes/viewer_live.ipynb
+```
+
+**Features**:
+- **Cached channel metrics**: RMS delay spread, coherence bandwidth, K-factor, propagation paths
+- **3D scene preview**: Device positions and propagation path lines
+- **Wireless channel analysis**: Frequency selectivity, LOS/NLOS classification, ISI assessment
+- **Auto-refresh mode**: Continuous monitoring for mobility scenarios (1-second updates)
+
+**Usage in notebook**:
+```python
+# Cell 5: Single snapshot with 3D visualization
+await render_snapshot(show_3d=True, clip_at=2.0)
+
+# Cell 6: Text-only (faster)
+await render_text_only()
+
+# Cell 7: Continuous auto-refresh (uncomment to enable)
+await continuous_monitoring(update_interval_sec=1.0, max_iterations=60)
+```
+
+**How it works**:
+- Channel server caches paths when computing netem parameters
+- Notebook queries `/api/visualization/state` for cached data (instant)
+- Paths are re-computed in notebook to get Sionna `Paths` object for 3D preview
+- Small overhead (~100-500ms) acceptable for snapshot visualization
+
+**Important**: Run in standard Jupyter Notebook (browser), not VS Code's Jupyter extension. The 3D preview requires a browser environment.
+
 ### Render Command (`sine render`)
 
 Static rendering to image file:
