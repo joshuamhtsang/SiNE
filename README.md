@@ -519,6 +519,8 @@ Options: `--resolution WxH`, `--num-samples N`, `--camera-position X,Y,Z`, `--lo
 
 ## Real-Time Network Visualization
 
+![video](./images/two_rooms_live.webm)
+
 Monitor your running emulation in real-time with `scenes/viewer_live.ipynb`:
 
 ```bash
@@ -534,42 +536,50 @@ uv run --with jupyter jupyter notebook scenes/viewer_live.ipynb
 
 **Important**: Run in standard Jupyter Notebook (browser), not VS Code's Jupyter extension. The 3D preview widget requires a browser environment.
 
+### Features
+
 The live viewer provides:
 
-**Cached Channel Metrics** (instant retrieval, no computation):
+**Cached Channel Metrics** (instant retrieval):
 - **RMS Delay Spread (τ_rms)**: Indicates inter-symbol interference severity
 - **Coherence Bandwidth (Bc)**: Determines if channel is frequency-flat or frequency-selective
 - **Rician K-factor**: LOS/NLOS power ratio for channel classification
 - **Propagation Paths**: Strongest 5 paths per link with interaction types (reflection, refraction, diffraction)
 - **Power Coverage**: Percentage of total channel power captured by shown paths
 
-**3D Scene Preview with Paths**:
-- **Cell 5**: One-time snapshot with 3D visualization and propagation paths
-- **Cell 7**: Continuous auto-refresh loop (updates every 1 second) for mobility scenarios
+**3D Scene Visualization**:
+- **Cell 5**: One-time snapshot with 3D scene preview showing devices and propagation paths
+- **Cells 7-8**: Animated movie creation capturing channel state over time
 
-**Usage**:
+### Usage Examples
 
+**One-time snapshot**:
 ```python
-# In the notebook:
-
-# Option A: Single snapshot with 3D preview
+# Cell 5: Render current state with 3D preview (clips at z=2.0m for indoor scenes)
 await render_snapshot(show_3d=True, clip_at=2.0)
-
-# Option B: Text-only (faster, no 3D rendering)
-await render_text_only()
-
-# Option C: Continuous monitoring for mobility (auto-refresh every 1s)
-# Uncomment in Cell 7:
-await continuous_monitoring(update_interval_sec=1.0, max_iterations=60)
 ```
 
-**How It Works**:
-- The channel server **caches paths** when computing netem parameters during deployment
-- The notebook queries `/api/visualization/state` to fetch cached data (instant, no ray tracing)
-- Paths are re-computed in the notebook from cached positions to generate the Sionna `Paths` object for 3D preview
-- Small overhead (~100-500ms) acceptable for snapshot/infrequent visualization
+**Animation movie** (for mobility scenarios):
+```python
+# Cell 8: Create 30-second movie with 1-second intervals
+movie = await create_channel_movie(
+    t_monitor=30.0,      # Monitor for 30 seconds
+    delta_t=1.0,         # Capture frame every 1 second
+    clip_at=2.0,         # Clip scene at z=2.0m
+    num_samples=16,      # Render quality (lower=faster)
+    resolution=(800, 600)
+)
+display(movie)
+```
 
-**Note**: Path lines are visible in the 3D preview when using `scene.preview(paths=paths)`. The cached data from the channel server provides device positions and channel metrics, while the notebook re-runs `PathSolver` to get the `Paths` object needed for visualization.
+### How It Works
+
+- **Channel server caches paths** when computing netem parameters during deployment
+- **Notebook queries `/api/visualization/state`** to fetch cached data (instant)
+- **Paths re-computed in notebook** from cached positions to get Sionna `Paths` object for 3D preview
+- **Movie mode captures frames** over time by polling server and rendering each frame with `scene.render()`
+
+**Performance**: Snapshot rendering has ~100-500ms overhead (acceptable for visualization). Movie creation takes approximately `t_monitor + num_frames × render_time` where render_time ≈ 1-2 seconds per frame with num_samples=16.
 
 ## Channel Server API
 

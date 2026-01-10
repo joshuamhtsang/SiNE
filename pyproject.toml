@@ -32,6 +32,7 @@ dependencies = [
     "numpy>=1.24",
     "scipy>=1.11",
     "sionna>=1.2.1",
+    "tqdm>=4.67.1",
 ]
 
 [project.optional-dependencies]
