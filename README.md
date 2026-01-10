@@ -4,12 +4,15 @@ Wireless network emulation using Sionna ray tracing and Containerlab.
 
 ## Overview
 
-SiNE (pronouced "SHEE-na") creates realistic wireless network emulations by combining:
-- **Containerlab**: Deploy Docker containers connected by the Linux networking stack, like veth links and bridges
-- **Sionna v1.2.1**: Ray tracing for accurate wireless channel modeling in a scene
-- **Linux netem**: Apply computed channel conditions (delay, loss, bandwidth) to containerlab links
+SiNE (pronouced "SHEE-na") lets you build emulated wireless networks with Docker containers as nodes, allowing you to easily deploy user-space applications on each node of the network. SiNE  achieves this by integrating:
+- **Containerlab**: Deploy Docker containers connected by the Linux networking stack, using primitives like veth links and bridges
+- **Nvidia Sionna v1.2.1**: Ray tracing for accurate wireless channel modeling in a scene
+- **Linux netem**: Apply computed channel conditions (delay, jitter, loss, bandwidth) to the emulated wireless links
 
-**How it works**: SiNE converts your `network.yaml` topology to containerlab format, deploys containers via containerlab, then applies wireless channel emulation on top of the containerlab-created network interfaces using netem. SiNE abstracts the outputs of Sionna RT and link-level simulation (SNR, BER, BLER, multipath propagation) into netem parameters:
+**How it works**: SiNE parses a `network.yaml` network description file and uses the metadata to:
+- Create a virtual network of connected containers (each representing a node) using Containerlab
+- Compute the wireless channel conditions of the links between the nodes with Nvidia Sionna ray tracing capabilities
+- Emulate the wireless channel conditions by applying the apprpriate netem parameters to the links:
 
 ```python
 delay_ms = propagation_delay       # From strongest path computed in Sionna RT
