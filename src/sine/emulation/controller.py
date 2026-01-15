@@ -14,16 +14,16 @@ Coordinates:
 import asyncio
 import logging
 from pathlib import Path
-from typing import Optional, Union
 
 import httpx
 
 from sine.config.loader import TopologyLoader
 from sine.config.schema import NetworkTopology, parse_endpoint
+from sine.emulation.cleanup import CleanupGenerator
+from sine.scene.builder import SceneBuilder
 from sine.topology.manager import ContainerlabManager
 from sine.topology.netem import NetemConfigurator, NetemParams, check_sudo_available
-from sine.scene.builder import SceneBuilder
-from sine.emulation.cleanup import CleanupGenerator
+from sine.topology.shared_netem import PerDestinationConfig, SharedNetemConfigurator
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ class EmulationError(Exception):
 class EmulationController:
     """Main SiNE emulation controller."""
 
-    def __init__(self, topology_path: Union[str, Path]):
+    def __init__(self, topology_path: str | Path):
         """
         Initialize controller with path to topology file.
 
@@ -46,15 +46,15 @@ class EmulationController:
         """
         self.topology_path = Path(topology_path)
         self.loader = TopologyLoader(topology_path)
-        self.config: Optional[NetworkTopology] = None
-        self.clab_manager: Optional[ContainerlabManager] = None
+        self.config: NetworkTopology | None = None
+        self.clab_manager: ContainerlabManager | None = None
         self.netem_config = NetemConfigurator()
         self.scene_builder = SceneBuilder()
         self.channel_server_url: str = "http://localhost:8000"
         self._running = False
         self._link_states: dict[tuple[str, str], dict] = {}  # Stores netem and RF metrics
         self._link_mcs_info: dict[tuple[str, str], dict] = {}  # MCS info for each link
-        self._mobility_task: Optional[asyncio.Task] = None
+        self._mobility_task: asyncio.Task | None = None
         self._netem_failures: list[tuple[str, str]] = []  # Track failed netem applications
 
     async def start(self) -> bool:
@@ -124,10 +124,19 @@ class EmulationController:
         # Deploy containers via Containerlab
         try:
             self.clab_manager = ContainerlabManager(self.topology_path)
-            clab_topo = self.clab_manager.generate_clab_topology(
-                self.config.model_dump()
-            )
-            self.clab_manager.deploy(clab_topo)
+            sine_config_dict = self.config.model_dump()
+
+            # Detect shared bridge mode
+            bridge_config = sine_config_dict.get("topology", {}).get("shared_bridge")
+            if bridge_config and bridge_config.get("enabled"):
+                logger.info("Using shared bridge topology generation")
+                clab_topo = self.clab_manager.generate_shared_bridge_topology(sine_config_dict)
+            else:
+                logger.info("Using point-to-point topology generation")
+                clab_topo = self.clab_manager.generate_clab_topology(sine_config_dict)
+
+            # Deploy with config for IP assignment in bridge mode
+            self.clab_manager.deploy(clab_topo, sine_config_dict)
             logger.info("Containerlab deployment succeeded")
         except Exception as e:
             logger.error(f"Failed to deploy containers: {e}")
@@ -205,7 +214,12 @@ class EmulationController:
         logger.info("Emulation stopped")
 
     def _has_wireless_links(self) -> bool:
-        """Check if topology has any wireless links."""
+        """Check if topology has any wireless links (P2P or shared bridge)."""
+        # Check for shared bridge mode (always wireless)
+        if self.config.topology.shared_bridge and self.config.topology.shared_bridge.enabled:
+            return True
+
+        # Check for P2P wireless links
         for link in self.config.topology.links:
             node1, iface1 = parse_endpoint(link.endpoints[0])
             node = self.config.topology.nodes.get(node1)
@@ -245,8 +259,183 @@ class EmulationController:
             response.raise_for_status()
             logger.info("Scene loaded on channel server")
 
+    async def _update_shared_bridge_links(self) -> None:
+        """Compute and apply per-destination netem for shared bridge mode."""
+        bridge_config = self.config.topology.shared_bridge
+        if not bridge_config:
+            return
+
+        nodes = bridge_config.nodes
+        interface_name = bridge_config.interface_name
+
+        logger.info(
+            f"Computing all-to-all links for shared bridge: "
+            f"{len(nodes)} nodes, {len(nodes) * (len(nodes) - 1)} directional links"
+        )
+
+        # 1. Build all-to-all link list for channel computation
+        wireless_links = []
+        for tx_node in nodes:
+            for rx_node in nodes:
+                if tx_node == rx_node:
+                    continue  # Skip self-links
+
+                tx_iface_config = self.config.topology.nodes[tx_node].interfaces[
+                    interface_name
+                ]
+                rx_iface_config = self.config.topology.nodes[rx_node].interfaces[
+                    interface_name
+                ]
+
+                wireless_links.append(
+                    {
+                        "tx_node": tx_node,
+                        "rx_node": rx_node,
+                        "tx_params": tx_iface_config.wireless,
+                        "rx_params": rx_iface_config.wireless,
+                    }
+                )
+
+        # 2. Batch compute all link conditions
+        link_requests = []
+        for link_info in wireless_links:
+            tx_params = link_info["tx_params"]
+            rx_params = link_info["rx_params"]
+
+            link_requests.append(
+                {
+                    "tx_position": [
+                        tx_params.position.x,
+                        tx_params.position.y,
+                        tx_params.position.z,
+                    ],
+                    "rx_position": [
+                        rx_params.position.x,
+                        rx_params.position.y,
+                        rx_params.position.z,
+                    ],
+                    "tx_power_dbm": tx_params.rf_power_dbm,
+                    "tx_gain_dbi": tx_params.antenna_gain_dbi,
+                    "rx_gain_dbi": rx_params.antenna_gain_dbi,
+                    "tx_pattern": tx_params.antenna_pattern,
+                    "tx_polarization": tx_params.polarization,
+                    "frequency_hz": tx_params.frequency_hz,
+                    "bandwidth_hz": tx_params.bandwidth_hz,
+                    "modulation": (
+                        tx_params.modulation if not tx_params.uses_adaptive_mcs else None
+                    ),
+                    "fec_type": (
+                        tx_params.fec_type if not tx_params.uses_adaptive_mcs else None
+                    ),
+                    "fec_code_rate": (
+                        tx_params.fec_code_rate if not tx_params.uses_adaptive_mcs else None
+                    ),
+                    "mcs_table": tx_params.mcs_table if tx_params.uses_adaptive_mcs else None,
+                    "mcs_hysteresis_db": (
+                        tx_params.mcs_hysteresis_db if tx_params.uses_adaptive_mcs else None
+                    ),
+                }
+            )
+
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(
+                f"{self.channel_server_url}/compute/batch",
+                json={"links": link_requests},
+            )
+            response.raise_for_status()
+            results = response.json()["results"]
+
+        logger.info(f"Computed {len(results)} link conditions")
+
+        # 3. Build per-node destination maps
+        per_node_config: dict[str, PerDestinationConfig] = {}
+        ip_map: dict[str, str] = {}
+
+        # Get IP addresses
+        for node_name in nodes:
+            ip_address = self.config.topology.nodes[node_name].interfaces[
+                interface_name
+            ].ip_address
+            if ip_address:
+                ip_map[node_name] = ip_address
+
+        # Initialize per-node configs
+        for tx_node in nodes:
+            per_node_config[tx_node] = PerDestinationConfig(
+                node=tx_node,
+                interface=interface_name,
+                default_params=NetemParams(
+                    delay_ms=1.0, jitter_ms=0.0, loss_percent=0.0, rate_mbps=1000.0
+                ),
+                dest_params={},
+            )
+
+        # Populate destination parameters and store link states
+        for i, link_info in enumerate(wireless_links):
+            tx_node = link_info["tx_node"]
+            rx_node = link_info["rx_node"]
+            rx_ip = ip_map.get(rx_node)
+
+            if not rx_ip:
+                logger.error(f"No IP address for {rx_node}, skipping")
+                continue
+
+            result = results[i]
+
+            netem_params = NetemParams(
+                delay_ms=result["netem_delay_ms"],
+                jitter_ms=result["netem_jitter_ms"],
+                loss_percent=result["netem_loss_percent"],
+                rate_mbps=result["netem_rate_mbps"],
+            )
+
+            per_node_config[tx_node].dest_params[rx_ip] = netem_params
+
+            # Store link state for deployment summary
+            self._link_states[(tx_node, rx_node)] = {
+                "netem": netem_params,
+                "rf": {
+                    "snr_db": result.get("snr_db"),
+                    "path_loss_db": result.get("path_loss_db"),
+                    "per": result.get("per"),
+                    "rx_power_dbm": result.get("rx_power_dbm"),
+                },
+            }
+
+            # Store MCS info if available
+            if result.get("mcs_index") is not None:
+                self._link_mcs_info[(tx_node, rx_node)] = {
+                    "mcs_index": result.get("mcs_index"),
+                    "modulation": result.get("modulation"),
+                    "code_rate": result.get("code_rate"),
+                    "fec_type": result.get("fec_type"),
+                    "bandwidth_mhz": result.get("bandwidth_mhz"),
+                }
+
+        # 4. Apply per-destination netem to all nodes
+        configurator = SharedNetemConfigurator(self.clab_manager)
+
+        for node_name, config in per_node_config.items():
+            success = configurator.apply_per_destination_netem(config)
+            if not success:
+                logger.error(f"Failed to apply per-dest netem to {node_name}")
+                self._netem_failures.append((node_name, "shared_bridge"))
+
+        logger.info(
+            f"Applied per-destination netem to {len(per_node_config)} nodes "
+            f"in shared bridge mode"
+        )
+
     async def _update_all_links(self) -> None:
-        """Update channel conditions for all links."""
+        """Update channel conditions for all links (point-to-point or shared bridge)."""
+        # Detect shared bridge mode
+        bridge_config = self.config.topology.shared_bridge
+        if bridge_config and bridge_config.enabled:
+            logger.info("Using shared bridge link update")
+            await self._update_shared_bridge_links()
+            return
+
+        # Point-to-point mode
         links = self.config.topology.links
         nodes = self.config.topology.nodes
 
@@ -453,7 +642,6 @@ class EmulationController:
 
         # Sanity checks for RF metrics
         snr = result["snr_db"]
-        per = result["per"]
         loss_pct = result["netem_loss_percent"]
 
         if snr > 50.0:
@@ -627,7 +815,7 @@ class EmulationController:
 
     def _find_link_interface(
         self, container_info: dict, node_name: str, peer_node: str
-    ) -> Optional[str]:
+    ) -> str | None:
         """
         Find interface on node that connects to peer_node.
 
@@ -759,11 +947,26 @@ class EmulationController:
             Dictionary with deployment information including containers,
             network interfaces, and channel parameters.
         """
+        # Detect shared bridge mode
+        is_shared_bridge = (
+            self.config.topology.shared_bridge
+            and self.config.topology.shared_bridge.enabled
+        )
+
         summary = {
             "topology_name": self.config.name if self.config else "Unknown",
+            "mode": "shared_bridge" if is_shared_bridge else "point_to_point",
             "containers": [],
             "links": [],
         }
+
+        # Add shared bridge info
+        if is_shared_bridge:
+            summary["shared_bridge"] = {
+                "name": self.config.topology.shared_bridge.name,
+                "nodes": self.config.topology.shared_bridge.nodes,
+                "interface": self.config.topology.shared_bridge.interface_name,
+            }
 
         # Get container info
         if self.clab_manager:
@@ -776,12 +979,13 @@ class EmulationController:
                     "interfaces": info.get("interfaces", []),
                     "ipv4": info.get("ipv4", ""),
                 }
-                # Add wireless positions if available (from interfaces)
+                # Add wireless positions and IPs if available (from interfaces)
                 short_name = name.replace(f"clab-{self.config.name}-", "")
                 node = self.config.topology.nodes.get(short_name)
                 if node and node.interfaces:
-                    # Collect positions from all wireless interfaces
+                    # Collect positions and IPs from all wireless interfaces
                     positions = {}
+                    ips = {}
                     for iface_name, iface_config in node.interfaces.items():
                         if iface_config.wireless:
                             positions[iface_name] = {
@@ -789,8 +993,12 @@ class EmulationController:
                                 "y": iface_config.wireless.position.y,
                                 "z": iface_config.wireless.position.z,
                             }
+                        if iface_config.ip_address:
+                            ips[iface_name] = iface_config.ip_address
                     if positions:
                         container_info["positions"] = positions
+                    if ips:
+                        container_info["ips"] = ips
                 summary["containers"].append(container_info)
 
         # Get link states with interface information

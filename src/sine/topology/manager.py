@@ -10,9 +10,7 @@ Handles:
 import json
 import logging
 import subprocess
-import tempfile
 from pathlib import Path
-from typing import Optional, Union
 
 import yaml
 
@@ -28,7 +26,7 @@ class ContainerlabError(Exception):
 class ContainerlabManager:
     """Manage Containerlab topology deployment."""
 
-    def __init__(self, topology_path: Union[str, Path]):
+    def __init__(self, topology_path: str | Path):
         """
         Initialize manager with path to SiNE topology file.
 
@@ -38,8 +36,8 @@ class ContainerlabManager:
         self.topology_path = Path(topology_path)
         self._deployed = False
         self._container_info: dict[str, dict] = {}
-        self._clab_topology_path: Optional[Path] = None
-        self._lab_name: Optional[str] = None
+        self._clab_topology_path: Path | None = None
+        self._lab_name: str | None = None
         # Interface mapping: (node, peer_node) -> interface_name
         # This enables correct interface selection for MANET topologies
         self._interface_mapping: dict[tuple[str, str], str] = {}
@@ -115,6 +113,97 @@ class ContainerlabManager:
 
         return clab_topology
 
+    def generate_shared_bridge_topology(self, sine_config: dict) -> dict:
+        """
+        Generate containerlab topology with container-namespace bridge.
+
+        Creates a container-namespace bridge (not host-namespace) which is
+        automatically created by containerlab without manual pre-creation.
+
+        Architecture:
+        1. Parent container (bridge-host) to host the bridge
+        2. Bridge node inside parent's namespace (name|parent syntax)
+        3. Links with correct endpoint format (both sides have interfaces)
+
+        Args:
+            sine_config: SiNE NetworkTopology as dict
+
+        Returns:
+            Containerlab topology dictionary with container-namespace bridge
+        """
+        clab_topology = {
+            "name": sine_config["name"],
+            "topology": {"nodes": {}, "links": []},
+        }
+
+        if sine_config.get("prefix"):
+            clab_topology["prefix"] = sine_config["prefix"]
+
+        # Store lab name for later
+        self._lab_name = sine_config["name"]
+
+        topology_def = sine_config.get("topology", {})
+        bridge_config = topology_def.get("shared_bridge")
+
+        if not bridge_config or not bridge_config.get("enabled"):
+            raise ContainerlabError(
+                "generate_shared_bridge_topology called but shared_bridge not enabled"
+            )
+
+        bridge_name = bridge_config["name"]
+        bridge_nodes = bridge_config["nodes"]
+        interface_name = bridge_config.get("interface_name", "eth1")
+
+        # Create parent container to host the bridge
+        parent_node = "bridge-host"
+        clab_topology["topology"]["nodes"][parent_node] = {
+            "kind": "linux",
+            "image": "alpine:latest"
+        }
+        logger.debug(f"Created bridge host node: {parent_node}")
+
+        # Create container-namespace bridge with pipe syntax
+        bridge_full_name = f"{bridge_name}|{parent_node}"
+        clab_topology["topology"]["nodes"][bridge_full_name] = {
+            "kind": "bridge",
+            "network-mode": f"container:{parent_node}"
+        }
+        logger.debug(f"Created container-namespace bridge: {bridge_full_name}")
+
+        # Add all nodes in broadcast domain
+        for node_name in bridge_nodes:
+            node_config = topology_def["nodes"][node_name]
+            clab_node = {
+                "kind": node_config.get("kind", "linux"),
+                "image": node_config.get("image", "alpine:latest"),
+            }
+            if node_config.get("cmd"):
+                clab_node["cmd"] = node_config["cmd"]
+            if node_config.get("binds"):
+                clab_node["binds"] = node_config["binds"]
+            if node_config.get("env"):
+                clab_node["env"] = node_config["env"]
+
+            clab_topology["topology"]["nodes"][node_name] = clab_node
+
+        # Connect each node to bridge with correct endpoint format
+        for node_name in bridge_nodes:
+            bridge_interface = f"{node_name}-{interface_name}"  # Unique per node
+            link = {
+                "endpoints": [
+                    f"{node_name}:{interface_name}",
+                    f"{bridge_full_name}:{bridge_interface}"
+                ]
+            }
+            clab_topology["topology"]["links"].append(link)
+
+            logger.debug(
+                f"Connected {node_name}:{interface_name} to "
+                f"{bridge_full_name}:{bridge_interface}"
+            )
+
+        return clab_topology
+
     @staticmethod
     def _parse_endpoint(endpoint: str) -> tuple[str, str]:
         """
@@ -131,12 +220,13 @@ class ContainerlabManager:
         parts = endpoint.split(":", 1)
         return (parts[0], parts[1])
 
-    def deploy(self, clab_topology: dict) -> bool:
+    def deploy(self, clab_topology: dict, sine_config: dict | None = None) -> bool:
         """
         Deploy topology using containerlab.
 
         Args:
             clab_topology: Containerlab topology dictionary
+            sine_config: Optional SiNE config dict for IP assignment in bridge mode
 
         Returns:
             True if deployment succeeded
@@ -161,16 +251,94 @@ class ContainerlabManager:
 
             self._deployed = True
             self._discover_containers()
+
+            # Apply IP addresses for shared bridge mode
+            if sine_config:
+                topology_def = sine_config.get("topology", {})
+                bridge_config = topology_def.get("shared_bridge")
+                if bridge_config and bridge_config.get("enabled"):
+                    logger.info("Applying IP addresses for shared bridge mode")
+                    self.apply_bridge_ips(sine_config)
+
             return True
 
         except subprocess.CalledProcessError as e:
             logger.error(f"Containerlab deployment failed: {e.stderr}")
             raise ContainerlabError(f"Deployment failed: {e.stderr}") from e
-        except FileNotFoundError:
+        except FileNotFoundError as e:
             raise ContainerlabError(
                 "containerlab command not found. "
                 "Install from: https://containerlab.dev/install/"
-            )
+            ) from e
+
+    def apply_bridge_ips(self, sine_config: dict) -> dict[str, str]:
+        """
+        Apply user-specified IPs to container interfaces in shared bridge mode.
+
+        Args:
+            sine_config: SiNE NetworkTopology as dict
+
+        Returns:
+            Dictionary mapping node_name to ip_address
+        """
+        topology_def = sine_config.get("topology", {})
+        bridge_config = topology_def.get("shared_bridge")
+
+        if not bridge_config or not bridge_config.get("enabled"):
+            logger.warning("apply_bridge_ips called but shared_bridge not enabled")
+            return {}
+
+        interface_name = bridge_config.get("interface_name", "eth1")
+        bridge_nodes = bridge_config["nodes"]
+        ip_assignments = {}
+
+        for node_name in bridge_nodes:
+            node_config = topology_def["nodes"][node_name]
+            interface_config = node_config["interfaces"][interface_name]
+            ip_address = interface_config["ip_address"]
+
+            # Store mapping
+            ip_assignments[node_name] = ip_address
+
+            # Apply IP to container interface
+            container_info = self.get_container_info(node_name)
+            if not container_info:
+                logger.error(f"Container info not found for {node_name}")
+                continue
+
+            pid = container_info.get("pid")
+            if not pid:
+                logger.error(f"PID not found for {node_name}")
+                continue
+
+            try:
+                # Use nsenter to access container network namespace
+                subprocess.run(
+                    [
+                        "sudo",
+                        "nsenter",
+                        "-t",
+                        str(pid),
+                        "-n",
+                        "ip",
+                        "addr",
+                        "add",
+                        f"{ip_address}/24",
+                        "dev",
+                        interface_name,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                logger.info(f"Applied IP {ip_address} to {node_name}:{interface_name}")
+
+            except subprocess.CalledProcessError as e:
+                logger.error(
+                    f"Failed to apply IP {ip_address} to {node_name}:{interface_name}: {e.stderr}"
+                )
+
+        return ip_assignments
 
     def _discover_containers(self) -> None:
         """Discover deployed container information."""
@@ -271,7 +439,7 @@ class ContainerlabManager:
         """Get info for all deployed containers."""
         return self._container_info.copy()
 
-    def get_interface_for_peer(self, node: str, peer_node: str) -> Optional[str]:
+    def get_interface_for_peer(self, node: str, peer_node: str) -> str | None:
         """
         Get the interface on `node` that connects to `peer_node`.
 
@@ -342,7 +510,7 @@ class ContainerlabManager:
         return self._deployed
 
     @property
-    def lab_name(self) -> Optional[str]:
+    def lab_name(self) -> str | None:
         """Get the lab name."""
         return self._lab_name
 
@@ -358,7 +526,7 @@ def check_containerlab_installed() -> bool:
         return False
 
 
-def get_containerlab_version() -> Optional[str]:
+def get_containerlab_version() -> str | None:
     """Get containerlab version if installed."""
     try:
         result = subprocess.run(

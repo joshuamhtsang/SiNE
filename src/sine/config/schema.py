@@ -9,6 +9,7 @@ This module defines the schema for network.yaml files that describe:
 """
 
 from enum import Enum
+
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 
@@ -210,6 +211,10 @@ class InterfaceConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    ip_address: str | None = Field(
+        default=None,
+        description="IP address for tc filter matching (required for shared bridge mode)"
+    )
     wireless: WirelessParams | None = Field(
         default=None, description="Wireless parameters (computed via ray tracing)"
     )
@@ -331,6 +336,30 @@ class SceneConfig(BaseModel):
     file: str = Field(..., description="Path to Mitsuba XML scene file")
 
 
+class SharedBridgeDomain(BaseModel):
+    """Shared broadcast domain for MANET emulation.
+
+    When enabled, all nodes share a single Linux bridge instead of
+    point-to-point veth pairs. This enables true broadcast medium
+    behavior with per-destination netem filtering.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = Field(
+        default=True, description="Enable shared bridge mode"
+    )
+    name: str = Field(
+        ..., description="Bridge name (e.g., 'manet-br0')"
+    )
+    nodes: list[str] = Field(
+        ..., description="Nodes in this broadcast domain"
+    )
+    interface_name: str = Field(
+        default="eth1", description="Interface to attach to bridge"
+    )
+
+
 class TopologyDefinition(BaseModel):
     """Topology definition containing nodes, links, and scene."""
 
@@ -343,6 +372,9 @@ class TopologyDefinition(BaseModel):
     nodes: dict[str, NodeConfig] = Field(..., description="Node definitions")
     links: list[Link] = Field(
         default_factory=list, description="Links between node interfaces"
+    )
+    shared_bridge: SharedBridgeDomain | None = Field(
+        default=None, description="Shared broadcast domain for MANET (opt-in)"
     )
     scene: SceneConfig | None = Field(
         default=None, description="Ray tracing scene (required for wireless links)"
@@ -375,7 +407,7 @@ class TopologyDefinition(BaseModel):
 
             endpoint_types: list[bool] = []  # True = wireless, False = fixed
 
-            for i, (node_name, interface) in enumerate(zip(node_names, interfaces)):
+            for i, (node_name, interface) in enumerate(zip(node_names, interfaces, strict=True)):
                 # Check node exists
                 if node_name not in nodes:
                     raise ValueError(
@@ -431,6 +463,79 @@ class TopologyDefinition(BaseModel):
             raise ValueError("Scene configuration required when using wireless links")
 
         return self
+
+    @model_validator(mode="after")
+    def validate_bridge_or_links(self) -> "TopologyDefinition":
+        """Ensure either shared_bridge OR explicit links, not both."""
+        has_bridge = self.shared_bridge and self.shared_bridge.enabled
+        has_links = len(self.links) > 0
+
+        if has_bridge and has_links:
+            raise ValueError("Cannot use both shared_bridge and explicit links")
+        if not has_bridge and not has_links:
+            raise ValueError("Must specify either shared_bridge or links")
+
+        # If shared bridge, validate IP addresses and wireless-only
+        if has_bridge:
+            self._validate_shared_bridge()
+
+        return self
+
+    def _validate_shared_bridge(self) -> None:
+        """Validate shared bridge configuration."""
+        import ipaddress
+
+        bridge = self.shared_bridge
+        if not bridge:
+            return
+
+        interface_name = bridge.interface_name
+
+        for node_name in bridge.nodes:
+            if node_name not in self.nodes:
+                raise ValueError(f"Bridge node '{node_name}' not defined in nodes section")
+
+            node = self.nodes[node_name]
+            if not node.interfaces or interface_name not in node.interfaces:
+                raise ValueError(f"Node '{node_name}' missing interface '{interface_name}'")
+
+            iface = node.interfaces[interface_name]
+
+            # Phase 1: Only wireless interfaces allowed
+            if not iface.wireless:
+                raise ValueError(
+                    f"Node '{node_name}' interface '{interface_name}' must be wireless "
+                    f"(mixed wireless + fixed_netem not supported in Phase 1)"
+                )
+
+            # IP address required for tc filter matching
+            if not iface.ip_address:
+                raise ValueError(
+                    f"Node '{node_name}' interface '{interface_name}' must have ip_address "
+                    f"(required for tc flower filters)"
+                )
+
+            # Validate IP format
+            try:
+                ipaddress.ip_address(iface.ip_address)
+            except ValueError as e:
+                raise ValueError(
+                    f"Invalid IP address for {node_name}:{interface_name}: "
+                    f"{iface.ip_address} - {e}"
+                ) from e
+
+        # Check for IP conflicts
+        ip_map: dict[str, str] = {}
+        for node_name in bridge.nodes:
+            node = self.nodes[node_name]
+            if node.interfaces and interface_name in node.interfaces:
+                ip = node.interfaces[interface_name].ip_address
+                if ip and ip in ip_map:
+                    raise ValueError(
+                        f"IP address conflict: {ip} used by both {ip_map[ip]} and {node_name}"
+                    )
+                if ip:
+                    ip_map[ip] = node_name
 
 
 class NetworkTopology(BaseModel):

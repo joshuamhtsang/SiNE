@@ -16,12 +16,11 @@ import asyncio
 import logging
 import sys
 from pathlib import Path
-from typing import Optional
 
 import click
 from rich.console import Console
-from rich.table import Table
 from rich.logging import RichHandler
+from rich.table import Table
 
 console = Console()
 
@@ -40,6 +39,18 @@ def _print_deployment_summary(summary: dict) -> None:
     """Print a summary of the deployment."""
     console.print()
 
+    # Show mode and bridge info if applicable
+    mode = summary.get("mode", "point_to_point")
+    if mode == "shared_bridge":
+        bridge_info = summary.get("shared_bridge", {})
+        console.print("[bold magenta]Mode:[/] Shared Bridge (true broadcast medium)")
+        console.print(
+            f"[bold]Bridge:[/] {bridge_info.get('name')} | "
+            f"[bold]Interface:[/] {bridge_info.get('interface')} | "
+            f"[bold]Nodes:[/] {', '.join(bridge_info.get('nodes', []))}"
+        )
+        console.print()
+
     # Containers table
     if summary.get("containers"):
         container_table = Table(title="Deployed Containers")
@@ -47,51 +58,108 @@ def _print_deployment_summary(summary: dict) -> None:
         container_table.add_column("Image")
         container_table.add_column("PID", style="dim")
         container_table.add_column("Interfaces", style="green")
+
+        # Add IP column for shared bridge mode
+        if mode == "shared_bridge":
+            container_table.add_column("IPs (iface: address)", style="yellow")
+
         container_table.add_column("Positions (iface: x,y,z)")
 
         for c in summary["containers"]:
             interfaces = ", ".join(c.get("interfaces", [])) or "eth0"
-            # Format positions per interface (new format)
+
+            # Format IPs per interface (shared bridge mode)
+            ip_str = ""
+            if mode == "shared_bridge" and c.get("ips"):
+                ip_parts = []
+                for iface, ip in c["ips"].items():
+                    ip_parts.append(f"{iface}: {ip}")
+                ip_str = ", ".join(ip_parts)
+
+            # Format positions per interface
             pos_str = ""
             if c.get("positions"):
                 pos_parts = []
                 for iface, p in c["positions"].items():
                     pos_parts.append(f"{iface}: ({p['x']:.1f},{p['y']:.1f},{p['z']:.1f})")
                 pos_str = ", ".join(pos_parts)
-            container_table.add_row(
-                c.get("name", ""),
-                c.get("image", ""),
-                str(c.get("pid", "")),
-                interfaces,
-                pos_str,
-            )
+
+            if mode == "shared_bridge":
+                container_table.add_row(
+                    c.get("name", ""),
+                    c.get("image", ""),
+                    str(c.get("pid", "")),
+                    interfaces,
+                    ip_str,
+                    pos_str,
+                )
+            else:
+                container_table.add_row(
+                    c.get("name", ""),
+                    c.get("image", ""),
+                    str(c.get("pid", "")),
+                    interfaces,
+                    pos_str,
+                )
 
         console.print(container_table)
 
-    # Links table (supports both wireless and fixed)
+    # Links table (supports both wireless and fixed, P2P and shared bridge)
     if summary.get("links"):
         console.print()
-        link_table = Table(title="Link Parameters (netem)")
-        link_table.add_column("Link", style="cyan")
-        link_table.add_column("Type", style="magenta")
-        link_table.add_column("Delay", justify="right")
-        link_table.add_column("Jitter", justify="right")
-        link_table.add_column("Loss %", justify="right")
-        link_table.add_column("Rate", justify="right")
 
-        for link in summary["links"]:
-            link_type = link.get("type", "unknown")
-            type_style = "[green]wireless[/]" if link_type == "wireless" else "[blue]fixed[/]"
-            link_table.add_row(
-                link["link"],
-                type_style,
-                f"{link['delay_ms']:.2f} ms",
-                f"{link['jitter_ms']:.2f} ms",
-                f"{link['loss_percent']:.2f}%",
-                f"{link['rate_mbps']:.1f} Mbps",
-            )
+        if mode == "shared_bridge":
+            # Group links by source node for shared bridge mode
+            per_node_links = {}
+            for link in summary["links"]:
+                tx_node = link["tx_node"]
+                if tx_node not in per_node_links:
+                    per_node_links[tx_node] = []
+                per_node_links[tx_node].append(link)
 
-        console.print(link_table)
+            # Display per-node, per-destination tables
+            for tx_node in sorted(per_node_links.keys()):
+                link_table = Table(title=f"Per-Destination Parameters for {tx_node}")
+                link_table.add_column("Destination", style="cyan")
+                link_table.add_column("Delay", justify="right")
+                link_table.add_column("Jitter", justify="right")
+                link_table.add_column("Loss %", justify="right")
+                link_table.add_column("Rate", justify="right")
+
+                for link in per_node_links[tx_node]:
+                    link_table.add_row(
+                        f"{link['rx_node']} ({link.get('rx_interface', 'eth1')})",
+                        f"{link['delay_ms']:.3f} ms",
+                        f"{link['jitter_ms']:.3f} ms",
+                        f"{link['loss_percent']:.2f}%",
+                        f"{link['rate_mbps']:.1f} Mbps",
+                    )
+
+                console.print(link_table)
+                console.print()
+        else:
+            # Point-to-point mode (original display)
+            link_table = Table(title="Link Parameters (netem)")
+            link_table.add_column("Link", style="cyan")
+            link_table.add_column("Type", style="magenta")
+            link_table.add_column("Delay", justify="right")
+            link_table.add_column("Jitter", justify="right")
+            link_table.add_column("Loss %", justify="right")
+            link_table.add_column("Rate", justify="right")
+
+            for link in summary["links"]:
+                link_type = link.get("type", "unknown")
+                type_style = "[green]wireless[/]" if link_type == "wireless" else "[blue]fixed[/]"
+                link_table.add_row(
+                    link["link"],
+                    type_style,
+                    f"{link['delay_ms']:.2f} ms",
+                    f"{link['jitter_ms']:.2f} ms",
+                    f"{link['loss_percent']:.2f}%",
+                    f"{link['rate_mbps']:.1f} Mbps",
+                )
+
+            console.print(link_table)
 
 
 @click.group()
@@ -156,8 +224,8 @@ def deploy(topology: Path, channel_server: str, enable_mobility: bool, mobility_
                 if enable_mobility:
                     console.print(f"[green]Mobility API running on http://localhost:{mobility_port}[/]")
                     console.print(f"[dim]Example: curl -X POST http://localhost:{mobility_port}/api/mobility/update \\")
-                    console.print(f"[dim]         -H 'Content-Type: application/json' \\")
-                    console.print(f"[dim]         -d '{{'\"node\": \"node2\", \"x\": 10.0, \"y\": 5.0, \"z\": 1.5}}'[/]")
+                    console.print("[dim]         -H 'Content-Type: application/json' \\")
+                    console.print("[dim]         -d '{'\"node\": \"node2\", \"x\": 10.0, \"y\": 5.0, \"z\": 1.5}'[/]")
 
                 console.print("[dim]Press Ctrl+C to stop emulation[/]")
 
@@ -175,8 +243,9 @@ def deploy(topology: Path, channel_server: str, enable_mobility: bool, mobility_
 
     # If mobility is enabled, run both emulation and mobility API server
     if enable_mobility:
-        from sine.mobility.api import MobilityAPIServer
         import uvicorn
+
+        from sine.mobility.api import MobilityAPIServer
 
         async def run_with_mobility() -> None:
             # Start emulation controller
@@ -189,8 +258,8 @@ def deploy(topology: Path, channel_server: str, enable_mobility: bool, mobility_
 
             console.print(f"\n[green]Mobility API running on http://localhost:{mobility_port}[/]")
             console.print(f"[dim]Example: curl -X POST http://localhost:{mobility_port}/api/mobility/update \\")
-            console.print(f"[dim]         -H 'Content-Type: application/json' \\")
-            console.print(f"[dim]         -d '{{'\"node\": \"node2\", \"x\": 10.0, \"y\": 5.0, \"z\": 1.5}}'[/]")
+            console.print("[dim]         -H 'Content-Type: application/json' \\")
+            console.print("[dim]         -d '{'\"node\": \"node2\", \"x\": 10.0, \"y\": 5.0, \"z\": 1.5}'[/]")
             console.print(f"[dim]To destroy: uv run sine destroy {topology}[/]")
             console.print("[dim]Press Ctrl+C to stop emulation[/]")
 
@@ -236,7 +305,7 @@ def destroy(topology: Path) -> None:
 
     TOPOLOGY is the path to the network.yaml file used for deployment.
     """
-    from sine.topology.manager import ContainerlabManager, ContainerlabError
+    from sine.topology.manager import ContainerlabError, ContainerlabManager
 
     console.print(f"[bold yellow]Destroying topology:[/] {topology}")
 
@@ -537,12 +606,12 @@ def render(
     output: Path,
     resolution: str,
     num_samples: int,
-    camera_position: Optional[str],
-    look_at: Optional[str],
+    camera_position: str | None,
+    look_at: str | None,
     fov: float,
     no_paths: bool,
     no_devices: bool,
-    clip_at: Optional[float],
+    clip_at: float | None,
 ) -> None:
     """Render a scene with nodes and propagation paths.
 
@@ -551,8 +620,8 @@ def render(
     Uses Sionna's native ray-traced rendering to produce high-quality images
     showing the scene geometry, TX/RX positions, and propagation paths.
     """
+    from sine.channel.sionna_engine import SionnaEngine, is_sionna_available
     from sine.config.loader import TopologyLoader, TopologyLoadError
-    from sine.channel.sionna_engine import is_sionna_available, SionnaEngine
 
     console.print(f"[bold blue]Rendering:[/] {topology}")
 
@@ -679,7 +748,7 @@ def info() -> None:
     table.add_row("Python", f"[green]{sys.version.split()[0]}[/]", sys.executable)
 
     # Sionna
-    from sine.channel.sionna_engine import is_sionna_available, get_sionna_import_error
+    from sine.channel.sionna_engine import get_sionna_import_error, is_sionna_available
 
     if is_sionna_available():
         table.add_row("Sionna", "[green]Available[/]", "GPU acceleration enabled")

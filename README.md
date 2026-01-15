@@ -710,9 +710,13 @@ A: The bridge adds negligible latency (~1-10 microseconds) compared to wireless 
 
 **Q: Does SiNE support MANET topologies with 3+ nodes?**
 
-A: Yes! SiNE supports MANET using a **point-to-point link model**. Each wireless link is a separate veth pair with independent netem configuration.
+A: Yes! SiNE supports MANET topologies using **two modes**:
 
-Example 3-node triangle topology:
+#### Mode 1: Point-to-Point Links (Default)
+
+Each wireless link is a separate veth pair with independent netem configuration.
+
+Example 3-node triangle:
 ```
          node1 (0,0,1)
           /  \
@@ -724,58 +728,139 @@ Example 3-node triangle topology:
  (10,0,1) eth2   (5,8.66,1)
 ```
 
-**Q: How do I specify which interface connects to which peer?**
-
-A: Use the `node:interface` format in endpoints (required):
-
+**Configuration:**
 ```yaml
 nodes:
   node1:
     interfaces:
       eth1:
-        wireless: { ... }  # Config for link to node2
+        wireless: { ... }  # Link to node2
       eth2:
-        wireless: { ... }  # Config for link to node3
+        wireless: { ... }  # Link to node3
 
 links:
-  - endpoints: [node1:eth1, node2:eth1]  # netem applied to node1:eth1 and node2:eth1
-  - endpoints: [node1:eth2, node3:eth1]  # netem applied to node1:eth2 and node3:eth1
+  - endpoints: [node1:eth1, node2:eth1]
+  - endpoints: [node1:eth2, node3:eth1]
+  - endpoints: [node2:eth2, node3:eth1]
 ```
 
-**Netem application in MANET:**
-- Each interface (`eth1`, `eth2`, etc.) gets netem configured independently
-- Channel conditions are computed per-link based on distance and scene geometry
-- A node with 2 links has netem on 2 interfaces (e.g., `eth1` and `eth2`)
+**Characteristics:**
+- ✅ Simple implementation
+- ✅ Easy to debug
+- ✅ Independent channel conditions per link
+- ❌ Not a true broadcast medium
+- ❌ No shared channel contention
+- ❌ Multiple interfaces per node
 
-SiNE validates that:
-- No interface is used by multiple links
-- All interfaces referenced in links are configured on the node
-- Both endpoints of a link have the same type (wireless or fixed_netem)
-
-**Q: How do I deploy a MANET example?**
-
+**Deploy:**
 ```bash
-# Deploy 3-node triangle MANET
 sudo $(which uv) run sine deploy examples/manet_triangle/network.yaml
-
-# Verify netem on all interfaces
-./CLAUDE_RESOURCES/check_netem.sh
 ```
 
-**Q: What are the limitations of the point-to-point model?**
+#### Mode 2: Shared Bridge (True Broadcast Medium) **NEW!**
 
-**Pros:**
-- Simple implementation using containerlab links
-- Each link has independent channel conditions
-- Easy to debug and understand
-- Works well for testing MANET routing protocols
+All nodes share a container-namespace Linux bridge with per-destination netem using HTB + flower filters.
 
-**Cons:**
-- Not a true broadcast medium (no shared channel contention)
-- Hidden node problem not naturally modeled
-- Multiple interfaces per node (real MANETs use single interface)
+Example 3-node triangle:
+```
+                ┌──────────────┐
+                │ bridge-host  │ ← Container hosting the bridge
+                │  (Alpine)    │
+                └──────┬───────┘
+                       │
+                   manet-br0 (bridge)
+                       ╬
+       ┌───────────────┼───────────────┐
+       │               │               │
+ Node1:eth1      Node2:eth1      Node3:eth1
+```
 
-For applications requiring true broadcast semantics, a shared bridge model could be implemented in the future. See [CLAUDE.md](CLAUDE.md) for technical details.
+**Configuration:**
+```yaml
+topology:
+  shared_bridge:
+    enabled: true
+    name: manet-br0
+    nodes: [node1, node2, node3]
+    interface_name: eth1
+  scene:
+    file: scenes/vacuum.xml
+
+nodes:
+  node1:
+    kind: linux
+    image: alpine:latest
+    interfaces:
+      eth1:
+        ip_address: 192.168.100.1  # Required for shared bridge
+        wireless:
+          position: {x: 0, y: 0, z: 1}
+          frequency_ghz: 5.18
+          bandwidth_mhz: 80
+          # ... other wireless params
+```
+
+**Characteristics:**
+- ✅ True broadcast medium (packets visible to all nodes)
+- ✅ Single interface per node (realistic)
+- ✅ Per-destination channel conditions using tc flower filters
+- ✅ Supports MANET routing protocols (OLSR, BATMAN-adv, Babel)
+- ✅ O(1) packet classification (flower filters)
+- ⚠️ Requires Linux kernel 4.2+ (for flower filters)
+- ⚠️ More complex TC configuration (HTB + netem + filters)
+
+**Deploy:**
+```bash
+# Start channel server
+uv run sine channel-server
+
+# Deploy shared bridge topology (in another terminal)
+sudo $(which uv) run sine deploy examples/manet_triangle_shared/network.yaml
+```
+
+**Validation tests:**
+```bash
+cd examples/manet_triangle_shared
+./run_all_tests.sh  # Run all validation tests
+```
+
+**How it works:**
+
+**Container-Namespace Bridge Architecture:**
+
+1. **Bridge Host Container**: A lightweight Alpine container (`bridge-host`) hosts the bridge in its network namespace
+2. **Automatic Creation**: Containerlab automatically creates the bridge when deploying (no manual `ip link add` needed)
+3. **Automatic Cleanup**: Bridge is destroyed when running `containerlab destroy`
+4. **Per-Destination Netem**: Each node's interface gets HTB + flower filter configuration
+
+**TC Configuration (per node):**
+```
+Root HTB qdisc (handle 1:, default 99)
+  └── Parent class (1:1)
+       ├── Class 1:10 → Netem → flower filter (dst_ip 192.168.100.2)
+       ├── Class 1:20 → Netem → flower filter (dst_ip 192.168.100.3)
+       └── Class 1:99 → Netem (default, for broadcast)
+```
+
+- Unicast packets match destination IP and get per-dest netem
+- Broadcast/multicast packets use default class (minimal delay)
+- All nodes share the same Linux bridge (true broadcast)
+
+See [examples/manet_triangle_shared/TESTING.md](examples/manet_triangle_shared/TESTING.md) for detailed testing guide.
+
+**Q: Which mode should I use?**
+
+| Use Case | Mode | Reason |
+|----------|------|--------|
+| Simple MANET testing | Point-to-point | Easier setup, no kernel requirements |
+| MANET routing protocols (OLSR, BATMAN-adv) | **Shared bridge** | True broadcast needed for protocol discovery |
+| Large topologies (10+ nodes) | Point-to-point | Lower overhead (O(1) vs O(N²)) |
+| Hidden node scenarios | **Shared bridge** | Broadcast medium captures RF behavior |
+| Quick prototyping | Point-to-point | Simpler configuration |
+
+**Q: How do I troubleshoot shared bridge TC filters?**
+
+See the [TC Filter Troubleshooting Guide](#tc-filter-troubleshooting) below.
 
 ## Troubleshooting
 
@@ -838,6 +923,127 @@ docker exec -it clab-<topology>-node2 ip addr add 18.0.0.2/24 dev eth1
 1. Check the `scene.file` path in your network.yaml
 2. Paths are relative to where you run the command
 3. Use `scenes/vacuum.xml` for free-space propagation testing
+
+### TC Filter Troubleshooting
+
+For shared bridge mode (HTB + flower filters).
+
+#### Flower filters not supported
+
+**Symptom**: Error during deployment: "Unknown filter 'flower'"
+
+**Cause**: Linux kernel < 4.2 (flower filters require 4.2+)
+
+**Solution**:
+```bash
+# Check kernel version
+uname -r  # Must be >= 4.2
+
+# Upgrade kernel if needed (Ubuntu/Debian)
+sudo apt update && sudo apt upgrade linux-generic
+```
+
+#### TC configuration missing / HTB not found
+
+**Symptom**: `tc qdisc show` returns no HTB qdisc
+
+**Cause**: Deployment failed or netem configuration error
+
+**Solution**:
+```bash
+# Check deployment logs
+sudo $(which uv) run sine deploy examples/manet_triangle_shared/network.yaml 2>&1 | grep -i error
+
+# Verify containers are running
+docker ps | grep manet-triangle-shared
+
+# Redeploy if needed
+sudo $(which uv) run sine destroy examples/manet_triangle_shared/network.yaml
+sudo $(which uv) run sine deploy examples/manet_triangle_shared/network.yaml
+```
+
+#### Flower filters matching 0 packets
+
+**Symptom**: `tc -s filter show dev eth1` shows 0 packets matched
+
+**Cause**: Incorrect destination IPs in filters or no traffic
+
+**Solution**:
+```bash
+# 1. Verify IP addresses on interfaces
+docker exec clab-manet-triangle-shared-node1 ip addr show eth1
+# Should show: 192.168.100.1/24
+
+# 2. Check filter configuration matches IPs
+docker exec clab-manet-triangle-shared-node1 tc filter show dev eth1
+# Should show: dst_ip 192.168.100.2, dst_ip 192.168.100.3
+
+# 3. Generate traffic
+docker exec clab-manet-triangle-shared-node1 ping -c 10 192.168.100.2
+
+# 4. Check filter stats again
+docker exec clab-manet-triangle-shared-node1 tc -s filter show dev eth1
+# Packet counts should increment
+```
+
+#### Ping shows unexpected RTT
+
+**Symptom**: RTT doesn't match configured delay × 2
+
+**Cause**: Asymmetric delays or processing overhead
+
+**Solution**:
+```bash
+# Check configured delay for destination
+docker exec clab-manet-triangle-shared-node1 tc qdisc show dev eth1 | grep netem
+
+# Expected RTT = 2 × one-way delay (forward + reverse)
+# Allow ±20% tolerance for processing overhead
+
+# Debug: check both directions
+docker exec clab-manet-triangle-shared-node1 ping -c 10 192.168.100.2
+docker exec clab-manet-triangle-shared-node2 ping -c 10 192.168.100.1
+# RTTs should be similar
+```
+
+#### Per-destination netem not working
+
+**Symptom**: All destinations have same delay/loss
+
+**Cause**: Flower filters not classifying packets correctly
+
+**Solution**:
+```bash
+# Run comprehensive tests
+cd examples/manet_triangle_shared
+./test_tc_config.sh      # Verify TC configuration
+./test_filter_stats.sh   # Verify packet classification
+
+# Manual debug: watch filter stats in real-time
+watch -n 1 'docker exec clab-manet-triangle-shared-node1 tc -s filter show dev eth1'
+
+# Generate traffic to specific destinations
+docker exec clab-manet-triangle-shared-node1 ping -c 100 192.168.100.2 &
+docker exec clab-manet-triangle-shared-node1 ping -c 100 192.168.100.3 &
+# Filter counts for each dst_ip should increment independently
+```
+
+#### Kernel 4.2+ requirement issues
+
+**Symptom**: Flower filters fail on older kernels
+
+**Alternatives if kernel upgrade not possible**:
+1. Use point-to-point mode instead (examples/manet_triangle)
+2. Use u32 filters (slower, O(N) classification):
+   ```bash
+   tc filter add dev eth1 protocol ip parent 1:0 prio 1 u32 \
+      match ip dst 192.168.100.2 flowid 1:10
+   ```
+
+**Check if flower is supported**:
+```bash
+tc filter add dev lo flower help 2>&1 | grep -q "flower" && echo "Supported" || echo "Not supported"
+```
 
 ## License
 

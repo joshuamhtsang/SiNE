@@ -1,0 +1,75 @@
+name: manet-triangle-shared
+
+topology:
+  scene:
+    file: scenes/vacuum.xml
+
+  shared_bridge:
+    enabled: true
+    name: manet-br0
+    nodes: [node1, node2, node3]
+    interface_name: eth1
+
+  nodes:
+    node1:
+      kind: linux
+      image: alpine:latest
+      interfaces:
+        eth1:
+          ip_address: 192.168.100.1
+          wireless:
+            position:
+              x: 0
+              y: 0
+              z: 1
+            frequency_ghz: 5.18
+            rf_power_dbm: 20.0
+            antenna_pattern: dipole
+            polarization: V
+            antenna_gain_dbi: 3.0
+            bandwidth_mhz: 80
+            modulation: 64qam
+            fec_type: ldpc
+            fec_code_rate: 0.5
+
+    node2:
+      kind: linux
+      image: alpine:latest
+      interfaces:
+        eth1:
+          ip_address: 192.168.100.2
+          wireless:
+            position:
+              x: 10
+              y: 0
+              z: 1
+            frequency_ghz: 5.18
+            rf_power_dbm: 20.0
+            antenna_pattern: dipole
+            polarization: V
+            antenna_gain_dbi: 3.0
+            bandwidth_mhz: 80
+            modulation: 64qam
+            fec_type: ldpc
+            fec_code_rate: 0.5
+
+    node3:
+      kind: linux
+      image: alpine:latest
+      interfaces:
+        eth1:
+          ip_address: 192.168.100.3
+          wireless:
+            position:
+              x: 5
+              y: 8.66
+              z: 1
+            frequency_ghz: 5.18
+            rf_power_dbm: 20.0
+            antenna_pattern: dipole
+            polarization: V
+            antenna_gain_dbi: 3.0
+            bandwidth_mhz: 80
+            modulation: 64qam
+            fec_type: ldpc
+            fec_code_rate: 0.5

@@ -1,4 +1,4 @@
-# Lessons Learned - Real-Time Scene Viewer Design
+# Lessons Learned 1 - Real-Time Scene Viewer Design
 
 ## Context
 
@@ -178,3 +178,19 @@ When discussing this in interviews:
 This design iteration illustrates that **AI code assistants are powerful tools but require human oversight** for architectural decisions. The user's domain knowledge and understanding of computational costs led to a dramatically better design than the AI's initial proposal.
 
 **Key takeaway**: Always review AI-generated designs with the question: "Is there existing computation we can reuse?" The best code is often the code you don't have to write (or run) at all.
+
+
+
+
+# Lessons Learned 2 - Containerlab bridge modes
+
+Claude assumed that containerlab could create bridges, but it cannot. According to documentation here:
+
+https://containerlab.dev/manual/kinds/bridge/
+
+There are 2 options:
+
+1. Pre-creation of bridges directly in the host namespace.
+2. Container-Namespace Bridges
+
+I suggested going for option 2, as this results in the network.yaml being a complete deployment description, without needing additional scripts outside of network.yaml.
