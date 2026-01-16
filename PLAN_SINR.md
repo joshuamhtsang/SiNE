@@ -222,33 +222,128 @@ topology:
 
 ### Phase 3: Dynamic Transmission State Tracking
 
-**Goal**: Track which nodes are transmitting, update SINR dynamically
+**Goal**: Automatically track which nodes are transmitting and update SINR dynamically
+
+This phase implements three complementary approaches for detecting transmission states:
+- **3A: Manual API Control** (baseline, always available)
+- **3B: Rate-Based Auto-Detection** (optional, for autonomous operation)
+- **3C: Application-Layer Signaling** (advanced, for MANET protocol integration)
+
+---
+
+#### Phase 3A: Manual API Control (Baseline)
+
+**Goal**: External control of transmission states for controlled experiments
 
 **New Components**:
 
 1. **Transmission state API** in `server.py`
    ```python
+   class TransmissionStateUpdate(BaseModel):
+       states: dict[str, bool]  # {node_name: is_transmitting}
+
    @app.post("/api/transmission/state")
-   async def update_transmission_state(
-       request: TransmissionStateUpdate
-   )
+   async def update_transmission_state(request: TransmissionStateUpdate):
+       """Manually set transmission states for specific nodes."""
+       updated_nodes = []
+       for node_name, is_tx in request.states.items():
+           if _transmission_states.get(node_name) != is_tx:
+               _transmission_states[node_name] = is_tx
+               updated_nodes.append(node_name)
+
+       if updated_nodes:
+           await _recompute_sinr_for_affected_links(updated_nodes)
+
+       return {"status": "ok", "updated": updated_nodes}
+
+   @app.get("/api/transmission/state")
+   async def get_transmission_state():
+       """Get current transmission states for all nodes."""
+       return {"states": _transmission_states}
    ```
 
 2. **Rate limiting** (`src/sine/topology/netem_scheduler.py`)
    ```python
    class NetemUpdateScheduler:
-       min_interval_sec = 1.0
-       sinr_hysteresis_db = 3.0
+       """Rate-limit netem updates to prevent thrashing."""
+
+       def __init__(self, min_interval_sec=1.0, sinr_hysteresis_db=3.0):
+           self.min_interval_sec = min_interval_sec
+           self.sinr_hysteresis_db = sinr_hysteresis_db
+           self._last_update: dict[tuple[str, str], float] = {}
+           self._last_sinr: dict[tuple[str, str], float] = {}
+
+       def should_update(self, tx_node: str, rx_node: str, new_sinr_db: float) -> bool:
+           """Check if netem should be updated for this link."""
+           link_key = (tx_node, rx_node)
+           now = time.time()
+
+           # Check time interval
+           last_time = self._last_update.get(link_key, 0)
+           if now - last_time < self.min_interval_sec:
+               return False
+
+           # Check SINR hysteresis
+           last_sinr = self._last_sinr.get(link_key)
+           if last_sinr is not None:
+               sinr_delta = abs(new_sinr_db - last_sinr)
+               if sinr_delta < self.sinr_hysteresis_db:
+                   return False
+
+           # Update allowed
+           self._last_update[link_key] = now
+           self._last_sinr[link_key] = new_sinr_db
+           return True
    ```
 
 **Modified Components**:
 
 3. **`src/sine/channel/interference_engine.py`** (MODIFIED)
-   - Filter inactive transmitters before interference calculation
+   ```python
+   def compute_interference_for_frequency_group(
+       self,
+       transmitters: list[TransmitterInfo],
+       rx_positions: dict[str, tuple],
+       active_tx_states: dict[str, bool]  # NEW parameter
+   ):
+       """Compute interference only from active transmitters."""
+       # Filter to only active transmitters
+       active_transmitters = [
+           tx for tx in transmitters
+           if active_tx_states.get(tx.node_name, True)  # Default: transmitting
+       ]
+
+       if not active_transmitters:
+           logger.warning("No active transmitters in frequency group")
+           return {}
+
+       # ... rest of RadioMapSolver computation with active_transmitters only
+   ```
 
 4. **`src/sine/emulation/controller.py`** (MODIFIED)
-   - State change event handling
-   - Incremental SINR recomputation for affected links
+   ```python
+   async def _recompute_sinr_for_affected_links(
+       self, changed_nodes: list[str]
+   ) -> None:
+       """Incrementally recompute SINR for links affected by state change."""
+       # Identify affected links (where changed_node is TX or neighbor of RX)
+       affected_links = []
+       for tx_node, rx_node in self._all_links:
+           if tx_node in changed_nodes or rx_node in changed_nodes:
+               affected_links.append((tx_node, rx_node))
+
+       logger.info(f"State change affects {len(affected_links)} links")
+
+       # Recompute SINR for affected links only
+       for tx_node, rx_node in affected_links:
+           result = await self._compute_sinr_for_link(
+               tx_node, rx_node, self._current_tx_states
+           )
+
+           # Check rate limiting before applying netem
+           if self.netem_scheduler.should_update(tx_node, rx_node, result.sinr_db):
+               await self._apply_netem_update(tx_node, rx_node, result)
+   ```
 
 **Testing**:
 - Unit tests: State update API, rate limiting, hysteresis
@@ -257,8 +352,11 @@ topology:
 
 **Usage Example**:
 ```bash
-# Deploy with dynamic state
+# Deploy with dynamic state API enabled
 sudo $(which uv) run sine deploy examples/sinr_dynamic/network.yaml
+
+# Check current states
+curl http://localhost:8000/api/transmission/state
 
 # Node2 stops transmitting
 curl -X POST http://localhost:8000/api/transmission/state \
@@ -266,8 +364,307 @@ curl -X POST http://localhost:8000/api/transmission/state \
   -d '{"states": {"node2": false}}'
 
 # SINR for node1→node3 improves (one less interferer)
-# Netem updates automatically (rate-limited to 1 Hz)
+# Netem updates automatically (rate-limited to 1 Hz, 3 dB hysteresis)
+
+# Resume node2 transmission
+curl -X POST http://localhost:8000/api/transmission/state \
+  -d '{"states": {"node2": true}}'
 ```
+
+---
+
+#### Phase 3B: Rate-Based Auto-Detection (Optional)
+
+**Goal**: Automatically detect transmission state from interface traffic rates
+
+This eliminates manual intervention for autonomous MANET operation.
+
+**New Components**:
+
+1. **Traffic monitor** (`src/sine/channel/transmission_detector.py`, NEW)
+   ```python
+   class RateBasedTransmissionDetector:
+       """Detect transmission state from interface traffic rate."""
+
+       def __init__(
+           self,
+           clab_manager: ContainerlabManager,
+           tx_threshold_kbps: float = 10.0,
+           poll_interval_sec: float = 0.1,
+       ):
+           self.clab_manager = clab_manager
+           self.threshold_kbps = tx_threshold_kbps
+           self.poll_interval = poll_interval_sec
+           self._prev_tx_bytes: dict[str, int] = {}
+           self._current_states: dict[str, bool] = {}
+           self._state_change_callbacks: list[Callable] = []
+
+       def register_callback(self, callback: Callable[[dict[str, bool]], None]):
+           """Register callback for state changes."""
+           self._state_change_callbacks.append(callback)
+
+       async def start_monitoring(self, nodes: list[str], interface: str = "eth1"):
+           """Start monitoring interface statistics."""
+           logger.info(f"Starting transmission detection for {len(nodes)} nodes")
+
+           while True:
+               changed_states = {}
+
+               for node_name in nodes:
+                   # Read TX byte counter from container
+                   current_bytes = await self._get_tx_bytes(node_name, interface)
+                   prev_bytes = self._prev_tx_bytes.get(node_name, current_bytes)
+
+                   # Calculate rate over poll interval
+                   bytes_delta = current_bytes - prev_bytes
+                   rate_kbps = (bytes_delta / self.poll_interval) * 8 / 1000
+
+                   # Determine new state
+                   is_transmitting = rate_kbps > self.threshold_kbps
+                   prev_state = self._current_states.get(node_name)
+
+                   # Detect state change
+                   if prev_state is None or is_transmitting != prev_state:
+                       self._current_states[node_name] = is_transmitting
+                       changed_states[node_name] = is_transmitting
+                       logger.debug(
+                           f"{node_name}: {'TX' if is_transmitting else 'IDLE'} "
+                           f"({rate_kbps:.1f} kbps)"
+                       )
+
+                   self._prev_tx_bytes[node_name] = current_bytes
+
+               # Notify callbacks of state changes
+               if changed_states:
+                   for callback in self._state_change_callbacks:
+                       await callback(changed_states)
+
+               await asyncio.sleep(self.poll_interval)
+
+       async def _get_tx_bytes(self, node_name: str, interface: str) -> int:
+           """Get TX byte counter from container interface."""
+           container = self.clab_manager.get_container_info(node_name)
+           cmd = f"cat /sys/class/net/{interface}/statistics/tx_bytes"
+
+           result = subprocess.run(
+               ["sudo", "nsenter", "-t", str(container.pid), "-n", "sh", "-c", cmd],
+               capture_output=True,
+               text=True,
+           )
+
+           return int(result.stdout.strip())
+   ```
+
+**Modified Components**:
+
+2. **`src/sine/emulation/controller.py`** (MODIFIED)
+   ```python
+   async def start(self):
+       """Start emulation with optional auto-detection."""
+       # ... existing deployment code ...
+
+       # Start auto-detection if enabled
+       if self.config.topology.transmission_state.enable_auto_detection:
+           self.tx_detector = RateBasedTransmissionDetector(
+               self.clab_manager,
+               tx_threshold_kbps=self.config.topology.transmission_state.tx_threshold_kbps,
+           )
+
+           # Register callback for state changes
+           self.tx_detector.register_callback(self._on_transmission_state_change)
+
+           # Start monitoring in background
+           nodes = list(self.config.topology.nodes.keys())
+           asyncio.create_task(
+               self.tx_detector.start_monitoring(nodes, interface_name="eth1")
+           )
+           logger.info("Transmission auto-detection started")
+
+   async def _on_transmission_state_change(self, changed_states: dict[str, bool]):
+       """Callback when transmission states change."""
+       logger.info(f"Auto-detected state change: {changed_states}")
+
+       # Update internal state
+       self._current_tx_states.update(changed_states)
+
+       # Recompute SINR for affected links
+       await self._recompute_sinr_for_affected_links(list(changed_states.keys()))
+   ```
+
+**Configuration Schema**:
+```yaml
+topology:
+  transmission_state:
+    enable_auto_detection: bool = false  # Enable rate-based detection
+    tx_threshold_kbps: float = 10.0      # Rate threshold (kbps)
+    poll_interval_sec: float = 0.1       # Polling frequency (100ms)
+```
+
+**Testing**:
+- Unit tests: Byte counter reading, rate calculation, state detection
+- Integration: Generate traffic with iperf, verify auto-detection
+- Validation: Compare auto-detected states vs actual traffic patterns
+
+**Usage Example**:
+```bash
+# Deploy with auto-detection enabled
+sudo $(which uv) run sine deploy examples/sinr_auto/network.yaml
+
+# topology.transmission_state.enable_auto_detection: true
+
+# Start traffic on node1
+docker exec clab-sinr-auto-node1 iperf3 -c 192.168.100.2 -t 10 &
+
+# SiNE automatically detects node1 transmitting
+# SINR for node2→node3 degrades (interference from node1)
+# When iperf finishes, node1 detected as idle
+# SINR for node2→node3 improves back
+```
+
+**Pros**:
+- Fully automatic, no manual intervention
+- Works with any traffic source (routing protocols, apps, tests)
+- Robust to packet bursts (rate averaging)
+
+**Cons**:
+- 100ms detection latency
+- Requires defining "transmitting" threshold (configurable)
+- Doesn't capture MAC-layer scheduling details
+
+---
+
+#### Phase 3C: Application-Layer Signaling (Advanced)
+
+**Goal**: Explicit signaling from MANET routing protocols for accurate transmission windows
+
+This is most accurate for scheduled access protocols (TDMA, polling, etc.).
+
+**Integration Approach**:
+
+MANET routing daemons (OLSR, BATMAN, Babel) or custom applications explicitly signal transmission windows:
+
+```python
+# Example: OLSR daemon integration
+import requests
+
+class SiNETransmissionSignaler:
+    """Signal transmission state to SiNE channel server."""
+
+    def __init__(self, node_name: str, channel_server_url: str = "http://localhost:8000"):
+        self.node_name = node_name
+        self.server_url = channel_server_url
+
+    def start_transmission(self):
+        """Signal that this node is about to transmit."""
+        try:
+            requests.post(
+                f"{self.server_url}/api/transmission/state",
+                json={"states": {self.node_name: True}},
+                timeout=0.1,
+            )
+        except Exception as e:
+            logger.debug(f"Failed to signal TX start: {e}")
+
+    def stop_transmission(self):
+        """Signal that this node finished transmitting."""
+        try:
+            requests.post(
+                f"{self.server_url}/api/transmission/state",
+                json={"states": {self.node_name: False}},
+                timeout=0.1,
+            )
+        except Exception as e:
+            logger.debug(f"Failed to signal TX stop: {e}")
+
+# Usage in OLSR route update
+def broadcast_hello():
+    signaler.start_transmission()
+    send_hello_packet()
+    signaler.stop_transmission()
+```
+
+**Docker Image Integration**:
+
+Include signaler library in `docker/sine-node/Dockerfile`:
+```dockerfile
+FROM alpine:latest
+
+# Install Python for signaling
+RUN apk add --no-cache python3 py3-requests
+
+# Copy SiNE signaler library
+COPY sine_signaler.py /usr/local/lib/python3.12/site-packages/
+```
+
+**Configuration**:
+```yaml
+topology:
+  transmission_state:
+    enable_app_signaling: bool = true
+    fallback_to_auto_detection: bool = true  # Use rate-based if no signals
+```
+
+**Testing**:
+- Integration: Modified OLSR daemon with signaling
+- Validation: Compare signaled states vs actual packet transmission
+- Timing: Measure signaling latency (<1ms)
+
+**Usage Example**:
+```bash
+# Deploy with app signaling
+sudo $(which uv) run sine deploy examples/sinr_olsr/network.yaml
+
+# Inside container, OLSR daemon uses signaler
+docker exec clab-sinr-olsr-node1 cat /etc/olsrd/olsrd.conf
+# ... plugin "sine_signaler.so" enabled
+
+# OLSR broadcasts use explicit TX windows
+# SINR computed with precise interference timing
+```
+
+**Pros**:
+- Most accurate (protocol knows exactly when transmitting)
+- Low overhead (only API call on TX start/stop)
+- Works perfectly with scheduled protocols (TDMA, polling)
+
+**Cons**:
+- Requires application/protocol modification
+- Not transparent
+- Doesn't work for arbitrary traffic (need auto-detection fallback)
+
+---
+
+### Phase 3 Summary: Hybrid Approach
+
+**Recommended Configuration**:
+
+```yaml
+topology:
+  enable_sinr: true
+
+  transmission_state:
+    # Phase 3A: Manual API (always available)
+    default_all_transmitting: bool = false  # Start with all idle
+
+    # Phase 3B: Auto-detection (optional)
+    enable_auto_detection: bool = true      # Enable for autonomous operation
+    tx_threshold_kbps: float = 10.0
+    poll_interval_sec: float = 0.1
+
+    # Phase 3C: App signaling (advanced)
+    enable_app_signaling: bool = false      # Enable if apps support it
+    fallback_to_auto_detection: bool = true  # Fall back if no signals
+```
+
+**Decision Logic**:
+1. If app sends explicit signal → use signaled state (most accurate)
+2. Else if auto-detection enabled → use rate-based state
+3. Else → use manual API state (default: all transmitting if not set)
+
+**Implementation Priority**:
+1. **Phase 3A** (Week 4): Manual API - baseline functionality
+2. **Phase 3B** (Week 5): Auto-detection - autonomous operation
+3. **Phase 3C** (Future): App signaling - when MANET protocols integrated
 
 ## Critical Files
 
