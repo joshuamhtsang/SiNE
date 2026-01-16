@@ -74,9 +74,9 @@ get_netem_delay() {
         return
     fi
 
-    # Find the flowid for this destination IP using nsenter
+    # Find the classid for this destination IP (it's on the line with "handle")
     local flowid=$(sudo nsenter -t "$pid" -n tc filter show dev "$INTERFACE" 2>/dev/null | \
-        grep -A2 "dst_ip ${dst_ip}" | grep "flowid" | awk '{print $NF}')
+        grep -B2 "dst_ip ${dst_ip}" | grep "classid" | grep -oP 'classid \K\S+' | head -1)
 
     if [ -z "$flowid" ]; then
         echo "0"
@@ -107,7 +107,8 @@ ping_and_get_rtt() {
     # Ping with 10 packets
     local ping_output=$(docker exec "$container_name" ping -c 10 -i 0.2 "$dst_ip" 2>&1)
 
-    if echo "$ping_output" | grep -q "0 received"; then
+    # Check for complete failure (must match exactly "0 received" with word boundaries)
+    if echo "$ping_output" | grep -qE ", 0 received,"; then
         echo "FAIL"
         return
     fi

@@ -32,9 +32,9 @@ get_filter_packet_count() {
     local dst_ip=$2
     local container_name="clab-${LAB_NAME}-${node}"
 
-    # Get filter stats for this destination
+    # Get filter stats for this destination (need more context lines to reach packet count)
     local stats=$(docker exec "$container_name" tc -s filter show dev "$INTERFACE" | \
-        grep -A5 "dst_ip ${dst_ip}")
+        grep -A10 "dst_ip ${dst_ip}")
 
     # Extract packet count (look for "Sent X bytes Y pkt")
     local pkt_count=$(echo "$stats" | grep -oP 'Sent \d+ bytes \K\d+(?= pkt)' | head -1)
@@ -52,9 +52,9 @@ get_qdisc_packet_count() {
     local dst_ip=$2
     local container_name="clab-${LAB_NAME}-${node}"
 
-    # Find the flowid for this destination IP
+    # Find the classid for this destination IP (it's on the line with "handle")
     local flowid=$(docker exec "$container_name" tc filter show dev "$INTERFACE" | \
-        grep -A2 "dst_ip ${dst_ip}" | grep "flowid" | awk '{print $NF}')
+        grep -B2 "dst_ip ${dst_ip}" | grep "classid" | grep -oP 'classid \K\S+' | head -1)
 
     if [ -z "$flowid" ]; then
         echo "0"
