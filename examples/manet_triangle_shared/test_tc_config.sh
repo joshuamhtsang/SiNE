@@ -47,8 +47,8 @@ for node in "${NODES[@]}"; do
         exit 1
     fi
 
-    # Check for default class 99
-    if docker exec "$container_name" tc qdisc show dev "$INTERFACE" | grep -q "default 99"; then
+    # Check for default class 99 (matches both decimal and hex format)
+    if docker exec "$container_name" tc qdisc show dev "$INTERFACE" | grep -qE "default (99|0x99)"; then
         echo -e "${GREEN}✓ ${node}: Default class 99 configured${NC}"
     else
         echo -e "${RED}✗ ${node}: Default class 99 NOT found${NC}"
@@ -117,7 +117,8 @@ for node in "${NODES[@]}"; do
     container_name="clab-${LAB_NAME}-${node}"
 
     # Count flower filters (should be N-1 for N nodes)
-    num_filters=$(docker exec "$container_name" tc filter show dev "$INTERFACE" | grep -c "flower" || true)
+    # Only count lines with "handle" to exclude the header line
+    num_filters=$(docker exec "$container_name" tc filter show dev "$INTERFACE" | grep "flower" | grep -c "handle" || true)
     expected_filters=$((${#NODES[@]} - 1))
 
     if [ "$num_filters" -eq "$expected_filters" ]; then

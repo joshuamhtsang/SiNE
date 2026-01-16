@@ -45,7 +45,7 @@ topology:
   nodes:
     node1:
       kind: linux
-      image: alpine:latest
+      image: sine-node:latest
       cmd: sleep infinity
       interfaces:
         eth1:
@@ -58,7 +58,7 @@ topology:
 
     node2:
       kind: linux
-      image: alpine:latest
+      image: sine-node:latest
       cmd: sleep infinity
       interfaces:
         eth1:

@@ -35,11 +35,13 @@ Each node has:
 ## Configuration
 
 The topology uses:
-- **3 nodes** in a triangle formation (equilateral, ~10m sides)
+- **3 nodes** in a triangle formation (equilateral, ~30m sides)
 - **5.18 GHz** frequency (WiFi 5 GHz band)
 - **64-QAM** modulation with LDPC FEC (rate 1/2)
 - **80 MHz** bandwidth
 - **Vacuum scene** (free-space propagation)
+
+**Note**: With 30m distances, propagation delays are negligible (~0.0001ms). The primary channel effects are path loss (affecting SNR, BER, and packet loss) and bandwidth limitations. Test scripts handle negligible delays gracefully.
 
 ## Usage
 

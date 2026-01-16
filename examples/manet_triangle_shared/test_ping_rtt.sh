@@ -159,23 +159,39 @@ for src_node in "${!NODE_IPS[@]}"; do
         fi
 
         # Calculate difference (allow ±20% tolerance for jitter/processing)
-        diff=$(echo "scale=2; ($actual_rtt - $expected_rtt) / $expected_rtt * 100" | bc | sed 's/-//')
-        diff_abs=$(echo "$diff" | sed 's/-//')
-
-        # Check if within tolerance
-        if (( $(echo "$diff_abs < 20" | bc -l) )); then
-            echo -e "${GREEN}✓ ${src_node} → ${dst_node} (${dst_ip}):${NC}"
-            echo "    Expected RTT: ${expected_rtt} ms (2× ${delay} ms delay)"
-            echo "    Actual RTT:   ${actual_rtt} ms"
-            echo "    Difference:   ${diff}%"
-            ((pass_count++))
+        # Handle case where expected_rtt is 0 or very small (negligible propagation delay)
+        if (( $(echo "$expected_rtt < 0.001" | bc -l) )); then
+            # If expected delay is negligible, just check that actual RTT is reasonable (< 10ms)
+            if (( $(echo "$actual_rtt < 10.0" | bc -l) )); then
+                echo -e "${GREEN}✓ ${src_node} → ${dst_node} (${dst_ip}):${NC}"
+                echo "    Expected RTT: ~${expected_rtt} ms (negligible propagation delay)"
+                echo "    Actual RTT:   ${actual_rtt} ms (dominated by processing overhead)"
+                ((pass_count++))
+            else
+                echo -e "${RED}✗ ${src_node} → ${dst_node} (${dst_ip}):${NC}"
+                echo "    Expected RTT: ~${expected_rtt} ms (negligible)"
+                echo "    Actual RTT:   ${actual_rtt} ms (unexpectedly high)"
+                ((fail_count++))
+            fi
         else
-            echo -e "${YELLOW}⚠ ${src_node} → ${dst_node} (${dst_ip}):${NC}"
-            echo "    Expected RTT: ${expected_rtt} ms (2× ${delay} ms delay)"
-            echo "    Actual RTT:   ${actual_rtt} ms"
-            echo "    Difference:   ${diff}% (outside ±20% tolerance)"
-            echo -e "${YELLOW}    Note: Large difference may indicate processing overhead or asymmetric delays${NC}"
-            ((pass_count++))  # Still count as pass if ping works
+            diff=$(echo "scale=2; ($actual_rtt - $expected_rtt) / $expected_rtt * 100" | bc | sed 's/-//')
+            diff_abs=$(echo "$diff" | sed 's/-//')
+
+            # Check if within tolerance
+            if (( $(echo "$diff_abs < 20" | bc -l) )); then
+                echo -e "${GREEN}✓ ${src_node} → ${dst_node} (${dst_ip}):${NC}"
+                echo "    Expected RTT: ${expected_rtt} ms (2× ${delay} ms delay)"
+                echo "    Actual RTT:   ${actual_rtt} ms"
+                echo "    Difference:   ${diff}%"
+                ((pass_count++))
+            else
+                echo -e "${YELLOW}⚠ ${src_node} → ${dst_node} (${dst_ip}):${NC}"
+                echo "    Expected RTT: ${expected_rtt} ms (2× ${delay} ms delay)"
+                echo "    Actual RTT:   ${actual_rtt} ms"
+                echo "    Difference:   ${diff}% (outside ±20% tolerance)"
+                echo -e "${YELLOW}    Note: Large difference may indicate processing overhead or asymmetric delays${NC}"
+                ((pass_count++))  # Still count as pass if ping works
+            fi
         fi
         echo ""
     done
