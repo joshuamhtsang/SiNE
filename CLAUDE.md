@@ -699,6 +699,43 @@ Node3:eth1 ═╣   (single broadcast domain)   ╠═ Node4:eth1
 
 This is not yet implemented but could be added for applications requiring true broadcast semantics.
 
+### Routing Configuration for Shared Bridge
+
+**Problem**: IP addresses alone don't enable connectivity. Containers need routes to know which interface to use for reaching the bridge subnet.
+
+**Without routing (broken)**:
+```bash
+$ docker exec clab-node1 ip route
+default via 172.17.0.1 dev eth0  # Docker default (WRONG for MANET traffic)
+192.168.100.1 dev eth1 scope link proto kernel  # Link-local only
+```
+Result: Packets destined for 192.168.100.0/24 use eth0 → bypass bridge → ping fails ❌
+
+**With routing (fixed)**:
+```bash
+$ docker exec clab-node1 ip route
+192.168.100.0/24 dev eth1        # Bridge subnet route (CORRECT) ✅
+default via 172.17.0.1 dev eth0  # Docker default (for management)
+```
+Result: Packets to other nodes use eth1 → bridge → netem applied → ping succeeds ✅
+
+**How SiNE configures routing**:
+1. Apply IP: `ip addr add 192.168.100.1/24 dev eth1`
+2. Add route: `ip route add 192.168.100.0/24 dev eth1` (automatically done by `apply_bridge_ips()`)
+3. Result: Packets to other bridge nodes use the correct interface
+
+**Verification**:
+```bash
+# Check routing table
+docker exec clab-manet-triangle-shared-node1 ip route
+
+# Test connectivity
+docker exec clab-manet-triangle-shared-node1 ping -c 3 192.168.100.2
+
+# Verify tc filters matching (packets traverse eth1)
+docker exec clab-manet-triangle-shared-node1 tc -s filter show dev eth1
+```
+
 ## Fixed Netem Links
 
 SiNE supports **fixed netem links** for non-wireless link emulation where you specify netem parameters directly instead of computing them via ray tracing.

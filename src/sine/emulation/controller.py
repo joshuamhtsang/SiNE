@@ -304,21 +304,23 @@ class EmulationController:
 
             link_requests.append(
                 {
-                    "tx_position": [
-                        tx_params.position.x,
-                        tx_params.position.y,
-                        tx_params.position.z,
-                    ],
-                    "rx_position": [
-                        rx_params.position.x,
-                        rx_params.position.y,
-                        rx_params.position.z,
-                    ],
+                    "tx_node": link_info["tx_node"],
+                    "rx_node": link_info["rx_node"],
+                    "tx_position": {
+                        "x": tx_params.position.x,
+                        "y": tx_params.position.y,
+                        "z": tx_params.position.z,
+                    },
+                    "rx_position": {
+                        "x": rx_params.position.x,
+                        "y": rx_params.position.y,
+                        "z": rx_params.position.z,
+                    },
                     "tx_power_dbm": tx_params.rf_power_dbm,
                     "tx_gain_dbi": tx_params.antenna_gain_dbi,
                     "rx_gain_dbi": rx_params.antenna_gain_dbi,
-                    "tx_pattern": tx_params.antenna_pattern,
-                    "tx_polarization": tx_params.polarization,
+                    "antenna_pattern": tx_params.antenna_pattern,
+                    "polarization": tx_params.polarization,
                     "frequency_hz": tx_params.frequency_hz,
                     "bandwidth_hz": tx_params.bandwidth_hz,
                     "modulation": (
@@ -330,18 +332,30 @@ class EmulationController:
                     "fec_code_rate": (
                         tx_params.fec_code_rate if not tx_params.uses_adaptive_mcs else None
                     ),
-                    "mcs_table": tx_params.mcs_table if tx_params.uses_adaptive_mcs else None,
+                    "mcs_table_path": tx_params.mcs_table if tx_params.uses_adaptive_mcs else None,
                     "mcs_hysteresis_db": (
-                        tx_params.mcs_hysteresis_db if tx_params.uses_adaptive_mcs else None
+                        tx_params.mcs_hysteresis_db if tx_params.uses_adaptive_mcs else 2.0
                     ),
                 }
             )
 
+        # Get scene configuration
+        scene_config = self.config.topology.scene
+
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(
                 f"{self.channel_server_url}/compute/batch",
-                json={"links": link_requests},
+                json={
+                    "scene": {
+                        "scene_file": scene_config.file,
+                        "frequency_hz": link_requests[0]["frequency_hz"],
+                        "bandwidth_hz": link_requests[0]["bandwidth_hz"],
+                    },
+                    "links": link_requests,
+                },
             )
+            if response.status_code != 200:
+                logger.error(f"Channel server error response: {response.text}")
             response.raise_for_status()
             results = response.json()["results"]
 

@@ -26,14 +26,56 @@ echo "Ping RTT Validation Test"
 echo "========================================"
 echo ""
 
+# First, verify routing tables are configured
+echo "Step 1: Verifying routing tables..."
+echo ""
+
+route_check_passed=true
+for node in node1 node2 node3; do
+    container_name="clab-${LAB_NAME}-${node}"
+    echo "Checking routing table for ${node}:"
+
+    # Get routing table
+    route_output=$(docker exec "$container_name" ip route show)
+    echo "$route_output"
+
+    # Check for bridge subnet route
+    if echo "$route_output" | grep -q "192.168.100.0/24 dev ${INTERFACE}"; then
+        echo -e "${GREEN}✓ Bridge route found${NC}"
+    else
+        echo -e "${RED}✗ ERROR: Missing bridge route (192.168.100.0/24 dev ${INTERFACE})${NC}"
+        route_check_passed=false
+    fi
+    echo ""
+done
+
+if [ "$route_check_passed" = false ]; then
+    echo -e "${RED}Routing verification failed! Containers cannot communicate.${NC}"
+    echo "Please ensure SiNE's routing fix is deployed."
+    exit 1
+fi
+
+echo -e "${GREEN}Routing verification passed!${NC}"
+echo ""
+echo "========================================"
+echo "Step 2: Testing ping RTT..."
+echo ""
+
 # Function to extract netem delay for a specific destination
 get_netem_delay() {
     local src_node=$1
     local dst_ip=$2
     local container_name="clab-${LAB_NAME}-${src_node}"
 
-    # Find the flowid for this destination IP
-    local flowid=$(docker exec "$container_name" tc filter show dev "$INTERFACE" | \
+    # Get container PID for nsenter access (Alpine doesn't have tc)
+    local pid=$(docker inspect "$container_name" --format '{{.State.Pid}}')
+    if [ -z "$pid" ] || [ "$pid" = "0" ]; then
+        echo "0"
+        return
+    fi
+
+    # Find the flowid for this destination IP using nsenter
+    local flowid=$(sudo nsenter -t "$pid" -n tc filter show dev "$INTERFACE" 2>/dev/null | \
         grep -A2 "dst_ip ${dst_ip}" | grep "flowid" | awk '{print $NF}')
 
     if [ -z "$flowid" ]; then
@@ -44,8 +86,8 @@ get_netem_delay() {
     # Extract class ID (e.g., 1:10 -> 10)
     local classid=$(echo "$flowid" | cut -d: -f2)
 
-    # Get delay from netem qdisc attached to this class
-    local delay=$(docker exec "$container_name" tc qdisc show dev "$INTERFACE" | \
+    # Get delay from netem qdisc attached to this class using nsenter
+    local delay=$(sudo nsenter -t "$pid" -n tc qdisc show dev "$INTERFACE" 2>/dev/null | \
         grep "parent 1:${classid}" | grep "netem delay" | \
         sed -n 's/.*delay \([0-9.]*\)ms.*/\1/p')
 
@@ -70,8 +112,10 @@ ping_and_get_rtt() {
         return
     fi
 
-    # Extract average RTT (works for both old and new ping output formats)
-    local avg_rtt=$(echo "$ping_output" | grep -oP 'rtt min/avg/max/mdev = [0-9.]+/\K[0-9.]+' || \
+    # Extract average RTT (works for multiple ping output formats)
+    # Alpine: "round-trip min/avg/max = X/Y/Z ms"
+    # Linux: "rtt min/avg/max/mdev = X/Y/Z/W ms"
+    local avg_rtt=$(echo "$ping_output" | grep -oP 'min/avg/max.*= [0-9.]+/\K[0-9.]+' || \
                     echo "$ping_output" | grep -oP 'avg = \K[0-9.]+')
 
     if [ -z "$avg_rtt" ]; then

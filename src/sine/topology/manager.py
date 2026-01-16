@@ -271,9 +271,32 @@ class ContainerlabManager:
                 "Install from: https://containerlab.dev/install/"
             ) from e
 
+    def _get_bridge_subnet(self, sine_config: dict, bridge_config: dict) -> str:
+        """
+        Extract bridge subnet from node IPs (e.g., '192.168.100.0/24').
+
+        Args:
+            sine_config: SiNE NetworkTopology as dict
+            bridge_config: Shared bridge configuration dict
+
+        Returns:
+            Bridge subnet string (e.g., '192.168.100.0/24')
+        """
+        import ipaddress
+
+        interface_name = bridge_config.get("interface_name", "eth1")
+        first_node = bridge_config["nodes"][0]
+        first_ip = sine_config["topology"]["nodes"][first_node]["interfaces"][
+            interface_name
+        ]["ip_address"]
+
+        # Calculate network from first IP with /24 prefix
+        network = ipaddress.ip_network(f"{first_ip}/24", strict=False)
+        return str(network)
+
     def apply_bridge_ips(self, sine_config: dict) -> dict[str, str]:
         """
-        Apply user-specified IPs to container interfaces in shared bridge mode.
+        Apply user-specified IPs and routing to container interfaces in shared bridge mode.
 
         Args:
             sine_config: SiNE NetworkTopology as dict
@@ -291,6 +314,9 @@ class ContainerlabManager:
         interface_name = bridge_config.get("interface_name", "eth1")
         bridge_nodes = bridge_config["nodes"]
         ip_assignments = {}
+
+        # Get bridge subnet for routing configuration
+        bridge_subnet = self._get_bridge_subnet(sine_config, bridge_config)
 
         for node_name in bridge_nodes:
             node_config = topology_def["nodes"][node_name]
@@ -312,8 +338,8 @@ class ContainerlabManager:
                 continue
 
             try:
-                # Use nsenter to access container network namespace
-                subprocess.run(
+                # 1. Apply IP address
+                result = subprocess.run(
                     [
                         "sudo",
                         "nsenter",
@@ -329,13 +355,47 @@ class ContainerlabManager:
                     ],
                     capture_output=True,
                     text=True,
-                    check=True,
                 )
-                logger.info(f"Applied IP {ip_address} to {node_name}:{interface_name}")
+                if result.returncode == 0:
+                    logger.info(f"Applied IP {ip_address} to {node_name}:{interface_name}")
+                elif "File exists" in result.stderr:
+                    logger.debug(f"IP {ip_address} already exists on {node_name}:{interface_name}")
+                else:
+                    logger.error(f"Failed to apply IP to {node_name}:{interface_name}: {result.stderr}")
+                    continue
 
-            except subprocess.CalledProcessError as e:
+                # 2. Add route for bridge subnet
+                result = subprocess.run(
+                    [
+                        "sudo",
+                        "nsenter",
+                        "-t",
+                        str(pid),
+                        "-n",
+                        "ip",
+                        "route",
+                        "add",
+                        bridge_subnet,
+                        "dev",
+                        interface_name,
+                    ],
+                    capture_output=True,
+                    text=True,
+                )
+                if result.returncode == 0:
+                    logger.info(
+                        f"Added route {bridge_subnet} via {interface_name} on {node_name}"
+                    )
+                elif "File exists" in result.stderr:
+                    logger.debug(f"Route {bridge_subnet} already exists on {node_name}:{interface_name}")
+                else:
+                    logger.warning(
+                        f"Failed to add route on {node_name}:{interface_name}: {result.stderr}"
+                    )
+
+            except Exception as e:
                 logger.error(
-                    f"Failed to apply IP {ip_address} to {node_name}:{interface_name}: {e.stderr}"
+                    f"Unexpected error configuring {node_name}:{interface_name}: {e}"
                 )
 
         return ip_assignments
