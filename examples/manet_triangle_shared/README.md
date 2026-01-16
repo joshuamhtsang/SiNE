@@ -4,7 +4,7 @@ This example demonstrates SiNE's **shared broadcast domain** mode for MANET emul
 
 ## Overview
 
-Unlike traditional point-to-point links, this topology uses a **single Linux bridge** connecting all nodes, creating a true broadcast medium with per-destination netem filtering.
+Unlike traditional point-to-point links, this topology uses a **single Linux bridge** connecting all nodes, creating a true broadcast medium with per-destination netem filtering. SiNE uses the namepace bridge capability of Containerlab, which deploys an additional container containing the Linux bridge ([see Containerlab docs - "Bridges in container namespace"](https://containerlab.dev/manual/kinds/bridge/#bridges-in-container-namespace)).
 
 ## Architecture
 
