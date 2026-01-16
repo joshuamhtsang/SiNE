@@ -4,7 +4,12 @@ This example demonstrates SiNE's **shared broadcast domain** mode for MANET emul
 
 ## Overview
 
-Unlike traditional point-to-point links, this topology uses a **single Linux bridge** connecting all nodes, creating a true broadcast medium with per-destination netem filtering. SiNE uses the namepace bridge capability of Containerlab, which deploys an additional container containing the Linux bridge ([see Containerlab docs - "Bridges in container namespace"](https://containerlab.dev/manual/kinds/bridge/#bridges-in-container-namespace)).
+Unlike traditional point-to-point links, this topology uses a **single Linux bridge** connecting all nodes, creating a true broadcast medium with per-destination netem filtering. 
+
+
+## A Word on Implementation
+
+SiNE uses the capability of Containerlab to create a Linux bridge in a container ([see Containerlab docs - "Bridges in container namespace"](https://containerlab.dev/manual/kinds/bridge/#bridges-in-container-namespace)). An alternative architecture for a shared bridge would have been the pre-creation of a Linux bridge in the host's namespace, but it was decided this created a more difficult user workflow. It is desirable to have all the SiNE emulation conponents explicitly represented in the network YAML file i.e. [network.yaml](./network.yaml).
 
 ## Architecture
 
@@ -75,6 +80,19 @@ node3 (192.168.100.3):
   → node2 (192.168.100.2): delay=0.10ms, jitter=0.00ms, loss=0.00%, rate=532.5Mbps
 ================================================================================
 ```
+
+## Containers Created
+
+Note that this example spins up 4 containers in total: 3 for the wireless nodes and 1 for for the Linux bridge. Example `docker ps` output:
+
+~~~
+$ docker ps
+CONTAINER ID   IMAGE           COMMAND     CREATED         STATUS         PORTS     NAMES
+ef17147914d9   alpine:latest   "/bin/sh"   9 seconds ago   Up 9 seconds             clab-manet-triangle-shared-node3
+840027edada3   alpine:latest   "/bin/sh"   9 seconds ago   Up 9 seconds             clab-manet-triangle-shared-node2
+275864d888ca   alpine:latest   "/bin/sh"   9 seconds ago   Up 9 seconds             clab-manet-triangle-shared-bridge-host
+c6ec82e03169   alpine:latest   "/bin/sh"   9 seconds ago   Up 9 seconds             clab-manet-triangle-shared-node1
+~~~
 
 ## Comparison with Point-to-Point
 
