@@ -38,19 +38,21 @@ The topology uses:
 
 ## Usage
 
-**Note**: This example requires Phase 2-4 implementation (not yet complete). The schema validation (Phase 1) is functional.
-
-Once implemented, deployment will be:
-
 ```bash
 # Start channel server
 uv run sine channel-server
 
-# Deploy (in another terminal)
+# Deploy (in another terminal, requires sudo for netem)
 sudo $(which uv) run sine deploy examples/manet_triangle_shared/network.yaml
+
+# Test connectivity
+./test_ping_rtt.sh
+
+# Cleanup
+sudo $(which uv) run sine destroy examples/manet_triangle_shared/network.yaml
 ```
 
-Expected deployment summary:
+Deployment summary:
 ```
 ================================================================================
 MANET DEPLOYMENT SUMMARY (Shared Broadcast Domain)
@@ -106,10 +108,26 @@ topology:
 
 ## Implementation Status
 
-- ✅ **Phase 1**: Schema validation (complete)
-- ⏳ **Phase 2**: Containerlab integration (pending)
-- ⏳ **Phase 3**: Per-destination netem (pending)
-- ⏳ **Phase 4**: Channel computation (pending)
-- ⏳ **Phase 5**: Testing (pending)
+- ✅ **Phase 1-6**: Complete and working!
+  - ✅ Schema validation
+  - ✅ Containerlab bridge integration
+  - ✅ Per-destination netem (HTB + tc flower filters)
+  - ✅ Channel computation (all-to-all ray tracing)
+  - ✅ Routing configuration (bridge subnet routes)
+  - ✅ Testing suite (`test_*.sh` scripts)
 
-See [PLAN.md](../../PLAN.md#true-broadcast-medium-shared-bridge-model-implementation-plan) for full implementation plan.
+## Testing
+
+This example includes comprehensive test scripts:
+
+```bash
+# Run all tests
+sudo ./run_all_tests.sh
+
+# Individual tests:
+sudo ./test_ping_rtt.sh          # Verify ping RTT matches netem config
+sudo ./test_tc_config.sh         # Verify tc qdisc/class/filter setup
+sudo ./test_filter_stats.sh      # Check packet counters on filters
+```
+
+See [TESTING.md](TESTING.md) for detailed test documentation.

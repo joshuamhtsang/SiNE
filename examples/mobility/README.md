@@ -112,7 +112,7 @@ uv run python examples/mobility/linear_movement.py node2 20.0 0.0 1.0 300.0 0.0 
 When done, destroy the emulation:
 
 ```bash
-uv run sine destroy examples/vacuum_20m/network.yaml
+sudo $(which uv) run sine destroy examples/vacuum_20m/network.yaml
 ```
 
 ## Prerequisites Summary

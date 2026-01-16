@@ -249,14 +249,22 @@ uv run ruff check src/sine
 
 Example topologies are provided in `examples/`:
 
-| Example | Description | Link Type | Scene |
-|---------|-------------|-----------|-------|
-| `vacuum_20m/` | Baseline free-space wireless | wireless | `vacuum.xml` (empty) |
-| `manet_triangle/` | 3-node MANET mesh | wireless | `vacuum.xml` (empty) |
-| `fixed_link/` | Fixed netem parameters | fixed_netem | (none) |
-| `wifi6_adaptive/` | Adaptive MCS selection (WiFi 6) | wireless | `vacuum.xml` (empty) |
+| Example | Description | Link Type | Scene | README |
+|---------|-------------|-----------|-------|--------|
+| `vacuum_20m/` | Baseline free-space wireless (2 nodes, 20m) | wireless | `vacuum.xml` | [README](examples/vacuum_20m/README.md) |
+| `fixed_link/` | Fixed netem parameters (no RF) | fixed_netem | (none) | [README](examples/fixed_link/README.md) |
+| `wifi6_adaptive/` | Adaptive MCS selection (WiFi 6) | wireless | `vacuum.xml` | [README](examples/wifi6_adaptive/README.md) |
+| `two_rooms/` | Indoor multipath (2 rooms with doorway) | wireless | `two_rooms.xml` | [README](examples/two_rooms/README.md) |
+| `manet_triangle_shared/` | 3-node MANET with shared bridge | wireless (shared) | `vacuum.xml` | [README](examples/manet_triangle_shared/README.md) |
+| `mobility/` | Movement scripts and API examples | N/A (scripts) | N/A | [README](examples/mobility/README.md) |
 
-The examples demonstrate wireless propagation, multi-node topologies, and fixed link emulation.
+The examples demonstrate:
+- **Free-space propagation** (`vacuum_20m/`)
+- **Indoor multipath** (`two_rooms/`)
+- **Adaptive modulation** (`wifi6_adaptive/`)
+- **MANET broadcast domains** (`manet_triangle_shared/`)
+- **Fixed link emulation** (`fixed_link/`)
+- **Node mobility** (`mobility/`)
 
 ## Channel Server API
 

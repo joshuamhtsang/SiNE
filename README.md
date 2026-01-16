@@ -25,13 +25,30 @@ rate_mbps = modulation_based_rate  # BW × bits_per_symbol × code_rate × effic
 
 - Define wireless networks in YAML format with per-interface configuration
 - **Two link types**: Wireless (ray-traced) or Fixed netem (direct parameters)
+- **Two MANET modes**: Point-to-point links (default) or Shared bridge (true broadcast medium)
 - Ray-traced channel computation using Sionna v1.2.1
 - Automatic netem configuration based on channel conditions
-- Support for various modulation schemes (BPSK, QPSK, 16/64/256-QAM)
+- Support for various modulation schemes (BPSK, QPSK, 16/64/256/1024-QAM)
 - Forward error correction (LDPC, Polar, Turbo)
+- Adaptive MCS selection (WiFi 6 style)
 - Configurable indoor scenes with Mitsuba XML (ITU material naming)
 - Mobility support with 100ms update polling
 - Deployment summary showing containers, interfaces, and netem parameters
+
+### MANET Modeling
+
+SiNE supports two approaches for MANET (Mobile Ad-hoc Network) topologies:
+
+1. **Point-to-Point Links (Default)**: Each wireless link is a separate veth pair with independent netem. Simple and efficient, but not a true broadcast medium.
+
+2. **Shared Bridge (NEW!)**: All MANET nodes connect to a container-namespace bridge with per-destination netem using HTB + flower filters. This provides:
+   - ✅ **True broadcast medium** - packets visible to all nodes
+   - ✅ **Single interface per node** - realistic MANET architecture
+   - ✅ **Per-destination channel conditions** - accurate distance-based emulation
+   - ✅ **MANET routing protocol support** - OLSR, BATMAN-adv, Babel, etc.
+   - ✅ **Container-managed lifecycle** - automatic creation/cleanup via Containerlab
+
+See [examples/manet_triangle_shared/](examples/manet_triangle_shared/) for a complete shared bridge example and [MANET Support](#manet-mobile-ad-hoc-network-support) section below for detailed comparison.
 
 ## Requirements
 
@@ -425,13 +442,22 @@ See [examples/mobility/README.md](examples/mobility/README.md) for detailed mobi
 
 Topologies are described in YAML files. Example topologies are provided:
 
-| Example | Description | Link Type | Scene |
-|---------|-------------|-----------|-------|
-| `vacuum_20m/` | Baseline free-space wireless (20m apart) | wireless | `vacuum.xml` (empty) |
-| `manet_triangle/` | 3-node MANET mesh topology | wireless | `vacuum.xml` (empty) |
-| `two_rooms/` | Indoor propagation through doorway (with mobility support) | wireless | `two_rooms.xml` |
-| `wifi6_adaptive/` | Adaptive MCS selection (WiFi 6 MCS 0-11) | wireless | `vacuum.xml` (empty) |
-| `fixed_link/` | Fixed netem parameters (no ray tracing) | fixed_netem | (none) |
+| Example | Description | Link Type | Scene | README |
+|---------|-------------|-----------|-------|--------|
+| `vacuum_20m/` | Baseline free-space wireless (2 nodes, 20m) | wireless | `vacuum.xml` | [README](examples/vacuum_20m/README.md) |
+| `fixed_link/` | Fixed netem parameters (no RF) | fixed_netem | (none) | [README](examples/fixed_link/README.md) |
+| `wifi6_adaptive/` | Adaptive MCS selection (WiFi 6) | wireless | `vacuum.xml` | [README](examples/wifi6_adaptive/README.md) |
+| `two_rooms/` | Indoor multipath (2 rooms with doorway) | wireless | `two_rooms.xml` | [README](examples/two_rooms/README.md) |
+| `manet_triangle_shared/` | 3-node MANET with shared bridge | wireless (shared) | `vacuum.xml` | [README](examples/manet_triangle_shared/README.md) |
+| `mobility/` | Movement scripts and API examples | N/A (scripts) | N/A | [README](examples/mobility/README.md) |
+
+The examples demonstrate:
+- **Free-space propagation** (`vacuum_20m/`)
+- **Indoor multipath** (`two_rooms/`)
+- **Adaptive modulation** (`wifi6_adaptive/`)
+- **MANET broadcast domains** (`manet_triangle_shared/`) - **True broadcast medium using container-namespace bridge**
+- **Fixed link emulation** (`fixed_link/`)
+- **Node mobility** (`mobility/`)
 
 ### Interface Configuration
 
@@ -752,14 +778,13 @@ links:
 - ❌ No shared channel contention
 - ❌ Multiple interfaces per node
 
-**Deploy:**
-```bash
-sudo $(which uv) run sine deploy examples/manet_triangle/network.yaml
-```
+**Use case:** Simple testing, quick prototyping, or large topologies where O(1) per-link overhead is preferred over O(N²) per-destination filters.
 
 #### Mode 2: Shared Bridge (True Broadcast Medium) **NEW!**
 
-All nodes share a container-namespace Linux bridge with per-destination netem using HTB + flower filters.
+All nodes share a **container-namespace Linux bridge** - a bridge hosted inside a lightweight container that is automatically managed by Containerlab. This provides a true broadcast medium where each MANET radio node has just one interface, enabling realistic MANET protocol operation.
+
+**Key innovation:** Per-destination netem using HTB + tc flower filters allows distance-based channel emulation on a shared broadcast medium.
 
 Example 3-node triangle:
 ```

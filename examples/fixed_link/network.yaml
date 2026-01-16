@@ -31,7 +31,7 @@
 #   docker exec -it clab-fixed-link-node2 iperf3 -c 192.168.1.1
 #
 #   # Cleanup
-#   uv run sine destroy examples/fixed_link/network.yaml
+#   sudo $(which uv) run sine destroy examples/fixed_link/network.yaml
 
 name: fixed-link
 
