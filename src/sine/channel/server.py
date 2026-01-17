@@ -7,6 +7,7 @@ using Sionna ray tracing. Returns netem parameters for network emulation.
 Endpoints:
 - POST /compute/single - Compute channel for single link
 - POST /compute/batch - Compute channels for multiple links (efficient)
+- POST /compute/sinr - Compute SINR with multi-transmitter interference (Phase 1)
 - POST /scene/load - Load/reload ray tracing scene
 - POST /debug/paths - Get detailed path info for debugging (vertices, interactions)
 - GET /health - Health check with GPU status
@@ -25,6 +26,11 @@ from sine.channel.snr import SNRCalculator
 from sine.channel.modulation import BERCalculator, BLERCalculator, get_bits_per_symbol
 from sine.channel.per_calculator import PERCalculator
 from sine.channel.mcs import MCSTable, MCSEntry
+from sine.channel.sinr import SINRCalculator, SINRResult, calculate_thermal_noise
+from sine.channel.interference_engine import InterferenceEngine, TransmitterInfo
+from sine.channel.frequency_groups import group_nodes_by_frequency
+from sine.channel.csma_model import CSMAModel
+from sine.channel.tdma_model import TDMAModel, TDMASlotConfig, SlotAssignmentMode
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +39,12 @@ _mcs_tables: dict[str, MCSTable] = {}
 
 # Global engine instance
 _engine = None
+
+# Global interference engine (for SINR computation)
+_interference_engine: InterferenceEngine | None = None
+
+# Global SINR calculator
+_sinr_calculator: SINRCalculator | None = None
 
 # Global path cache for visualization (stores computed paths from channel computations)
 _path_cache: dict[str, dict] = {}  # {link_id: {tx_pos, rx_pos, path_details, wireless_metrics}}
@@ -81,6 +93,21 @@ class SceneConfig(BaseModel):
     bandwidth_hz: float = Field(default=80e6, description="Channel bandwidth in Hz")
 
 
+class MACModel(BaseModel):
+    """MAC layer model configuration (CSMA or TDMA)."""
+
+    type: str = Field(..., description="MAC model type: csma or tdma")
+    # CSMA parameters
+    carrier_sense_range_multiplier: float | None = Field(default=None, description="CSMA: CS range multiplier")
+    traffic_load: float | None = Field(default=None, description="CSMA: Traffic duty cycle")
+    # TDMA parameters
+    frame_duration_ms: float | None = Field(default=None, description="TDMA: Frame duration in ms")
+    num_slots: int | None = Field(default=None, description="TDMA: Number of slots per frame")
+    slot_assignment_mode: str | None = Field(default=None, description="TDMA: Slot assignment mode")
+    fixed_slot_map: dict[str, list[int]] | None = Field(default=None, description="TDMA: Fixed slot assignments")
+    slot_probability: float | None = Field(default=None, description="TDMA: Slot ownership probability")
+
+
 class WirelessLinkRequest(BaseModel):
     """Request to compute channel for a single wireless link."""
 
@@ -103,6 +130,8 @@ class WirelessLinkRequest(BaseModel):
     mcs_table_path: str | None = Field(default=None, description="Path to MCS table CSV for adaptive selection")
     mcs_hysteresis_db: float = Field(default=2.0, description="MCS selection hysteresis in dB")
     packet_size_bits: int = Field(default=12000, description="Packet size in bits")
+    # MAC layer model
+    mac_model: MACModel | None = Field(default=None, description="MAC layer model (CSMA or TDMA)")
 
 
 class ChannelResponse(BaseModel):
@@ -132,6 +161,11 @@ class ChannelResponse(BaseModel):
     selected_code_rate: float | None = None
     selected_fec_type: str | None = None
     selected_bandwidth_mhz: float | None = None
+    # MAC model metadata
+    mac_model_type: str | None = None  # "csma", "tdma", or None
+    sinr_db: float | None = None  # SINR when using MAC models
+    hidden_nodes: int | None = None  # CSMA: Number of hidden nodes
+    throughput_multiplier: float | None = None  # TDMA: Slot ownership fraction
 
 
 class BatchChannelRequest(BaseModel):
@@ -200,6 +234,67 @@ class PathDetailsResponse(BaseModel):
     shortest_path_index: int
     strongest_path: SinglePathInfoResponse | None
     shortest_path: SinglePathInfoResponse | None
+
+
+class SINRLinkRequest(BaseModel):
+    """Request to compute SINR for a single link with interference."""
+
+    # Target link (signal)
+    tx_node: str
+    rx_node: str
+    tx_position: Position
+    rx_position: Position
+    tx_power_dbm: float = Field(default=20.0)
+    tx_gain_dbi: float = Field(default=0.0)
+    rx_gain_dbi: float = Field(default=0.0)
+    frequency_hz: float = Field(default=5.18e9)
+    bandwidth_hz: float = Field(default=80e6)
+    antenna_pattern: str = Field(default="iso")
+    polarization: str = Field(default="V")
+
+    # Interferers
+    interferers: list["InterfererInfo"]
+
+    # SINR calculator settings
+    rx_sensitivity_dbm: float = Field(default=-80.0, description="Receiver sensitivity floor")
+    apply_capture_effect: bool = Field(default=False, description="Enable capture effect")
+    capture_threshold_db: float = Field(default=6.0, description="Capture threshold in dB")
+
+
+class InterfererInfo(BaseModel):
+    """Information about an interfering transmitter."""
+
+    node_name: str
+    position: Position
+    tx_power_dbm: float
+    antenna_gain_dbi: float
+    frequency_hz: float
+    is_active: bool = Field(default=True, description="Whether this interferer is currently transmitting")
+
+
+class SINRResponse(BaseModel):
+    """Response with SINR computation results."""
+
+    tx_node: str
+    rx_node: str
+
+    # Power levels (dBm)
+    signal_power_dbm: float
+    noise_power_dbm: float
+    total_interference_dbm: float
+
+    # Ratios (dB)
+    snr_db: float
+    sinr_db: float
+
+    # Interference details
+    num_interferers: int
+    num_active_interferers: int
+    regime: str  # "noise-limited", "interference-limited", "mixed", "unusable"
+
+    # Optional capture effect info
+    capture_effect_applied: bool = False
+    num_suppressed_interferers: int = 0
 
 
 # ============================================================================
@@ -383,6 +478,254 @@ def _validate_channel_result(
                 f"Path loss ({path_loss_db:.1f} dB) less than FSPL "
                 f"({fspl:.1f} dB) - physics violation"
             )
+
+
+async def _compute_batch_with_mac_model(
+    links: list[WirelessLinkRequest],
+    mac_model_config: MACModel,
+    scene_config: SceneConfig,
+) -> list[ChannelResponse]:
+    """
+    Compute channels for multiple links with MAC model (CSMA or TDMA).
+
+    This function handles interference-aware SINR computation using either
+    CSMA or TDMA statistical models.
+
+    Args:
+        links: List of link requests
+        mac_model_config: MAC model configuration (CSMA or TDMA)
+        scene_config: Scene configuration
+
+    Returns:
+        List of channel responses with SINR and MAC metadata
+    """
+    global _engine, _interference_engine, _sinr_calculator
+
+    logger.info(f"Computing {len(links)} links with {mac_model_config.type.upper()} MAC model")
+
+    # Initialize interference engine if needed
+    if _interference_engine is None:
+        _interference_engine = InterferenceEngine()
+        _interference_engine.load_scene(
+            scene_path=scene_config.scene_file,
+            frequency_hz=scene_config.frequency_hz,
+            bandwidth_hz=scene_config.bandwidth_hz,
+        )
+
+    # Initialize SINR calculator if needed
+    if _sinr_calculator is None:
+        _sinr_calculator = SINRCalculator()
+
+    # Collect all unique node positions and info
+    node_positions: dict[str, tuple[float, float, float]] = {}
+    node_powers: dict[str, float] = {}
+    node_gains: dict[str, float] = {}
+    all_nodes: set[str] = set()
+
+    for link in links:
+        node_positions[link.tx_node] = link.tx_position.as_tuple()
+        node_positions[link.rx_node] = link.rx_position.as_tuple()
+        node_powers[link.tx_node] = link.tx_power_dbm
+        node_gains[link.tx_node] = link.tx_gain_dbi
+        node_gains[link.rx_node] = link.rx_gain_dbi
+        all_nodes.add(link.tx_node)
+        all_nodes.add(link.rx_node)
+
+    # Instantiate MAC model
+    mac_model = None
+    if mac_model_config.type == "csma":
+        mac_model = CSMAModel(
+            carrier_sense_range_multiplier=mac_model_config.carrier_sense_range_multiplier or 2.5,
+            default_traffic_load=mac_model_config.traffic_load or 0.3,
+        )
+    elif mac_model_config.type == "tdma":
+        tdma_config = TDMASlotConfig(
+            frame_duration_ms=mac_model_config.frame_duration_ms or 10.0,
+            num_slots=mac_model_config.num_slots or 10,
+            slot_assignment_mode=SlotAssignmentMode(mac_model_config.slot_assignment_mode or "round_robin"),
+            fixed_slot_map=mac_model_config.fixed_slot_map,
+            slot_probability=mac_model_config.slot_probability or 0.1,
+        )
+        mac_model = TDMAModel(tdma_config)
+    else:
+        raise ValueError(f"Unknown MAC model type: {mac_model_config.type}")
+
+    # Compute channels for each link
+    results = []
+    for link in links:
+        try:
+            # Compute signal path (TX -> RX)
+            _engine.clear_devices()
+            tx_pos = link.tx_position.as_tuple()
+            rx_pos = link.rx_position.as_tuple()
+
+            _engine.add_transmitter(
+                name=link.tx_node,
+                position=tx_pos,
+                antenna_pattern=link.antenna_pattern,
+                polarization=link.polarization,
+            )
+            _engine.add_receiver(
+                name=link.rx_node,
+                position=rx_pos,
+                antenna_pattern=link.antenna_pattern,
+                polarization=link.polarization,
+            )
+
+            # Get path result for signal
+            path_result = _engine.compute_paths()
+
+            # Cache paths for visualization
+            path_details = _engine.get_path_details()
+            cache_path_for_visualization(
+                tx_node=link.tx_node,
+                rx_node=link.rx_node,
+                tx_pos=tx_pos,
+                rx_pos=rx_pos,
+                path_result=path_result,
+                path_details=path_details,
+                bandwidth_hz=link.bandwidth_hz
+            )
+
+            # Compute signal power using SNR calculator
+            snr_calc = SNRCalculator(
+                bandwidth_hz=link.bandwidth_hz,
+                noise_figure_db=7.0,
+            )
+            signal_power_dbm, snr_db = snr_calc.calculate_link_snr(
+                tx_power_dbm=link.tx_power_dbm,
+                tx_gain_dbi=link.tx_gain_dbi,
+                rx_gain_dbi=link.rx_gain_dbi,
+                path_loss_db=path_result.path_loss_db,
+                from_sionna=True,
+            )
+
+            # Compute noise power
+            noise_power_dbm = calculate_thermal_noise(
+                bandwidth_hz=link.bandwidth_hz,
+                noise_figure_db=7.0,
+            )
+
+            # Compute interference probabilities using MAC model
+            interferer_nodes = [n for n in all_nodes if n not in (link.tx_node, link.rx_node)]
+
+            if mac_model_config.type == "csma":
+                # CSMA: Need communication range (estimate from path loss)
+                # Simple estimate: range where path loss = FSPL + 10 dB margin
+                # For now, use a fixed communication range of 100m (WiFi typical)
+                communication_range = 100.0
+
+                interference_probs = mac_model.compute_interference_probabilities(
+                    tx_node=link.tx_node,
+                    rx_node=link.rx_node,
+                    interferer_nodes=interferer_nodes,
+                    positions=node_positions,
+                    communication_range=communication_range,
+                    traffic_load=mac_model_config.traffic_load,
+                )
+            elif mac_model_config.type == "tdma":
+                interference_probs = mac_model.compute_interference_probabilities(
+                    tx_node=link.tx_node,
+                    rx_node=link.rx_node,
+                    interferer_nodes=interferer_nodes,
+                    all_nodes=list(all_nodes),
+                )
+            else:
+                interference_probs = {}
+
+            # Build interference terms for SINR calculator
+            # Compute actual interference power from each interferer using InterferenceEngine
+            interferer_infos = []
+            for interferer_name in interferer_nodes:
+                if interferer_name in node_positions and interferer_name in node_powers:
+                    interferer_infos.append(
+                        TransmitterInfo(
+                            node_name=interferer_name,
+                            position=node_positions[interferer_name],
+                            tx_power_dbm=node_powers[interferer_name],
+                            antenna_gain_dbi=node_gains.get(interferer_name, 0.0),
+                            frequency_hz=link.frequency_hz,
+                        )
+                    )
+
+            # Compute interference at RX using InterferenceEngine
+            interference_result = _interference_engine.compute_interference_at_receiver(
+                rx_position=rx_pos,
+                rx_antenna_gain_dbi=link.rx_gain_dbi,
+                rx_node=link.rx_node,
+                interferers=interferer_infos,
+                active_states={name: True for name in interferer_nodes},  # Assume all active for now
+            )
+
+            # Combine interference powers with MAC model probabilities
+            interference_terms = []
+            for intf_term in interference_result.interference_terms:
+                interferer_name = intf_term.source  # Access as attribute, not dict key
+                intf_power_dbm = intf_term.power_dbm  # Access as attribute, not dict key
+
+                # Get MAC model probability for this interferer
+                prob = interference_probs.get(interferer_name, 0.0)
+
+                if prob > 0:
+                    interference_terms.append({
+                        "interferer": interferer_name,
+                        "interference_power_dbm": intf_power_dbm,
+                        "probability": prob,
+                    })
+
+            # Compute SINR
+            sinr_result = _sinr_calculator.calculate_sinr(
+                tx_node=link.tx_node,
+                rx_node=link.rx_node,
+                signal_power_dbm=signal_power_dbm,
+                noise_power_dbm=noise_power_dbm,
+                interference_terms=interference_terms,
+            )
+
+            # Use SINR instead of SNR for BER/PER calculation
+            effective_snr = sinr_result.sinr_db
+
+            # Compute channel parameters using SINR (rest of pipeline same as SNR)
+            result = compute_channel_for_link(link, path_result)
+
+            # Override SNR with SINR and add MAC metadata
+            result.snr_db = snr_db  # Keep original SNR
+            result.sinr_db = effective_snr  # Add SINR
+            result.mac_model_type = mac_model_config.type
+
+            if mac_model_config.type == "csma":
+                result.hidden_nodes = sum(1 for p in interference_probs.values() if p > 0)
+            elif mac_model_config.type == "tdma":
+                result.throughput_multiplier = mac_model.get_throughput_multiplier(
+                    link.tx_node, all_nodes=list(all_nodes)
+                )
+
+            results.append(result)
+
+        except Exception as e:
+            logger.error(f"Failed to compute SINR for {link.tx_node}->{link.rx_node}: {e}", exc_info=True)
+            # Add error result
+            results.append(
+                ChannelResponse(
+                    tx_node=link.tx_node,
+                    rx_node=link.rx_node,
+                    path_loss_db=200.0,
+                    num_paths=0,
+                    dominant_path_type="error",
+                    received_power_dbm=-200.0,
+                    snr_db=-50.0,
+                    ber=0.5,
+                    bler=1.0,
+                    per=1.0,
+                    netem_delay_ms=0.0,
+                    netem_jitter_ms=0.0,
+                    netem_loss_percent=100.0,
+                    netem_rate_mbps=0.1,
+                    mac_model_type=mac_model_config.type,
+                )
+            )
+
+    return results
 
 
 def compute_channel_for_link(
@@ -660,8 +1003,10 @@ async def compute_batch_links(request: BatchChannelRequest):
 
     More efficient than calling /compute/single multiple times as the
     scene is loaded once and reused.
+
+    Supports MAC models (CSMA or TDMA) for interference-aware channel computation.
     """
-    global _engine
+    global _engine, _interference_engine, _sinr_calculator
 
     if _engine is None:
         _engine = get_engine()
@@ -675,68 +1020,83 @@ async def compute_batch_links(request: BatchChannelRequest):
         bandwidth_hz=request.scene.bandwidth_hz,
     )
 
+    # Check if any links use MAC models
+    mac_model_config = None
+    for link in request.links:
+        if link.mac_model is not None:
+            mac_model_config = link.mac_model
+            break
+
     results = []
 
-    for link in request.links:
-        try:
-            # Clear and set up devices for this link
-            _engine.clear_devices()
-            tx_pos = link.tx_position.as_tuple()
-            rx_pos = link.rx_position.as_tuple()
+    # Branch: MAC model mode vs. simple SNR mode
+    if mac_model_config is not None:
+        # MAC model mode: Use SINR computation with interference
+        results = await _compute_batch_with_mac_model(
+            request.links, mac_model_config, request.scene
+        )
+    else:
+        # Simple SNR mode: Compute each link independently (original behavior)
+        for link in request.links:
+            try:
+                # Clear and set up devices for this link
+                _engine.clear_devices()
+                tx_pos = link.tx_position.as_tuple()
+                rx_pos = link.rx_position.as_tuple()
 
-            _engine.add_transmitter(
-                name=link.tx_node,
-                position=tx_pos,
-                antenna_pattern=link.antenna_pattern,
-                polarization=link.polarization,
-            )
-            _engine.add_receiver(
-                name=link.rx_node,
-                position=rx_pos,
-                antenna_pattern=link.antenna_pattern,
-                polarization=link.polarization,
-            )
+                _engine.add_transmitter(
+                    name=link.tx_node,
+                    position=tx_pos,
+                    antenna_pattern=link.antenna_pattern,
+                    polarization=link.polarization,
+                )
+                _engine.add_receiver(
+                    name=link.rx_node,
+                    position=rx_pos,
+                    antenna_pattern=link.antenna_pattern,
+                    polarization=link.polarization,
+                )
 
-            # Compute paths
-            path_result = _engine.compute_paths()
+                # Compute paths
+                path_result = _engine.compute_paths()
 
-            # Cache path details for visualization
-            path_details = _engine.get_path_details()
-            cache_path_for_visualization(
-                tx_node=link.tx_node,
-                rx_node=link.rx_node,
-                tx_pos=tx_pos,
-                rx_pos=rx_pos,
-                path_result=path_result,
-                path_details=path_details,
-                bandwidth_hz=link.bandwidth_hz
-            )
-
-            # Compute complete channel
-            result = compute_channel_for_link(link, path_result)
-            results.append(result)
-
-        except Exception as e:
-            logger.error(f"Failed to compute channel for {link.tx_node}->{link.rx_node}: {e}")
-            # Add error result
-            results.append(
-                ChannelResponse(
+                # Cache path details for visualization
+                path_details = _engine.get_path_details()
+                cache_path_for_visualization(
                     tx_node=link.tx_node,
                     rx_node=link.rx_node,
-                    path_loss_db=200.0,
-                    num_paths=0,
-                    dominant_path_type="error",
-                    received_power_dbm=-200.0,
-                    snr_db=-50.0,
-                    ber=0.5,
-                    bler=1.0,
-                    per=1.0,
-                    netem_delay_ms=0.0,
-                    netem_jitter_ms=0.0,
-                    netem_loss_percent=100.0,
-                    netem_rate_mbps=0.1,
+                    tx_pos=tx_pos,
+                    rx_pos=rx_pos,
+                    path_result=path_result,
+                    path_details=path_details,
+                    bandwidth_hz=link.bandwidth_hz
                 )
-            )
+
+                # Compute complete channel
+                result = compute_channel_for_link(link, path_result)
+                results.append(result)
+
+            except Exception as e:
+                logger.error(f"Failed to compute channel for {link.tx_node}->{link.rx_node}: {e}")
+                # Add error result
+                results.append(
+                    ChannelResponse(
+                        tx_node=link.tx_node,
+                        rx_node=link.rx_node,
+                        path_loss_db=200.0,
+                        num_paths=0,
+                        dominant_path_type="error",
+                        received_power_dbm=-200.0,
+                        snr_db=-50.0,
+                        ber=0.5,
+                        bler=1.0,
+                        per=1.0,
+                        netem_delay_ms=0.0,
+                        netem_jitter_ms=0.0,
+                        netem_loss_percent=100.0,
+                        netem_rate_mbps=0.1,
+                    )
+                )
 
     computation_time_ms = (time.time() - start_time) * 1000
 
@@ -816,6 +1176,131 @@ async def get_path_details(request: PathDetailsRequest):
     except Exception as e:
         logger.error(f"Failed to get path details: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get path details: {str(e)}")
+
+
+@app.post("/compute/sinr", response_model=SINRResponse)
+async def compute_sinr(request: SINRLinkRequest):
+    """
+    Compute SINR for a link with multi-transmitter interference.
+
+    Computes Signal-to-Interference-plus-Noise Ratio (SINR) for a wireless link
+    considering interference from other active transmitters. Uses PathSolver to
+    compute interference power from each interferer.
+
+    Phase 1: Same-frequency (co-channel) interference only.
+    """
+    global _interference_engine, _sinr_calculator
+
+    # Initialize interference engine if needed
+    if _interference_engine is None:
+        from sine.channel.interference_engine import InterferenceEngine
+        _interference_engine = InterferenceEngine()
+        logger.info("Initialized InterferenceEngine for SINR computation")
+
+    # Initialize SINR calculator if needed
+    if _sinr_calculator is None:
+        _sinr_calculator = SINRCalculator(
+            rx_sensitivity_dbm=request.rx_sensitivity_dbm,
+            apply_capture_effect=request.apply_capture_effect,
+            capture_threshold_db=request.capture_threshold_db,
+        )
+
+    # Load scene if not loaded
+    if not _interference_engine._scene_loaded:
+        _interference_engine.load_scene(
+            scene_path=None,  # Use empty scene for now
+            frequency_hz=request.frequency_hz,
+            bandwidth_hz=request.bandwidth_hz,
+        )
+
+    try:
+        # Compute signal power using PathSolver
+        _interference_engine._engine.clear_devices()
+        _interference_engine._engine.add_transmitter(
+            name=request.tx_node,
+            position=request.tx_position.as_tuple(),
+            antenna_pattern=request.antenna_pattern,
+            polarization=request.polarization,
+        )
+        _interference_engine._engine.add_receiver(
+            name=request.rx_node,
+            position=request.rx_position.as_tuple(),
+            antenna_pattern=request.antenna_pattern,
+            polarization=request.polarization,
+        )
+
+        # Get path loss for signal
+        path_result = _interference_engine._engine.compute_paths()
+
+        # Compute signal power: P_tx + G_tx + G_rx - PL
+        signal_power_dbm = (
+            request.tx_power_dbm
+            + request.tx_gain_dbi
+            + request.rx_gain_dbi
+            - path_result.path_loss_db
+        )
+
+        # Calculate thermal noise
+        noise_power_dbm = calculate_thermal_noise(
+            bandwidth_hz=request.bandwidth_hz,
+            noise_figure_db=7.0,  # WiFi 6 typical
+        )
+
+        # Convert interferer infos to TransmitterInfo list
+        interferers = [
+            TransmitterInfo(
+                node_name=intf.node_name,
+                position=intf.position.as_tuple(),
+                tx_power_dbm=intf.tx_power_dbm,
+                antenna_gain_dbi=intf.antenna_gain_dbi,
+                frequency_hz=intf.frequency_hz,
+            )
+            for intf in request.interferers
+        ]
+
+        # Build active states dict
+        active_states = {
+            intf.node_name: intf.is_active
+            for intf in request.interferers
+        }
+
+        # Compute interference
+        interference_result = _interference_engine.compute_interference_at_receiver(
+            rx_position=request.rx_position.as_tuple(),
+            rx_antenna_gain_dbi=request.rx_gain_dbi,
+            rx_node=request.rx_node,
+            interferers=interferers,
+            active_states=active_states,
+        )
+
+        # Calculate SINR
+        sinr_result = _sinr_calculator.calculate_sinr(
+            tx_node=request.tx_node,
+            rx_node=request.rx_node,
+            signal_power_dbm=signal_power_dbm,
+            noise_power_dbm=noise_power_dbm,
+            interference_terms=interference_result.interference_terms,
+        )
+
+        # Build response
+        return SINRResponse(
+            tx_node=sinr_result.tx_node,
+            rx_node=sinr_result.rx_node,
+            signal_power_dbm=sinr_result.signal_power_dbm,
+            noise_power_dbm=sinr_result.noise_power_dbm,
+            total_interference_dbm=sinr_result.total_interference_dbm,
+            snr_db=sinr_result.snr_db,
+            sinr_db=sinr_result.sinr_db,
+            num_interferers=len(request.interferers),
+            num_active_interferers=sinr_result.num_interferers,
+            regime=sinr_result.regime,
+            capture_effect_applied=sinr_result.capture_effect_applied,
+            num_suppressed_interferers=sinr_result.num_suppressed_interferers,
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to compute SINR: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to compute SINR: {str(e)}")
 
 
 @app.get("/api/visualization/state")

@@ -492,7 +492,10 @@ def validate(topology: Path) -> None:
                     if iface_config.is_wireless:
                         w = iface_config.wireless
                         pos = f"({w.position.x:.1f}, {w.position.y:.1f}, {w.position.z:.1f})"
-                        config_str = f"{pos} | {w.modulation.value}, {w.fec_type.value}"
+                        if w.mcs_table:
+                            config_str = f"{pos} | MCS table: {w.mcs_table}"
+                        else:
+                            config_str = f"{pos} | {w.modulation.value}, {w.fec_type.value}"
                         iface_type = "wireless"
                     else:
                         f = iface_config.fixed_netem

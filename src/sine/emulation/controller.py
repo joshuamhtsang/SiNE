@@ -302,42 +302,63 @@ class EmulationController:
             tx_params = link_info["tx_params"]
             rx_params = link_info["rx_params"]
 
-            link_requests.append(
-                {
-                    "tx_node": link_info["tx_node"],
-                    "rx_node": link_info["rx_node"],
-                    "tx_position": {
-                        "x": tx_params.position.x,
-                        "y": tx_params.position.y,
-                        "z": tx_params.position.z,
-                    },
-                    "rx_position": {
-                        "x": rx_params.position.x,
-                        "y": rx_params.position.y,
-                        "z": rx_params.position.z,
-                    },
-                    "tx_power_dbm": tx_params.rf_power_dbm,
-                    "tx_gain_dbi": tx_params.antenna_gain_dbi,
-                    "rx_gain_dbi": rx_params.antenna_gain_dbi,
-                    "antenna_pattern": tx_params.antenna_pattern,
-                    "polarization": tx_params.polarization,
-                    "frequency_hz": tx_params.frequency_hz,
-                    "bandwidth_hz": tx_params.bandwidth_hz,
-                    "modulation": (
-                        tx_params.modulation if not tx_params.uses_adaptive_mcs else None
-                    ),
-                    "fec_type": (
-                        tx_params.fec_type if not tx_params.uses_adaptive_mcs else None
-                    ),
-                    "fec_code_rate": (
-                        tx_params.fec_code_rate if not tx_params.uses_adaptive_mcs else None
-                    ),
-                    "mcs_table_path": tx_params.mcs_table if tx_params.uses_adaptive_mcs else None,
-                    "mcs_hysteresis_db": (
-                        tx_params.mcs_hysteresis_db if tx_params.uses_adaptive_mcs else 2.0
-                    ),
+            request = {
+                "tx_node": link_info["tx_node"],
+                "rx_node": link_info["rx_node"],
+                "tx_position": {
+                    "x": tx_params.position.x,
+                    "y": tx_params.position.y,
+                    "z": tx_params.position.z,
+                },
+                "rx_position": {
+                    "x": rx_params.position.x,
+                    "y": rx_params.position.y,
+                    "z": rx_params.position.z,
+                },
+                "tx_power_dbm": tx_params.rf_power_dbm,
+                "tx_gain_dbi": tx_params.antenna_gain_dbi,
+                "rx_gain_dbi": rx_params.antenna_gain_dbi,
+                "antenna_pattern": tx_params.antenna_pattern,
+                "polarization": tx_params.polarization,
+                "frequency_hz": tx_params.frequency_hz,
+                "bandwidth_hz": tx_params.bandwidth_hz,
+                "modulation": (
+                    tx_params.modulation if not tx_params.uses_adaptive_mcs else None
+                ),
+                "fec_type": (
+                    tx_params.fec_type if not tx_params.uses_adaptive_mcs else None
+                ),
+                "fec_code_rate": (
+                    tx_params.fec_code_rate if not tx_params.uses_adaptive_mcs else None
+                ),
+                "mcs_table_path": tx_params.mcs_table if tx_params.uses_adaptive_mcs else None,
+                "mcs_hysteresis_db": (
+                    tx_params.mcs_hysteresis_db if tx_params.uses_adaptive_mcs else 2.0
+                ),
+            }
+
+            # Add MAC model configuration (CSMA or TDMA) - same as point-to-point mode
+            mac_model = None
+            if tx_params.csma and tx_params.csma.enabled:
+                mac_model = {
+                    "type": "csma",
+                    "carrier_sense_range_multiplier": tx_params.csma.carrier_sense_range_multiplier,
+                    "traffic_load": tx_params.csma.traffic_load,
                 }
-            )
+            elif tx_params.tdma and tx_params.tdma.enabled:
+                mac_model = {
+                    "type": "tdma",
+                    "frame_duration_ms": tx_params.tdma.frame_duration_ms,
+                    "num_slots": tx_params.tdma.num_slots,
+                    "slot_assignment_mode": tx_params.tdma.slot_assignment_mode,
+                    "fixed_slot_map": tx_params.tdma.fixed_slot_map,
+                    "slot_probability": tx_params.tdma.slot_probability,
+                }
+
+            if mac_model:
+                request["mac_model"] = mac_model
+
+            link_requests.append(request)
 
         # Get scene configuration
         scene_config = self.config.topology.scene
@@ -396,11 +417,23 @@ class EmulationController:
 
             result = results[i]
 
+            # Apply TDMA throughput multiplier if present
+            rate_mbps = result["netem_rate_mbps"]
+            if result.get("mac_model_type") == "tdma" and "throughput_multiplier" in result:
+                throughput_multiplier = result["throughput_multiplier"]
+                original_rate = result["netem_rate_mbps"]
+                rate_mbps = original_rate * throughput_multiplier
+                logger.debug(
+                    f"Applied TDMA throughput multiplier {throughput_multiplier:.3f} to "
+                    f"{tx_node}<->{rx_node}: "
+                    f"{original_rate:.1f} Mbps -> {rate_mbps:.1f} Mbps"
+                )
+
             netem_params = NetemParams(
                 delay_ms=result["netem_delay_ms"],
                 jitter_ms=result["netem_jitter_ms"],
                 loss_percent=result["netem_loss_percent"],
-                rate_mbps=result["netem_rate_mbps"],
+                rate_mbps=rate_mbps,
             )
 
             per_node_config[tx_node].dest_params[rx_ip] = netem_params
@@ -530,6 +563,27 @@ class EmulationController:
                 request["fec_type"] = wireless1.fec_type.value if wireless1.fec_type else None
                 request["fec_code_rate"] = wireless1.fec_code_rate
 
+            # Add MAC model configuration (CSMA or TDMA)
+            mac_model = None
+            if wireless1.csma and wireless1.csma.enabled:
+                mac_model = {
+                    "type": "csma",
+                    "carrier_sense_range_multiplier": wireless1.csma.carrier_sense_range_multiplier,
+                    "traffic_load": wireless1.csma.traffic_load,
+                }
+            elif wireless1.tdma and wireless1.tdma.enabled:
+                mac_model = {
+                    "type": "tdma",
+                    "frame_duration_ms": wireless1.tdma.frame_duration_ms,
+                    "num_slots": wireless1.tdma.num_slots,
+                    "slot_assignment_mode": wireless1.tdma.slot_assignment_mode,
+                    "fixed_slot_map": wireless1.tdma.fixed_slot_map,
+                    "slot_probability": wireless1.tdma.slot_probability,
+                }
+
+            if mac_model:
+                request["mac_model"] = mac_model
+
             link_requests.append(request)
 
         if not link_requests:
@@ -553,8 +607,19 @@ class EmulationController:
             response.raise_for_status()
             results = response.json()
 
-        # Apply netem configurations
+        # Apply netem configurations with TDMA throughput adjustment
         for result in results.get("results", []):
+            # Apply TDMA throughput multiplier if present
+            if result.get("mac_model_type") == "tdma" and "throughput_multiplier" in result:
+                throughput_multiplier = result["throughput_multiplier"]
+                original_rate = result["netem_rate_mbps"]
+                result["netem_rate_mbps"] = original_rate * throughput_multiplier
+                logger.debug(
+                    f"Applied TDMA throughput multiplier {throughput_multiplier:.3f} to "
+                    f"{result['tx_node']}<->{result['rx_node']}: "
+                    f"{original_rate:.1f} Mbps -> {result['netem_rate_mbps']:.1f} Mbps"
+                )
+
             await self._apply_wireless_link_config(result)
 
         logger.info(

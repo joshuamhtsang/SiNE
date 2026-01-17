@@ -1,0 +1,120 @@
+# TDMA Round-Robin Example - Automatic Cyclic Slot Assignment
+#
+# This example demonstrates round-robin TDMA slot assignment.
+# Key features:
+# - Automatic slot assignment: Nodes get equal cyclic slots
+# - No hidden node problem (orthogonal time slots)
+# - Equal throughput per node (1/N of total)
+# - Simple configuration (no explicit slot map needed)
+
+name: sinr-tdma-roundrobin
+
+topology:
+  # Scene configuration (required for wireless links)
+  scene:
+    file: scenes/vacuum.xml
+
+  # Shared bridge for MANET broadcast domain
+  shared_bridge:
+    enabled: true
+    name: tdma-rr-br0
+    nodes: [node1, node2, node3]
+    interface_name: eth1
+
+  nodes:
+    node1:
+      kind: linux
+      image: alpine:latest
+      interfaces:
+        eth1:
+          ip_address: 192.168.100.1
+          wireless:
+            position: {x: 0, y: 0, z: 1}
+            frequency_ghz: 5.18
+            bandwidth_mhz: 80
+            rf_power_dbm: 20
+            antenna_pattern: iso
+            polarization: V
+            antenna_gain_dbi: 0.0
+            modulation: 64qam
+            fec_type: ldpc
+            fec_code_rate: 0.667
+
+            # MAC layer: TDMA round-robin
+            tdma:
+              enabled: true
+              frame_duration_ms: 10.0
+              num_slots: 12                 # 3 nodes × 4 slots each
+              slot_assignment_mode: round_robin
+              # No fixed_slot_map needed - automatic assignment
+
+    node2:
+      kind: linux
+      image: alpine:latest
+      interfaces:
+        eth1:
+          ip_address: 192.168.100.2
+          wireless:
+            position: {x: 100, y: 0, z: 1}
+            frequency_ghz: 5.18
+            bandwidth_mhz: 80
+            rf_power_dbm: 20
+            antenna_pattern: iso
+            polarization: V
+            antenna_gain_dbi: 0.0
+            modulation: 64qam
+            fec_type: ldpc
+            fec_code_rate: 0.667
+
+            tdma:
+              enabled: true
+              frame_duration_ms: 10.0
+              num_slots: 12
+              slot_assignment_mode: round_robin
+
+    node3:
+      kind: linux
+      image: alpine:latest
+      interfaces:
+        eth1:
+          ip_address: 192.168.100.3
+          wireless:
+            position: {x: 50, y: 86.6, z: 1}
+            frequency_ghz: 5.18
+            bandwidth_mhz: 80
+            rf_power_dbm: 20
+            antenna_pattern: iso
+            polarization: V
+            antenna_gain_dbi: 0.0
+            modulation: 64qam
+            fec_type: ldpc
+            fec_code_rate: 0.667
+
+            tdma:
+              enabled: true
+              frame_duration_ms: 10.0
+              num_slots: 12
+              slot_assignment_mode: round_robin
+
+# Expected Behavior:
+#
+# Round-robin slot assignment (automatic):
+# - Node1: slots [0, 3, 6, 9]    (33.3% of frame)
+# - Node2: slots [1, 4, 7, 10]   (33.3% of frame)
+# - Node3: slots [2, 5, 8, 11]   (33.3% of frame)
+#
+# Throughput:
+# - PHY rate: ~480 Mbps (same as CSMA/fixed TDMA)
+# - Slot ownership: 4/12 = 33.3%
+# - Effective rate: 480 × 0.333 = 160 Mbps
+#
+# Benefits over fixed slots:
+# - No manual slot configuration needed
+# - Equal fairness guaranteed
+# - Simple to add/remove nodes (just adjust num_slots)
+#
+# Expected output:
+#   Link: node1→node2 [wireless, TDMA round-robin]
+#     SNR: 35.2 dB | SINR: 35.2 dB | Interferers: 0/2 (orthogonal slots)
+#     Delay: 0.33 ms | Jitter: 0.00 ms | Loss: 0.00% | Rate: 160 Mbps
+#     Throughput: 53.3 Mbps (33.3% slot ownership)

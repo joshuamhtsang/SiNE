@@ -78,6 +78,77 @@ class Position(BaseModel):
         return (self.x, self.y, self.z)
 
 
+class CSMAConfig(BaseModel):
+    """CSMA/CA statistical model configuration.
+
+    Implements Phase 1.5: WiFi CSMA/CA behavior without full MAC simulation.
+    Captures spatial reuse and hidden node effects.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = Field(
+        default=True, description="Enable CSMA/CA statistical model"
+    )
+    carrier_sense_range_multiplier: float = Field(
+        default=2.5,
+        description="Carrier sense range / communication range (WiFi typical: 2.5)",
+        gt=0.0,
+        le=10.0,
+    )
+    traffic_load: float = Field(
+        default=0.3,
+        description="Traffic duty cycle for hidden nodes (30% typical)",
+        ge=0.0,
+        le=1.0,
+    )
+
+
+class TDMAConfig(BaseModel):
+    """TDMA statistical model configuration.
+
+    Implements Phase 1.6: Military MANET radios using TDMA-based MAC.
+    Supports fixed/round-robin/random/distributed slot assignment.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = Field(
+        default=False, description="Enable TDMA statistical model"
+    )
+    frame_duration_ms: float = Field(
+        default=10.0, description="TDMA frame duration in milliseconds", gt=0.0, le=1000.0
+    )
+    num_slots: int = Field(
+        default=10, description="Number of slots per TDMA frame", ge=1, le=1000
+    )
+    slot_assignment_mode: str = Field(
+        default="round_robin",
+        description="Slot assignment mode: fixed, round_robin, random, distributed",
+    )
+    fixed_slot_map: dict[str, list[int]] | None = Field(
+        default=None,
+        description="For fixed mode: map node names to slot indices {node: [slot1, slot2, ...]}"
+    )
+    slot_probability: float = Field(
+        default=0.1,
+        description="For random/distributed modes: slot ownership probability (10% typical)",
+        ge=0.0,
+        le=1.0,
+    )
+
+    @field_validator("slot_assignment_mode")
+    @classmethod
+    def validate_slot_assignment_mode(cls, v: str) -> str:
+        """Validate slot assignment mode is one of the supported options."""
+        valid_modes = ["fixed", "round_robin", "random", "distributed"]
+        if v not in valid_modes:
+            raise ValueError(
+                f"Invalid slot_assignment_mode '{v}'. Must be one of: {valid_modes}"
+            )
+        return v
+
+
 class WirelessParams(BaseModel):
     """Wireless link parameters for a node.
 
@@ -125,6 +196,14 @@ class WirelessParams(BaseModel):
         default=None, description="Fixed FEC code rate (ignored if mcs_table is set)", ge=0.0, le=1.0
     )
 
+    # MAC layer models (mutually exclusive)
+    csma: CSMAConfig | None = Field(
+        default=None, description="CSMA/CA statistical model (WiFi MANETs)"
+    )
+    tdma: TDMAConfig | None = Field(
+        default=None, description="TDMA statistical model (military MANETs)"
+    )
+
     position: Position
 
     @model_validator(mode="after")
@@ -141,6 +220,13 @@ class WirelessParams(BaseModel):
             raise ValueError(
                 "Wireless interface requires either 'mcs_table' or all of "
                 "'modulation', 'fec_type', 'fec_code_rate' to be specified"
+            )
+
+        # Validate CSMA and TDMA are mutually exclusive
+        if (self.csma and self.csma.enabled) and (self.tdma and self.tdma.enabled):
+            raise ValueError(
+                "Cannot enable both CSMA and TDMA models. "
+                "Choose one MAC layer model per interface."
             )
 
         return self
