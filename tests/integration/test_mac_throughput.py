@@ -284,9 +284,10 @@ def test_csma_throughput_spatial_reuse(channel_server, examples_dir: Path):
     # Cleanup any existing deployment first
     destroy_topology(str(yaml_path))
 
+    deploy_process = None
     try:
-        # Deploy
-        deploy_topology(str(yaml_path))
+        # Deploy (returns background process)
+        deploy_process = deploy_topology(str(yaml_path))
 
         # Configure IPs
         configure_ips(
@@ -313,7 +314,9 @@ def test_csma_throughput_spatial_reuse(channel_server, examples_dir: Path):
         )
 
     finally:
-        # Cleanup
+        # Stop deployment process
+        stop_deployment_process(deploy_process)
+        # Cleanup containers
         destroy_topology(str(yaml_path))
 
 
@@ -381,9 +384,10 @@ def test_tdma_roundrobin_throughput(channel_server, examples_dir: Path):
     # Cleanup any existing deployment first
     destroy_topology(str(yaml_path))
 
+    deploy_process = None
     try:
-        # Deploy
-        deploy_topology(str(yaml_path))
+        # Deploy (returns background process)
+        deploy_process = deploy_topology(str(yaml_path))
 
         # Configure IPs
         configure_ips(
@@ -410,7 +414,9 @@ def test_tdma_roundrobin_throughput(channel_server, examples_dir: Path):
         )
 
     finally:
-        # Cleanup
+        # Stop deployment process
+        stop_deployment_process(deploy_process)
+        # Cleanup containers
         destroy_topology(str(yaml_path))
 
 
@@ -435,10 +441,12 @@ def test_csma_vs_tdma_ratio(channel_server, examples_dir: Path):
 
     csma_throughput = None
     tdma_throughput = None
+    csma_process = None
+    tdma_process = None
 
     try:
         # Test CSMA
-        deploy_topology(str(csma_yaml))
+        csma_process = deploy_topology(str(csma_yaml))
         configure_ips(
             "clab-sinr-csma-wifi6",
             {"node1": "192.168.1.1", "node2": "192.168.1.2"},
@@ -450,10 +458,12 @@ def test_csma_vs_tdma_ratio(channel_server, examples_dir: Path):
             client_ip="192.168.1.1",
             duration_sec=30,
         )
+        stop_deployment_process(csma_process)
         destroy_topology(str(csma_yaml))
+        csma_process = None
 
         # Test TDMA
-        deploy_topology(str(tdma_yaml))
+        tdma_process = deploy_topology(str(tdma_yaml))
         configure_ips(
             "clab-sinr-tdma-fixed",
             {"node1": "192.168.1.1", "node2": "192.168.1.2"},
@@ -482,6 +492,8 @@ def test_csma_vs_tdma_ratio(channel_server, examples_dir: Path):
 
     finally:
         # Cleanup
+        stop_deployment_process(csma_process)
+        stop_deployment_process(tdma_process)
         if csma_yaml:
             destroy_topology(str(csma_yaml))
         if tdma_yaml:
