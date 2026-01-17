@@ -64,6 +64,9 @@ class SharedNetemConfigurator:
         3. Per-destination classes (1:10, 1:20, ...) with netem + flower filters
         4. Default class 1:99 for broadcast/multicast with default netem
 
+        This method is idempotent - it will remove any existing tc configuration
+        before applying new rules to avoid "File exists" errors.
+
         Args:
             config: Per-destination configuration
 
@@ -81,6 +84,12 @@ class SharedNetemConfigurator:
             return False
 
         interface = config.interface
+
+        # IMPORTANT: Remove any existing tc configuration first (idempotency)
+        # This prevents "RTNETLINK answers: File exists" errors when redeploying
+        logger.debug(f"Removing any existing tc configuration on {config.node}:{interface}")
+        self._remove_tc_config_silent(pid, interface)
+
         commands = self._generate_tc_commands(config)
 
         logger.info(
@@ -183,6 +192,40 @@ class SharedNetemConfigurator:
             classid += 10
 
         return commands
+
+    def _remove_tc_config_silent(self, pid: int, interface: str) -> None:
+        """
+        Remove tc configuration without logging errors (for idempotent cleanup).
+
+        This is used before applying new tc rules to ensure a clean slate.
+        Errors are suppressed since we don't care if there's no existing config.
+
+        Args:
+            pid: Container PID
+            interface: Interface name
+        """
+        try:
+            subprocess.run(
+                [
+                    "sudo",
+                    "nsenter",
+                    "-t",
+                    str(pid),
+                    "-n",
+                    "tc",
+                    "qdisc",
+                    "del",
+                    "dev",
+                    interface,
+                    "root",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,  # Don't raise on error
+            )
+        except Exception:
+            # Silently ignore all errors - this is best-effort cleanup
+            pass
 
     def remove_per_destination_netem(self, node: str, interface: str) -> bool:
         """

@@ -80,6 +80,8 @@ class ContainerlabManager:
                 clab_node["binds"] = node_config["binds"]
             if node_config.get("env"):
                 clab_node["env"] = node_config["env"]
+            if node_config.get("exec"):
+                clab_node["exec"] = node_config["exec"]
 
             clab_topology["topology"]["nodes"][node_name] = clab_node
 
@@ -183,6 +185,8 @@ class ContainerlabManager:
                 clab_node["binds"] = node_config["binds"]
             if node_config.get("env"):
                 clab_node["env"] = node_config["env"]
+            if node_config.get("exec"):
+                clab_node["exec"] = node_config["exec"]
 
             clab_topology["topology"]["nodes"][node_name] = clab_node
 

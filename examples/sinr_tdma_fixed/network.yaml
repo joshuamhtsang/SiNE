@@ -26,6 +26,8 @@ topology:
     node1:
       kind: linux
       image: alpine:latest
+      exec:
+        - apk add --no-cache iproute2 iputils iperf3
       interfaces:
         eth1:
           ip_address: 192.168.100.1/24
@@ -62,6 +64,8 @@ topology:
     node2:
       kind: linux
       image: alpine:latest
+      exec:
+        - apk add --no-cache iproute2 iputils iperf3
       interfaces:
         eth1:
           ip_address: 192.168.100.2/24
@@ -93,6 +97,8 @@ topology:
     node3:
       kind: linux
       image: alpine:latest
+      exec:
+        - apk add --no-cache iproute2 iputils iperf3
       interfaces:
         eth1:
           ip_address: 192.168.100.3/24

@@ -386,13 +386,16 @@ class EmulationController:
         per_node_config: dict[str, PerDestinationConfig] = {}
         ip_map: dict[str, str] = {}
 
-        # Get IP addresses
+        # Get IP addresses (strip CIDR suffix if present)
         for node_name in nodes:
             ip_address = self.config.topology.nodes[node_name].interfaces[
                 interface_name
             ].ip_address
             if ip_address:
-                ip_map[node_name] = ip_address
+                # Strip /XX CIDR notation for use in tc flower filters
+                # Example: "192.168.100.1/24" -> "192.168.100.1"
+                ip_only = ip_address.split("/")[0] if "/" in ip_address else ip_address
+                ip_map[node_name] = ip_only
 
         # Initialize per-node configs
         for tx_node in nodes:

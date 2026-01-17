@@ -346,6 +346,10 @@ class NodeConfig(BaseModel):
     cmd: str | None = Field(default=None, description="Container command to run")
     binds: list[str] | None = Field(default=None, description="Volume mounts")
     env: dict[str, str] | None = Field(default=None, description="Environment variables")
+    exec: list[str] | None = Field(
+        default=None,
+        description="Commands to execute in container after startup (containerlab exec)",
+    )
     interfaces: dict[str, InterfaceConfig] | None = Field(
         default=None, description="Interface configurations (eth1, eth2, etc.)"
     )
