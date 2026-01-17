@@ -111,6 +111,7 @@ sudo $(which uv) run sine deploy --enable-mobility examples/two_rooms/network.ya
 
 **What to expect:**
 - Containerlab creates two Docker containers
+- IP addresses are automatically configured from the topology YAML
 - Sionna loads the two-room scene
 - Ray tracing computes propagation paths through doorway
 - Netem parameters applied based on computed SNR and packet loss
@@ -134,14 +135,10 @@ Link Parameters:
     Delay: X.XX ms | Jitter: X.XX ms | Loss: X.X% | Rate: XXX.X Mbps
 ```
 
-#### 3. Configure IP Addresses (Terminal 3)
+#### 3. Test Connectivity (Terminal 3)
 
 ```bash
-# Assign IP addresses to wireless interfaces
-docker exec -it clab-two-rooms-node1 ip addr add 18.0.0.1/24 dev eth1
-docker exec -it clab-two-rooms-node2 ip addr add 18.0.0.2/24 dev eth1
-
-# Verify connectivity
+# Verify connectivity (IPs already configured automatically)
 docker exec clab-two-rooms-node2 ping -c 3 18.0.0.1
 ```
 

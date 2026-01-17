@@ -64,19 +64,16 @@ sudo $(which uv) run sine deploy examples/wifi6_adaptive/network.yaml
 #   node1:eth1 ↔ node2:eth1 [wireless]
 #     MCS: 11 (1024qam, rate-0.833, ldpc)
 #     Delay: 0.07 ms | Jitter: 0.00 ms | Loss: 0.00% | Rate: 532.5 Mbps
+# IP addresses are automatically configured from the topology YAML
 
-# 3. Configure IP addresses
-docker exec -it clab-wifi6-adaptive-node1 ip addr add 192.168.1.1/24 dev eth1
-docker exec -it clab-wifi6-adaptive-node2 ip addr add 192.168.1.2/24 dev eth1
-
-# 4. Test throughput with iperf3
+# 3. Test throughput with iperf3
 # Terminal 1 (server):
 docker exec -it clab-wifi6-adaptive-node1 iperf3 -s
 
 # Terminal 2 (client):
 docker exec -it clab-wifi6-adaptive-node2 iperf3 -c 192.168.1.1
 
-# 5. Cleanup
+# 4. Cleanup
 sudo $(which uv) run sine destroy examples/wifi6_adaptive/network.yaml
 ```
 

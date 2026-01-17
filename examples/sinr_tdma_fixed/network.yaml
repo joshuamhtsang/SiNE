@@ -28,7 +28,7 @@ topology:
       image: alpine:latest
       interfaces:
         eth1:
-          ip_address: 192.168.100.1
+          ip_address: 192.168.100.1/24
           wireless:
             # Physical layer
             position: {x: 0, y: 0, z: 1}
@@ -63,7 +63,7 @@ topology:
       image: alpine:latest
       interfaces:
         eth1:
-          ip_address: 192.168.100.2
+          ip_address: 192.168.100.2/24
           wireless:
             position: {x: 100, y: 0, z: 1}  # 100m from node1
             frequency_ghz: 5.18
@@ -93,7 +93,7 @@ topology:
       image: alpine:latest
       interfaces:
         eth1:
-          ip_address: 192.168.100.3
+          ip_address: 192.168.100.3/24
           wireless:
             position: {x: 50, y: 86.6, z: 1}  # Equilateral triangle, 100m sides
             frequency_ghz: 5.18

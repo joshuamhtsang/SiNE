@@ -299,7 +299,8 @@ class InterfaceConfig(BaseModel):
 
     ip_address: str | None = Field(
         default=None,
-        description="IP address for tc filter matching (required for shared bridge mode)"
+        description="IP address in CIDR notation (e.g., 192.168.100.1/24). "
+                    "Required for shared bridge mode, optional for point-to-point mode."
     )
     wireless: WirelessParams | None = Field(
         default=None, description="Wireless parameters (computed via ray tracing)"
@@ -601,27 +602,30 @@ class TopologyDefinition(BaseModel):
                     f"(required for tc flower filters)"
                 )
 
-            # Validate IP format
+            # Validate IP format (CIDR notation)
             try:
-                ipaddress.ip_address(iface.ip_address)
+                ipaddress.ip_interface(iface.ip_address)
             except ValueError as e:
                 raise ValueError(
                     f"Invalid IP address for {node_name}:{interface_name}: "
-                    f"{iface.ip_address} - {e}"
+                    f"{iface.ip_address} - {e}. Expected CIDR notation (e.g., 192.168.100.1/24)"
                 ) from e
 
-        # Check for IP conflicts
+        # Check for IP conflicts (compare IP portion only, not subnet)
         ip_map: dict[str, str] = {}
         for node_name in bridge.nodes:
             node = self.nodes[node_name]
             if node.interfaces and interface_name in node.interfaces:
-                ip = node.interfaces[interface_name].ip_address
-                if ip and ip in ip_map:
-                    raise ValueError(
-                        f"IP address conflict: {ip} used by both {ip_map[ip]} and {node_name}"
-                    )
-                if ip:
-                    ip_map[ip] = node_name
+                ip_cidr = node.interfaces[interface_name].ip_address
+                if ip_cidr:
+                    # Extract IP portion (before /) for conflict checking
+                    ip_only = str(ipaddress.ip_interface(ip_cidr).ip)
+                    if ip_only in ip_map:
+                        raise ValueError(
+                            f"IP address conflict: {ip_only} used by both "
+                            f"{ip_map[ip_only]} and {node_name}"
+                        )
+                    ip_map[ip_only] = node_name
 
 
 class NetworkTopology(BaseModel):

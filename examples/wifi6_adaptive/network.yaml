@@ -29,10 +29,9 @@
 #
 #   2. Deploy the emulation:
 #      sudo $(which uv) run sine deploy examples/wifi6_adaptive/network.yaml
+#      (IP addresses are automatically configured from the topology YAML)
 #
 #   3. Test connectivity:
-#      docker exec -it clab-wifi6-adaptive-node1 ip addr add 192.168.1.1/24 dev eth1
-#      docker exec -it clab-wifi6-adaptive-node2 ip addr add 192.168.1.2/24 dev eth1
 #      docker exec -it clab-wifi6-adaptive-node1 iperf3 -s
 #      docker exec -it clab-wifi6-adaptive-node2 iperf3 -c 192.168.1.1
 #
@@ -54,6 +53,7 @@ topology:
       image: sine-node:latest
       interfaces:
         eth1:
+          ip_address: 192.168.1.1/24
           wireless:
             rf_power_dbm: 20.0
             antenna_pattern: iso
@@ -75,6 +75,7 @@ topology:
       image: sine-node:latest
       interfaces:
         eth1:
+          ip_address: 192.168.1.2/24
           wireless:
             rf_power_dbm: 15.0              # Lower TX power (client device)
             antenna_pattern: iso

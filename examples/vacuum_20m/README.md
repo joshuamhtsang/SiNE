@@ -32,20 +32,17 @@ Based on free-space path loss calculations:
 uv run sine channel-server
 
 # 2. Deploy (in another terminal, requires sudo for netem)
+# IP addresses are automatically configured from the topology YAML
 sudo $(which uv) run sine deploy examples/vacuum_20m/network.yaml
 
-# 3. Configure IP addresses
-docker exec -it clab-vacuum-20m-node1 ip addr add 192.168.1.1/24 dev eth1
-docker exec -it clab-vacuum-20m-node2 ip addr add 192.168.1.2/24 dev eth1
-
-# 4. Test connectivity with iperf3
+# 3. Test connectivity with iperf3
 # Terminal 1 (node1 server):
 docker exec -it clab-vacuum-20m-node1 iperf3 -s
 
 # Terminal 2 (node2 client):
 docker exec -it clab-vacuum-20m-node2 iperf3 -c 192.168.1.1
 
-# 5. Cleanup
+# 4. Cleanup
 sudo $(which uv) run sine destroy examples/vacuum_20m/network.yaml
 ```
 

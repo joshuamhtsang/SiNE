@@ -43,19 +43,16 @@
 #
 #   3. Deploy the emulation with mobility:
 #      sudo $(which uv) run sine deploy --enable-mobility examples/two_rooms/network.yaml
+#      (IP addresses are automatically configured from the topology YAML)
 #
-#   4. Configure IP addresses:
-#      docker exec -it clab-two-rooms-node1 ip addr add 18.0.0.1/24 dev eth1
-#      docker exec -it clab-two-rooms-node2 ip addr add 18.0.0.2/24 dev eth1
-#
-#   5. Test connectivity:
+#   4. Test connectivity:
 #      docker exec -it clab-two-rooms-node1 iperf3 -s
 #      docker exec -it clab-two-rooms-node2 iperf3 -c 18.0.0.1
 #
-#   6. Run mobility (move node2 along east wall):
+#   5. Run mobility (move node2 along east wall):
 #      uv run python examples/mobility/linear_movement.py node2 30.0 10.0 1.0 30.0 30.0 1.0 1.0
 #
-#   7. Cleanup:
+#   6. Cleanup:
 #      sudo $(which uv) run sine destroy examples/two_rooms/network.yaml
 
 name: two-rooms
@@ -73,6 +70,7 @@ topology:
       image: sine-node:latest
       interfaces:
         eth1:
+          ip_address: 18.0.0.1/24
           wireless:
             rf_power_dbm: 20.0              # WiFi 6 typical TX power
             antenna_pattern: iso            # Omnidirectional
@@ -95,6 +93,7 @@ topology:
       image: sine-node:latest
       interfaces:
         eth1:
+          ip_address: 18.0.0.2/24
           wireless:
             rf_power_dbm: 20.0
             antenna_pattern: iso

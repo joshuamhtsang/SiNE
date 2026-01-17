@@ -26,19 +26,16 @@
 #
 #   2. Deploy the emulation (requires sudo for netem):
 #      sudo $(which uv) run sine deploy examples/vacuum_20m/network.yaml
+#      (IP addresses are automatically configured from the topology YAML)
 #
-#   3. Configure IP addresses (containers have no IPs by default):
-#      docker exec -it clab-vacuum-20m-node1 ip addr add 192.168.1.1/24 dev eth1
-#      docker exec -it clab-vacuum-20m-node2 ip addr add 192.168.1.2/24 dev eth1
-#
-#   4. Test connectivity with iperf3:
+#   3. Test connectivity with iperf3:
 #      Terminal 1 (node1 server):
 #        docker exec -it clab-vacuum-20m-node1 iperf3 -s
 #
 #      Terminal 2 (node2 client):
 #        docker exec -it clab-vacuum-20m-node2 iperf3 -c 192.168.1.1
 #
-#   5. Cleanup:
+#   4. Cleanup:
 #      sudo $(which uv) run sine destroy examples/vacuum_20m/network.yaml
 
 name: vacuum-20m
@@ -58,6 +55,7 @@ topology:
       image: sine-node:latest
       interfaces:
         eth1:
+          ip_address: 192.168.1.1/24
           wireless:
             rf_power_dbm: 20.0          # Standard transmit power
             antenna_pattern: iso        # Isotropic antenna pattern (ideal for free space)
@@ -79,6 +77,7 @@ topology:
       image: sine-node:latest
       interfaces:
         eth1:
+          ip_address: 192.168.1.2/24
           wireless:
             rf_power_dbm: 20.0          # Same transmit power
             antenna_pattern: iso        # Isotropic antenna pattern

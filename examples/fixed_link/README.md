@@ -25,11 +25,8 @@ This example demonstrates **fixed netem links** where network parameters (delay,
 
 ```bash
 # Deploy (no channel server needed, but requires sudo for netem)
+# IP addresses are automatically configured from the topology YAML
 sudo $(which uv) run sine deploy examples/fixed_link/network.yaml
-
-# Configure IP addresses
-docker exec -it clab-fixed-link-node1 ip addr add 192.168.1.1/24 dev eth1
-docker exec -it clab-fixed-link-node2 ip addr add 192.168.1.2/24 dev eth1
 
 # Test delay/jitter with ping (expect ~20ms RTT with variation)
 docker exec -it clab-fixed-link-node1 ping -c 10 192.168.1.2

@@ -18,10 +18,7 @@
 #
 #   # Deploy emulation (requires sudo for netem)
 #   sudo $(which uv) run sine deploy examples/fixed_link/network.yaml
-#
-#   # Configure IP addresses
-#   docker exec -it clab-fixed-link-node1 ip addr add 192.168.1.1/24 dev eth1
-#   docker exec -it clab-fixed-link-node2 ip addr add 192.168.1.2/24 dev eth1
+#   (IP addresses are automatically configured from the topology YAML)
 #
 #   # Test with ping (should see ~10ms RTT with jitter)
 #   docker exec -it clab-fixed-link-node1 ping -c 10 192.168.1.2
@@ -49,6 +46,7 @@ topology:
       cmd: sleep infinity
       interfaces:
         eth1:
+          ip_address: 192.168.1.1/24
           fixed_netem:
             delay_ms: 10.0          # 10ms one-way delay
             jitter_ms: 1.0          # 1ms jitter
@@ -62,6 +60,7 @@ topology:
       cmd: sleep infinity
       interfaces:
         eth1:
+          ip_address: 192.168.1.2/24
           fixed_netem:
             delay_ms: 10.0          # Same delay (symmetric link)
             jitter_ms: 1.0

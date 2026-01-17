@@ -252,13 +252,17 @@ class ContainerlabManager:
             self._deployed = True
             self._discover_containers()
 
-            # Apply IP addresses for shared bridge mode
+            # Apply IP addresses to all interfaces with ip_address defined
             if sine_config:
                 topology_def = sine_config.get("topology", {})
                 bridge_config = topology_def.get("shared_bridge")
                 if bridge_config and bridge_config.get("enabled"):
                     logger.info("Applying IP addresses for shared bridge mode")
                     self.apply_bridge_ips(sine_config)
+                else:
+                    # For point-to-point mode, apply IPs if defined
+                    logger.info("Applying IP addresses for point-to-point mode")
+                    self.apply_interface_ips(sine_config)
 
             return True
 
@@ -273,7 +277,7 @@ class ContainerlabManager:
 
     def _get_bridge_subnet(self, sine_config: dict, bridge_config: dict) -> str:
         """
-        Extract bridge subnet from node IPs (e.g., '192.168.100.0/24').
+        Extract bridge subnet from node IPs in CIDR notation.
 
         Args:
             sine_config: SiNE NetworkTopology as dict
@@ -286,12 +290,13 @@ class ContainerlabManager:
 
         interface_name = bridge_config.get("interface_name", "eth1")
         first_node = bridge_config["nodes"][0]
-        first_ip = sine_config["topology"]["nodes"][first_node]["interfaces"][
+        first_ip_cidr = sine_config["topology"]["nodes"][first_node]["interfaces"][
             interface_name
         ]["ip_address"]
 
-        # Calculate network from first IP with /24 prefix
-        network = ipaddress.ip_network(f"{first_ip}/24", strict=False)
+        # Parse CIDR notation and extract network
+        ip_interface = ipaddress.ip_interface(first_ip_cidr)
+        network = ip_interface.network
         return str(network)
 
     def apply_bridge_ips(self, sine_config: dict) -> dict[str, str]:
@@ -321,10 +326,12 @@ class ContainerlabManager:
         for node_name in bridge_nodes:
             node_config = topology_def["nodes"][node_name]
             interface_config = node_config["interfaces"][interface_name]
-            ip_address = interface_config["ip_address"]
+            ip_cidr = interface_config["ip_address"]
 
-            # Store mapping
-            ip_assignments[node_name] = ip_address
+            # Store IP portion only for mapping (for tc filter compatibility)
+            import ipaddress
+            ip_only = str(ipaddress.ip_interface(ip_cidr).ip)
+            ip_assignments[node_name] = ip_only
 
             # Apply IP to container interface
             container_info = self.get_container_info(node_name)
@@ -338,7 +345,7 @@ class ContainerlabManager:
                 continue
 
             try:
-                # 1. Apply IP address
+                # 1. Apply IP address (with CIDR notation)
                 result = subprocess.run(
                     [
                         "sudo",
@@ -349,7 +356,7 @@ class ContainerlabManager:
                         "ip",
                         "addr",
                         "add",
-                        f"{ip_address}/24",
+                        ip_cidr,
                         "dev",
                         interface_name,
                     ],
@@ -357,9 +364,9 @@ class ContainerlabManager:
                     text=True,
                 )
                 if result.returncode == 0:
-                    logger.info(f"Applied IP {ip_address} to {node_name}:{interface_name}")
+                    logger.info(f"Applied IP {ip_cidr} to {node_name}:{interface_name}")
                 elif "File exists" in result.stderr:
-                    logger.debug(f"IP {ip_address} already exists on {node_name}:{interface_name}")
+                    logger.debug(f"IP {ip_cidr} already exists on {node_name}:{interface_name}")
                 else:
                     logger.error(f"Failed to apply IP to {node_name}:{interface_name}: {result.stderr}")
                     continue
@@ -397,6 +404,118 @@ class ContainerlabManager:
                 logger.error(
                     f"Unexpected error configuring {node_name}:{interface_name}: {e}"
                 )
+
+        return ip_assignments
+
+    def apply_interface_ips(self, sine_config: dict) -> dict[str, dict[str, str]]:
+        """
+        Apply user-specified IPs and routing to all container interfaces with ip_address defined.
+
+        This method works for both shared bridge and point-to-point topologies.
+        For each interface with an ip_address in CIDR notation:
+        1. Applies the IP address to the interface
+        2. Adds a route for the subnet via that interface
+
+        Args:
+            sine_config: SiNE NetworkTopology as dict
+
+        Returns:
+            Dictionary mapping node_name to {interface_name: ip_address}
+        """
+        import ipaddress
+
+        topology_def = sine_config.get("topology", {})
+        nodes = topology_def.get("nodes", {})
+        ip_assignments: dict[str, dict[str, str]] = {}
+
+        for node_name, node_config in nodes.items():
+            interfaces = node_config.get("interfaces", {})
+            node_ips: dict[str, str] = {}
+
+            for interface_name, interface_config in interfaces.items():
+                ip_cidr = interface_config.get("ip_address")
+                if not ip_cidr:
+                    continue
+
+                # Parse CIDR to get IP and network
+                try:
+                    ip_interface_obj = ipaddress.ip_interface(ip_cidr)
+                    ip_only = str(ip_interface_obj.ip)
+                    subnet = str(ip_interface_obj.network)
+                except ValueError as e:
+                    logger.error(f"Invalid IP CIDR for {node_name}:{interface_name}: {ip_cidr} - {e}")
+                    continue
+
+                node_ips[interface_name] = ip_only
+
+                # Apply IP to container interface
+                container_info = self.get_container_info(node_name)
+                if not container_info:
+                    logger.error(f"Container info not found for {node_name}")
+                    continue
+
+                pid = container_info.get("pid")
+                if not pid:
+                    logger.error(f"PID not found for {node_name}")
+                    continue
+
+                try:
+                    # 1. Apply IP address (with CIDR notation)
+                    result = subprocess.run(
+                        [
+                            "sudo",
+                            "nsenter",
+                            "-t",
+                            str(pid),
+                            "-n",
+                            "ip",
+                            "addr",
+                            "add",
+                            ip_cidr,
+                            "dev",
+                            interface_name,
+                        ],
+                        capture_output=True,
+                        text=True,
+                    )
+                    if result.returncode == 0:
+                        logger.info(f"Applied IP {ip_cidr} to {node_name}:{interface_name}")
+                    elif "File exists" in result.stderr:
+                        logger.debug(f"IP {ip_cidr} already exists on {node_name}:{interface_name}")
+                    else:
+                        logger.error(f"Failed to apply IP to {node_name}:{interface_name}: {result.stderr}")
+                        continue
+
+                    # 2. Add route for subnet via this interface
+                    result = subprocess.run(
+                        [
+                            "sudo",
+                            "nsenter",
+                            "-t",
+                            str(pid),
+                            "-n",
+                            "ip",
+                            "route",
+                            "add",
+                            subnet,
+                            "dev",
+                            interface_name,
+                        ],
+                        capture_output=True,
+                        text=True,
+                    )
+                    if result.returncode == 0:
+                        logger.info(f"Added route {subnet} via {interface_name} on {node_name}")
+                    elif "File exists" in result.stderr:
+                        logger.debug(f"Route {subnet} already exists on {node_name}:{interface_name}")
+                    else:
+                        logger.warning(f"Failed to add route on {node_name}:{interface_name}: {result.stderr}")
+
+                except Exception as e:
+                    logger.error(f"Unexpected error configuring {node_name}:{interface_name}: {e}")
+
+            if node_ips:
+                ip_assignments[node_name] = node_ips
 
         return ip_assignments
 
