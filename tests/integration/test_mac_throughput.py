@@ -34,8 +34,13 @@ def deploy_topology(yaml_path: str) -> dict:
     Returns:
         Dictionary with deployment information
     """
+    # Use full path to uv to avoid "command not found" with sudo
+    uv_path = subprocess.run(
+        ["which", "uv"], capture_output=True, text=True, check=True
+    ).stdout.strip()
+
     result = subprocess.run(
-        ["sudo", "uv", "run", "sine", "deploy", yaml_path],
+        ["sudo", uv_path, "run", "sine", "deploy", yaml_path],
         capture_output=True,
         text=True,
         timeout=60,
@@ -56,8 +61,13 @@ def destroy_topology(yaml_path: str) -> None:
     Args:
         yaml_path: Path to topology YAML file
     """
+    # Use full path to uv to avoid "command not found" with sudo
+    uv_path = subprocess.run(
+        ["which", "uv"], capture_output=True, text=True, check=True
+    ).stdout.strip()
+
     result = subprocess.run(
-        ["sudo", "uv", "run", "sine", "destroy", yaml_path],
+        ["sudo", uv_path, "run", "sine", "destroy", yaml_path],
         capture_output=True,
         text=True,
         timeout=30,
