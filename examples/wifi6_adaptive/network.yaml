@@ -56,6 +56,7 @@ topology:
           ip_address: 192.168.1.1/24
           wireless:
             rf_power_dbm: 20.0
+            rx_sensitivity_dbm: -82.0       # WiFi 6 receiver sensitivity (MCS 0, 20 MHz)
             antenna_pattern: iso
             polarization: V
             antenna_gain_dbi: 3.0           # Antenna pattern selection (NOT added to link budget)
@@ -78,6 +79,7 @@ topology:
           ip_address: 192.168.1.2/24
           wireless:
             rf_power_dbm: 15.0              # Lower TX power (client device)
+            rx_sensitivity_dbm: -82.0       # WiFi 6 receiver sensitivity (MCS 0, 20 MHz)
             antenna_pattern: iso
             polarization: V
             antenna_gain_dbi: 0.0           # Antenna pattern selection (NOT added to link budget)

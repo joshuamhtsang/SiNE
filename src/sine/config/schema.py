@@ -164,6 +164,13 @@ class WirelessParams(BaseModel):
     rf_power_dbm: float = Field(
         default=20.0, description="Transmit power in dBm", ge=-30.0, le=40.0
     )
+    rx_sensitivity_dbm: float = Field(
+        default=-80.0,
+        description="Receiver sensitivity in dBm (minimum detectable signal). "
+                    "Examples: WiFi 6: -80 dBm, WiFi 5: -75 dBm, LoRa: -137 dBm, 5G: -95 dBm",
+        le=0.0,
+        ge=-150.0,
+    )
     antenna_pattern: AntennaPattern = Field(default=AntennaPattern.ISO)
     polarization: Polarization = Field(default=Polarization.V)
     antenna_gain_dbi: float = Field(default=0.0, description="Antenna gain in dBi")

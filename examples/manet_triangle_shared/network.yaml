@@ -24,6 +24,7 @@ topology:
               z: 1
             frequency_ghz: 5.18
             rf_power_dbm: 20.0
+            rx_sensitivity_dbm: -80.0       # WiFi 6 receiver sensitivity
             antenna_pattern: dipole
             polarization: V
             antenna_gain_dbi: 3.0
@@ -45,6 +46,7 @@ topology:
               z: 1
             frequency_ghz: 5.18
             rf_power_dbm: 20.0
+            rx_sensitivity_dbm: -80.0       # WiFi 6 receiver sensitivity
             antenna_pattern: dipole
             polarization: V
             antenna_gain_dbi: 3.0
@@ -66,6 +68,7 @@ topology:
               z: 1
             frequency_ghz: 5.18
             rf_power_dbm: 20.0
+            rx_sensitivity_dbm: -80.0       # WiFi 6 receiver sensitivity
             antenna_pattern: dipole
             polarization: V
             antenna_gain_dbi: 3.0

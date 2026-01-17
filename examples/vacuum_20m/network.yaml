@@ -58,6 +58,7 @@ topology:
           ip_address: 192.168.1.1/24
           wireless:
             rf_power_dbm: 20.0          # Standard transmit power
+            rx_sensitivity_dbm: -80.0   # WiFi 6 receiver sensitivity (minimum detectable signal)
             antenna_pattern: iso        # Isotropic antenna pattern (ideal for free space)
             polarization: V             # Vertical polarization
             antenna_gain_dbi: 0.0       # Antenna pattern selection (NOT added to link budget)
@@ -80,6 +81,7 @@ topology:
           ip_address: 192.168.1.2/24
           wireless:
             rf_power_dbm: 20.0          # Same transmit power
+            rx_sensitivity_dbm: -80.0   # WiFi 6 receiver sensitivity (minimum detectable signal)
             antenna_pattern: iso        # Isotropic antenna pattern
             polarization: V             # Vertical polarization
             antenna_gain_dbi: 0.0       # Antenna pattern selection (NOT added to link budget)

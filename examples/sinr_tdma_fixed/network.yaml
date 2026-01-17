@@ -35,6 +35,7 @@ topology:
             frequency_ghz: 5.18          # Same PHY as WiFi for comparison
             bandwidth_mhz: 80            # 80 MHz channel
             rf_power_dbm: 20             # 100 mW
+            rx_sensitivity_dbm: -80.0    # WiFi 6 receiver sensitivity
 
             # Antenna configuration
             antenna_pattern: iso
@@ -69,6 +70,7 @@ topology:
             frequency_ghz: 5.18
             bandwidth_mhz: 80
             rf_power_dbm: 20
+            rx_sensitivity_dbm: -80.0    # WiFi 6 receiver sensitivity
             antenna_pattern: iso
             polarization: V
             antenna_gain_dbi: 0.0
@@ -99,6 +101,7 @@ topology:
             frequency_ghz: 5.18
             bandwidth_mhz: 80
             rf_power_dbm: 20
+            rx_sensitivity_dbm: -80.0    # WiFi 6 receiver sensitivity
             antenna_pattern: iso
             polarization: V
             antenna_gain_dbi: 0.0
