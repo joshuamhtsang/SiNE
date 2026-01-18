@@ -184,24 +184,59 @@ def run_iperf3_test(
     subprocess.run(server_cmd, shell=True, timeout=10)
     time.sleep(2)  # Give server time to start
 
-    # Run iperf3 client
+    # Run iperf3 client with real-time output
     print(f"Running iperf3 client from {client_node} (this will take {duration_sec}s)...")
+
     client_cmd = (
         f"docker exec {client_container} iperf3 -c {client_ip} "
         f"-t {duration_sec} -J"
     )
-    result = subprocess.run(
-        client_cmd, shell=True, capture_output=True, text=True, timeout=duration_sec + 10
+    print(f"\n{'─'*70}")
+    process = subprocess.Popen(
+        client_cmd,
+        shell=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,  # Line buffered
     )
 
-    if result.returncode != 0:
-        print(f"ERROR: iperf3 client failed: {result.stderr}")
-        raise RuntimeError(f"iperf3 test failed: {result.stderr}")
+    # Collect output for JSON parsing while displaying progress
+    output_lines = []
+    json_started = False
+
+    for line in process.stdout:
+        output_lines.append(line)
+
+        # Detect when JSON output starts (begins with '{')
+        if line.strip().startswith("{"):
+            json_started = True
+
+        # Only print non-JSON lines (the progress output)
+        if not json_started:
+            print(line, end="")
+
+    process.wait(timeout=duration_sec + 10)
+    print(f"{'─'*70}\n")
+
+    if process.returncode != 0:
+        raise RuntimeError(f"iperf3 test failed with code {process.returncode}")
 
     # Parse JSON output to extract throughput
     import json
 
-    iperf_data = json.loads(result.stdout)
+    # Join all lines to get complete JSON
+    full_output = "".join(output_lines)
+
+    # Extract JSON portion (everything from first '{' to last '}')
+    json_start = full_output.find("{")
+    json_end = full_output.rfind("}") + 1
+
+    if json_start == -1 or json_end == 0:
+        raise RuntimeError("Could not find JSON output from iperf3")
+
+    json_output = full_output[json_start:json_end]
+    iperf_data = json.loads(json_output)
     throughput_bps = iperf_data["end"]["sum_received"]["bits_per_second"]
     throughput_mbps = throughput_bps / 1e6
 
@@ -276,7 +311,7 @@ def test_csma_throughput_spatial_reuse(channel_server, examples_dir: Path):
 
     Expected: ~400-450 Mbps (80-90% of 480 Mbps PHY rate)
     """
-    yaml_path = examples_dir / "sinr_csma_example.yaml"
+    yaml_path = examples_dir / "sinr_csma" / "network.yaml"
 
     if not yaml_path.exists():
         pytest.skip(f"Example not found: {yaml_path}")
@@ -374,7 +409,9 @@ def test_tdma_roundrobin_throughput(channel_server, examples_dir: Path):
     """
     Test TDMA round-robin gives equal throughput per node.
 
-    Expected: ~152-160 Mbps (95-100% of 160 Mbps, 33.3% slot ownership × 480 Mbps PHY)
+    Expected: ~81-85 Mbps (95-100% of 85 Mbps, 33.3% slot ownership × 256 Mbps PHY)
+    PHY rate calculation: 80 MHz × 6 bits/symbol (64-QAM) × 0.667 code_rate × 0.8 efficiency = 256 Mbps
+    TDMA rate: 256 Mbps × (1/3) = 85.3 Mbps
     """
     yaml_path = examples_dir / "sinr_tdma_roundrobin" / "network.yaml"
 
@@ -389,28 +426,22 @@ def test_tdma_roundrobin_throughput(channel_server, examples_dir: Path):
         # Deploy (returns background process)
         deploy_process = deploy_topology(str(yaml_path))
 
-        # Configure IPs
-        configure_ips(
-            "clab-sinr-tdma-roundrobin",
-            {
-                "node1": "192.168.1.1",
-                "node2": "192.168.1.2",
-            },
-        )
+        # Note: IPs already configured by deployment (192.168.100.x/24)
+        # No additional IP configuration needed (unlike CSMA test)
 
-        # Run iperf3 test
+        # Run iperf3 test (using the shared bridge IPs)
         throughput = run_iperf3_test(
             container_prefix="clab-sinr-tdma-roundrobin",
             server_node="node1",
             client_node="node2",
-            client_ip="192.168.1.1",
+            client_ip="192.168.100.1",  # Use existing bridge IP
             duration_sec=30,
         )
 
-        # Validate: 95-100% of 160 Mbps (33.3% slot ownership)
-        assert 152 <= throughput <= 160, (
+        # Validate: 95-100% of ~85 Mbps (33.3% slot ownership)
+        assert 81 <= throughput <= 86, (
             f"TDMA round-robin throughput {throughput:.1f} Mbps not in expected range "
-            f"[152-160 Mbps] (33.3% slot ownership)"
+            f"[81-86 Mbps] (33.3% slot ownership × 256 Mbps PHY)"
         )
 
     finally:
@@ -429,7 +460,7 @@ def test_csma_vs_tdma_ratio(channel_server, examples_dir: Path):
     This validates that CSMA spatial reuse provides significant throughput
     advantage over TDMA deterministic scheduling.
     """
-    csma_yaml = examples_dir / "sinr_csma_example.yaml"
+    csma_yaml = examples_dir / "sinr_csma" / "network.yaml"
     tdma_yaml = examples_dir / "sinr_tdma_fixed" / "network.yaml"
 
     if not csma_yaml.exists() or not tdma_yaml.exists():

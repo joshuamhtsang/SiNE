@@ -699,6 +699,8 @@ async def _compute_batch_with_mac_model(
                 result.throughput_multiplier = mac_model.get_throughput_multiplier(
                     link.tx_node, all_nodes=list(all_nodes)
                 )
+                # Apply TDMA slot ownership to rate limit
+                result.netem_rate_mbps = result.netem_rate_mbps * result.throughput_multiplier
 
             results.append(result)
 

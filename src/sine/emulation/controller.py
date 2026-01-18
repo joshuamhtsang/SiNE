@@ -420,23 +420,13 @@ class EmulationController:
 
             result = results[i]
 
-            # Apply TDMA throughput multiplier if present
-            rate_mbps = result["netem_rate_mbps"]
-            if result.get("mac_model_type") == "tdma" and "throughput_multiplier" in result:
-                throughput_multiplier = result["throughput_multiplier"]
-                original_rate = result["netem_rate_mbps"]
-                rate_mbps = original_rate * throughput_multiplier
-                logger.debug(
-                    f"Applied TDMA throughput multiplier {throughput_multiplier:.3f} to "
-                    f"{tx_node}<->{rx_node}: "
-                    f"{original_rate:.1f} Mbps -> {rate_mbps:.1f} Mbps"
-                )
-
+            # Note: TDMA throughput multiplier already applied by channel server
+            # (see server.py:703 - netem_rate_mbps includes slot ownership)
             netem_params = NetemParams(
                 delay_ms=result["netem_delay_ms"],
                 jitter_ms=result["netem_jitter_ms"],
                 loss_percent=result["netem_loss_percent"],
-                rate_mbps=rate_mbps,
+                rate_mbps=result["netem_rate_mbps"],
             )
 
             per_node_config[tx_node].dest_params[rx_ip] = netem_params
@@ -610,19 +600,9 @@ class EmulationController:
             response.raise_for_status()
             results = response.json()
 
-        # Apply netem configurations with TDMA throughput adjustment
+        # Apply netem configurations
+        # Note: TDMA throughput multiplier already applied by channel server
         for result in results.get("results", []):
-            # Apply TDMA throughput multiplier if present
-            if result.get("mac_model_type") == "tdma" and "throughput_multiplier" in result:
-                throughput_multiplier = result["throughput_multiplier"]
-                original_rate = result["netem_rate_mbps"]
-                result["netem_rate_mbps"] = original_rate * throughput_multiplier
-                logger.debug(
-                    f"Applied TDMA throughput multiplier {throughput_multiplier:.3f} to "
-                    f"{result['tx_node']}<->{result['rx_node']}: "
-                    f"{original_rate:.1f} Mbps -> {result['netem_rate_mbps']:.1f} Mbps"
-                )
-
             await self._apply_wireless_link_config(result)
 
         logger.info(
