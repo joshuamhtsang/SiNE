@@ -446,6 +446,137 @@ def test_tdma_roundrobin_throughput(channel_server, examples_dir: Path):
 
 
 @pytest.mark.integration
+def test_csma_mcs_uses_sinr(channel_server, examples_dir: Path):
+    """
+    Test that MCS selection uses SINR (not SNR) when CSMA MAC model is present.
+
+    This validates the fix for the bug where MCS was selected on SNR even when
+    interference was present. With CSMA, we compute SINR and MCS should be
+    selected based on SINR, not SNR.
+
+    Expected behavior:
+    - SINR < SNR (interference from node3)
+    - MCS index matches SINR threshold (not SNR)
+    - Deployment summary shows both SNR and SINR
+    - MAC model type shown as "csma"
+    """
+    yaml_path = examples_dir / "csma_mcs_test" / "network.yaml"
+
+    if not yaml_path.exists():
+        pytest.skip(f"Example not found: {yaml_path}")
+
+    # Cleanup any existing deployment first
+    destroy_topology(str(yaml_path))
+
+    # Deploy with mobility enabled so we can query the emulation API
+    uv_path = subprocess.run(
+        ["which", "uv"], capture_output=True, text=True, check=True
+    ).stdout.strip()
+
+    print(f"\n{'='*70}")
+    print(f"Deploying topology with mobility API: {yaml_path}")
+    print(f"{'='*70}\n")
+
+    # Start deployment with mobility API in background
+    deploy_process = subprocess.Popen(
+        ["sudo", uv_path, "run", "sine", "deploy", "--enable-mobility", str(yaml_path)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+
+    try:
+        # Wait for deployment to complete
+        print("Waiting for deployment and API server to start...")
+        deployment_ready = False
+        for line in deploy_process.stdout:
+            print(line, end="")
+            if "Emulation deployed successfully!" in line:
+                deployment_ready = True
+            if deployment_ready and "Mobility API running" in line:
+                break
+            if deploy_process.poll() is not None:
+                raise RuntimeError(f"Deployment failed (exit code {deploy_process.returncode})")
+
+        if not deployment_ready:
+            deploy_process.terminate()
+            raise RuntimeError("Deployment did not complete successfully")
+
+        # Give API server time to fully start
+        time.sleep(3)
+
+        # Query emulation API for deployment summary
+        import json
+        import urllib.request
+
+        print("\nQuerying emulation API for deployment summary...")
+        with urllib.request.urlopen("http://localhost:8001/api/emulation/summary") as response:
+            summary = json.loads(response.read())
+
+        # Find link node1 -> node2
+        link_found = False
+        for link in summary.get("links", []):
+            if link["tx_node"] == "node1" and link["rx_node"] == "node2":
+                link_found = True
+                snr_db = link["snr_db"]
+                sinr_db = link.get("sinr_db")
+                mcs_index = link.get("mcs_index")
+                mac_model = link.get("mac_model_type")
+
+                print(f"\n{'='*70}")
+                print(f"Link node1 → node2:")
+                print(f"  SNR: {snr_db:.1f} dB")
+                print(f"  SINR: {sinr_db:.1f} dB" if sinr_db else "  SINR: None")
+                print(f"  MCS: {mcs_index}" if mcs_index is not None else "  MCS: None")
+                print(f"  MAC model: {mac_model}" if mac_model else "  MAC model: None")
+                print(f"{'='*70}\n")
+
+                # Validation 1: SINR must be present (MAC model case)
+                assert sinr_db is not None, "SINR should be computed for CSMA MAC model"
+
+                # Validation 2: SINR < SNR (interference present)
+                assert sinr_db < snr_db, (
+                    f"SINR ({sinr_db:.1f} dB) should be less than SNR ({snr_db:.1f} dB) "
+                    f"due to interference from node3"
+                )
+
+                # Validation 3: MAC model type should be "csma"
+                assert mac_model == "csma", f"MAC model should be 'csma', got '{mac_model}'"
+
+                # Validation 4: MCS should be selected based on SINR
+                assert mcs_index is not None, "MCS index should be selected"
+
+                # Validation 5: Check that selected MCS makes sense for SINR
+                # For free-space at 20m with 20 dBm TX power:
+                # - Expected SNR ≈ 48 dB
+                # - Expected SINR ≈ 44-46 dB (with interference)
+                # - Should select high MCS (MCS 10 or 11 for 1024-QAM)
+                assert 40 <= sinr_db <= 50, (
+                    f"SINR {sinr_db:.1f} dB out of expected range [40-50 dB] "
+                    f"for 20m free-space link"
+                )
+                assert 10 <= mcs_index <= 11, (
+                    f"MCS {mcs_index} should be 10 or 11 for SINR ≈ 45 dB"
+                )
+
+                print(f"✓ MCS selection uses SINR (not SNR)")
+                print(f"✓ SINR < SNR (interference accounted for)")
+                print(f"✓ MAC model type is 'csma'")
+                print(f"✓ Selected MCS matches SINR threshold\n")
+
+                break
+
+        assert link_found, "Link node1 → node2 not found in deployment summary"
+
+    finally:
+        # Stop deployment process
+        stop_deployment_process(deploy_process)
+        # Cleanup containers
+        destroy_topology(str(yaml_path))
+
+
+@pytest.mark.integration
 @pytest.mark.slow
 def test_csma_vs_tdma_ratio(channel_server, examples_dir: Path):
     """

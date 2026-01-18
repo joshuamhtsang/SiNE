@@ -31,6 +31,7 @@ from sine.channel.interference_engine import InterferenceEngine, TransmitterInfo
 from sine.channel.frequency_groups import group_nodes_by_frequency
 from sine.channel.csma_model import CSMAModel
 from sine.channel.tdma_model import TDMAModel, TDMASlotConfig, SlotAssignmentMode
+import math
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +101,10 @@ class MACModel(BaseModel):
     # CSMA parameters
     carrier_sense_range_multiplier: float | None = Field(default=None, description="CSMA: CS range multiplier")
     traffic_load: float | None = Field(default=None, description="CSMA: Traffic duty cycle")
+    communication_range_snr_threshold_db: float | None = Field(
+        default=None,
+        description="CSMA: SNR threshold for communication range estimation (default: 20 dB)"
+    )
     # TDMA parameters
     frame_duration_ms: float | None = Field(default=None, description="TDMA: Frame duration in ms")
     num_slots: int | None = Field(default=None, description="TDMA: Number of slots per frame")
@@ -480,6 +485,57 @@ def _validate_channel_result(
             )
 
 
+def estimate_communication_range(
+    tx_power_dbm: float,
+    frequency_hz: float,
+    bandwidth_hz: float,
+    tx_gain_dbi: float = 0.0,
+    rx_gain_dbi: float = 0.0,
+    min_snr_db: float = 10.0,
+    noise_figure_db: float = 7.0,
+) -> float:
+    """
+    Estimate communication range from link budget.
+
+    Finds the distance where SNR drops to min_snr_db threshold.
+    Uses free-space path loss (FSPL) model for conservative estimate.
+
+    Args:
+        tx_power_dbm: Transmit power in dBm
+        frequency_hz: Carrier frequency in Hz
+        bandwidth_hz: Channel bandwidth in Hz
+        tx_gain_dbi: TX antenna gain in dBi (default: 0)
+        rx_gain_dbi: RX antenna gain in dBi (default: 0)
+        min_snr_db: Minimum SNR threshold for communication (default: 10 dB)
+        noise_figure_db: Receiver noise figure (default: 7 dB)
+
+    Returns:
+        Estimated communication range in meters
+    """
+    # Thermal noise power: -174 dBm/Hz + 10*log10(BW) + NF
+    noise_floor_dbm = -174.0 + 10.0 * math.log10(bandwidth_hz) + noise_figure_db
+
+    # Required RX power for min_snr_db
+    min_rx_power_dbm = noise_floor_dbm + min_snr_db
+
+    # Maximum allowable path loss
+    max_path_loss_db = tx_power_dbm + tx_gain_dbi + rx_gain_dbi - min_rx_power_dbm
+
+    # FSPL formula: PL = 20*log10(d) + 20*log10(f) - 147.55
+    # Solve for d: d = 10^((PL - 20*log10(f) + 147.55) / 20)
+    frequency_ghz = frequency_hz / 1e9
+    log_distance = (max_path_loss_db - 20.0 * math.log10(frequency_ghz * 1e9) + 147.55) / 20.0
+    communication_range_m = 10.0 ** log_distance
+
+    logger.info(
+        f"Estimated communication range: {communication_range_m:.1f} m "
+        f"(TX={tx_power_dbm} dBm, f={frequency_ghz:.2f} GHz, "
+        f"BW={bandwidth_hz/1e6:.0f} MHz, min_SNR={min_snr_db} dB)"
+    )
+
+    return communication_range_m
+
+
 async def _compute_batch_with_mac_model(
     links: list[WirelessLinkRequest],
     mac_model_config: MACModel,
@@ -610,10 +666,17 @@ async def _compute_batch_with_mac_model(
             interferer_nodes = [n for n in all_nodes if n not in (link.tx_node, link.rx_node)]
 
             if mac_model_config.type == "csma":
-                # CSMA: Need communication range (estimate from path loss)
-                # Simple estimate: range where path loss = FSPL + 10 dB margin
-                # For now, use a fixed communication range of 100m (WiFi typical)
-                communication_range = 100.0
+                # CSMA: Estimate communication range from link budget
+                # Use configured SNR threshold from network.yaml
+                communication_range = estimate_communication_range(
+                    tx_power_dbm=link.tx_power_dbm,
+                    frequency_hz=link.frequency_hz,
+                    bandwidth_hz=link.bandwidth_hz,
+                    tx_gain_dbi=link.tx_gain_dbi,
+                    rx_gain_dbi=link.rx_gain_dbi,
+                    min_snr_db=mac_model_config.communication_range_snr_threshold_db,
+                    noise_figure_db=7.0,
+                )
 
                 interference_probs = mac_model.compute_interference_probabilities(
                     tx_node=link.tx_node,
@@ -682,15 +745,19 @@ async def _compute_batch_with_mac_model(
                 interference_terms=interference_terms,
             )
 
-            # Use SINR instead of SNR for BER/PER calculation
+            # Use SINR instead of SNR for MCS selection and BER/BLER/PER calculation
             effective_snr = sinr_result.sinr_db
 
-            # Compute channel parameters using SINR (rest of pipeline same as SNR)
-            result = compute_channel_for_link(link, path_result)
+            # Compute channel parameters using SINR for MAC-aware MCS selection
+            result = compute_channel_for_link(
+                link,
+                path_result,
+                effective_metric_db=effective_snr  # Pass SINR for accurate MCS selection
+            )
 
             # Override SNR with SINR and add MAC metadata
-            result.snr_db = snr_db  # Keep original SNR
-            result.sinr_db = effective_snr  # Add SINR
+            result.snr_db = snr_db  # Keep original SNR (without interference)
+            result.sinr_db = effective_snr  # Add SINR (with interference)
             result.mac_model_type = mac_model_config.type
 
             if mac_model_config.type == "csma":
@@ -731,7 +798,9 @@ async def _compute_batch_with_mac_model(
 
 
 def compute_channel_for_link(
-    link: WirelessLinkRequest, path_result: PathResult
+    link: WirelessLinkRequest,
+    path_result: PathResult,
+    effective_metric_db: float | None = None
 ) -> ChannelResponse:
     """
     Compute complete channel parameters for a wireless link.
@@ -761,6 +830,10 @@ def compute_channel_for_link(
     Args:
         link: Wireless link request with RF parameters
         path_result: Ray tracing results from Sionna PathSolver
+        effective_metric_db: Optional SINR value to use instead of SNR for MCS
+                           selection and BER/BLER/PER calculation. When provided
+                           (MAC model case), uses SINR for accurate modulation
+                           selection under interference.
 
     Returns:
         ChannelResponse with SNR, BER, BLER, PER, and netem parameters
@@ -781,6 +854,9 @@ def compute_channel_for_link(
         from_sionna=True,  # Path loss from RT includes antenna gains (do NOT add again)
     )
 
+    # Use SINR if provided (MAC model case), otherwise SNR
+    metric_for_mcs = effective_metric_db if effective_metric_db is not None else snr_db
+
     # Determine modulation, FEC, and bandwidth based on MCS table or fixed params
     selected_mcs_index: int | None = None
     selected_bandwidth_mhz: float | None = None
@@ -789,7 +865,7 @@ def compute_channel_for_link(
         # Adaptive MCS selection
         mcs_table = get_or_load_mcs_table(link.mcs_table_path, link.mcs_hysteresis_db)
         link_id = f"{link.tx_node}->{link.rx_node}"
-        mcs = mcs_table.select_mcs(snr_db, link_id)
+        mcs = mcs_table.select_mcs(metric_for_mcs, link_id)
 
         modulation = mcs.modulation
         fec_type = mcs.fec_type
@@ -804,8 +880,9 @@ def compute_channel_for_link(
             bandwidth_hz = link.bandwidth_hz
             selected_bandwidth_mhz = link.bandwidth_hz / 1e6
 
+        metric_name = "SINR" if effective_metric_db is not None else "SNR"
         logger.debug(
-            f"Link {link_id}: SNR={snr_db:.1f}dB -> MCS{mcs.mcs_index} "
+            f"Link {link_id}: {metric_name}={metric_for_mcs:.1f}dB -> MCS{mcs.mcs_index} "
             f"({mcs.modulation}, rate={mcs.code_rate})"
         )
     else:
@@ -816,8 +893,9 @@ def compute_channel_for_link(
         bandwidth_hz = link.bandwidth_hz
 
     # Calculate BER with selected modulation
+    # Use effective metric (SINR if MAC model, otherwise SNR)
     ber_calc = BERCalculator(modulation)
-    ber = ber_calc.theoretical_ber_awgn(snr_db)
+    ber = ber_calc.theoretical_ber_awgn(metric_for_mcs)
 
     # Calculate BLER if using FEC
     bler = None
@@ -828,7 +906,7 @@ def compute_channel_for_link(
             modulation=modulation,
             block_length=min(link.packet_size_bits, 8192),  # Max block size
         )
-        bler = bler_calc.approximate_bler(snr_db)
+        bler = bler_calc.approximate_bler(metric_for_mcs)
 
     # Calculate PER
     per_calc = PERCalculator(fec_type=fec_type)

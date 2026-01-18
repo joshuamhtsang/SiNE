@@ -1,0 +1,148 @@
+# CSMA + Adaptive MCS Integration Test
+#
+# This topology tests that MCS selection uses SINR (not SNR) when a MAC model
+# (CSMA) is present. This ensures that interference is properly accounted for
+# in modulation selection.
+#
+# Expected behavior:
+# - Node1 ↔ Node2: Primary link with adaptive MCS
+# - Node3: Interferer creating hidden node scenario
+# - MCS should be selected based on SINR (accounting for Node3 interference)
+# - Without SINR fix: MCS selected on SNR → overly aggressive modulation
+# - With SINR fix: MCS selected on SINR → realistic modulation
+#
+# Test topology (equilateral triangle, 20m sides):
+#
+#     node3 (10, 17.32, 1)
+#       /\
+#      /  \     20m sides
+#     /    \
+#    /______\
+#   node1    node2
+#   (0,0,1)  (20,0,1)
+#
+# All nodes co-channel (5.18 GHz), all transmit with CSMA model
+
+name: csma-mcs-test
+
+topology:
+  # Scene configuration (vacuum for free-space propagation)
+  scene:
+    file: scenes/vacuum.xml
+
+  # Shared bridge for MANET broadcast domain
+  shared_bridge:
+    enabled: true
+    name: csma-mcs-br0
+    nodes: [node1, node2, node3]
+    interface_name: eth1
+
+  nodes:
+    # Node 1: WiFi 6 with CSMA + Adaptive MCS
+    node1:
+      kind: linux
+      image: alpine:latest
+      exec:
+        - apk add --no-cache iproute2 iputils iperf3
+      interfaces:
+        eth1:
+          ip_address: 192.168.100.1/24
+          wireless:
+            # Physical layer
+            position: {x: 0, y: 0, z: 1}
+            frequency_ghz: 5.18          # WiFi 6 channel 36
+            bandwidth_mhz: 80            # 80 MHz channel
+            rf_power_dbm: 20             # 100 mW (typical WiFi 6)
+
+            # Antenna configuration
+            antenna_pattern: iso         # Isotropic (omnidirectional)
+            polarization: V              # Vertical polarization
+            antenna_gain_dbi: 0.0        # 0 dBi (omnidirectional)
+
+            # Adaptive MCS selection (key test feature)
+            mcs_table: examples/wifi6_adaptive/data/wifi6_mcs.csv
+            mcs_hysteresis_db: 2.0
+
+            # MAC layer: CSMA/CA model
+            csma:
+              enabled: true                          # Enable CSMA/CA model
+              carrier_sense_range_multiplier: 2.5    # CS range = 2.5× communication range
+              traffic_load: 0.3                      # 30% duty cycle
+              communication_range_snr_threshold_db: 20.0  # WiFi 6 practical range (64-QAM zone)
+
+    # Node 2: WiFi 6 client (primary receiver)
+    node2:
+      kind: linux
+      image: alpine:latest
+      exec:
+        - apk add --no-cache iproute2 iputils iperf3
+      interfaces:
+        eth1:
+          ip_address: 192.168.100.2/24
+          wireless:
+            position: {x: 20, y: 0, z: 1}  # 20m from node1
+            frequency_ghz: 5.18
+            bandwidth_mhz: 80
+            rf_power_dbm: 20
+            antenna_pattern: iso
+            polarization: V
+            antenna_gain_dbi: 0.0
+            mcs_table: examples/wifi6_adaptive/data/wifi6_mcs.csv
+            mcs_hysteresis_db: 2.0
+
+            # Same CSMA config
+            csma:
+              enabled: true
+              carrier_sense_range_multiplier: 2.5
+              traffic_load: 0.3
+              communication_range_snr_threshold_db: 20.0
+
+    # Node 3: Interferer (creates SINR degradation)
+    node3:
+      kind: linux
+      image: alpine:latest
+      exec:
+        - apk add --no-cache iproute2 iputils iperf3
+      interfaces:
+        eth1:
+          ip_address: 192.168.100.3/24
+          wireless:
+            position: {x: 10, y: 17.32, z: 1}  # Equilateral triangle, 20m sides
+            frequency_ghz: 5.18
+            bandwidth_mhz: 80
+            rf_power_dbm: 20
+            antenna_pattern: iso
+            polarization: V
+            antenna_gain_dbi: 0.0
+            mcs_table: examples/wifi6_adaptive/data/wifi6_mcs.csv
+            mcs_hysteresis_db: 2.0
+
+            csma:
+              enabled: true
+              carrier_sense_range_multiplier: 2.5
+              traffic_load: 0.3
+              communication_range_snr_threshold_db: 20.0
+
+# Expected Results (with SINR fix):
+#
+# Link node1 → node2 (20m free-space):
+# - SNR ≈ 48 dB (20m FSPL @ 5.18 GHz ≈ 66 dB, 20 dBm TX → 48 dB SNR)
+# - SINR ≈ 44-46 dB (interference from node3 ~20m away, 30% duty cycle)
+# - MCS should be selected on SINR ≈ 45 dB → MCS 11 (1024-QAM, rate-0.833)
+# - Without fix: MCS selected on SNR=48 dB → might select overly aggressive MCS
+# - With fix: MCS correctly selected on SINR=45 dB
+#
+# Validation criteria:
+# 1. SINR < SNR (interference present)
+# 2. MCS index matches SINR threshold (not SNR)
+# 3. Deployment summary shows both SNR and SINR values
+# 4. MAC model type shown as "csma"
+#
+# Deployment:
+#   sudo $(which uv) run sine deploy examples/csma_mcs_test/network.yaml
+#
+# Expected output:
+#   Link: node1 (eth1) <-> node2 (eth1) [wireless]
+#     SNR: 48.2 dB | SINR: 45.1 dB (interference: -3.1 dB) [CSMA]
+#     MCS: 11 (selected on SINR, 1024qam rate-0.833 ldpc)
+#     Delay: 0.07 ms | Jitter: 0.00 ms | Loss: 0.00% | Rate: 532.5 Mbps

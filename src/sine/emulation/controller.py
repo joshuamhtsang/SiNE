@@ -344,6 +344,7 @@ class EmulationController:
                     "type": "csma",
                     "carrier_sense_range_multiplier": tx_params.csma.carrier_sense_range_multiplier,
                     "traffic_load": tx_params.csma.traffic_load,
+                    "communication_range_snr_threshold_db": tx_params.csma.communication_range_snr_threshold_db,
                 }
             elif tx_params.tdma and tx_params.tdma.enabled:
                 mac_model = {
@@ -436,9 +437,11 @@ class EmulationController:
                 "netem": netem_params,
                 "rf": {
                     "snr_db": result.get("snr_db"),
+                    "sinr_db": result.get("sinr_db"),  # SINR when MAC model present
                     "path_loss_db": result.get("path_loss_db"),
                     "per": result.get("per"),
                     "rx_power_dbm": result.get("rx_power_dbm"),
+                    "mac_model_type": result.get("mac_model_type"),  # CSMA, TDMA, or None
                 },
             }
 
@@ -563,6 +566,7 @@ class EmulationController:
                     "type": "csma",
                     "carrier_sense_range_multiplier": wireless1.csma.carrier_sense_range_multiplier,
                     "traffic_load": wireless1.csma.traffic_load,
+                    "communication_range_snr_threshold_db": wireless1.csma.communication_range_snr_threshold_db,
                 }
             elif wireless1.tdma and wireless1.tdma.enabled:
                 mac_model = {
@@ -838,9 +842,11 @@ class EmulationController:
                 "netem": params,
                 "rf": {
                     "snr_db": channel_result["snr_db"],
+                    "sinr_db": channel_result.get("sinr_db"),  # SINR when MAC model present
                     "path_loss_db": channel_result["path_loss_db"],
                     "per": channel_result["per"],
                     "rx_power_dbm": channel_result.get("received_power_dbm"),
+                    "mac_model_type": channel_result.get("mac_model_type"),  # CSMA, TDMA, or None
                 },
             }
 
@@ -1102,6 +1108,11 @@ class EmulationController:
             # Add RF metrics if available (wireless links only)
             if rf_metrics:
                 link_info["snr_db"] = rf_metrics["snr_db"]
+                # Add SINR if available (MAC model case)
+                if rf_metrics.get("sinr_db") is not None:
+                    link_info["sinr_db"] = rf_metrics["sinr_db"]
+                if rf_metrics.get("mac_model_type"):
+                    link_info["mac_model_type"] = rf_metrics["mac_model_type"]
                 link_info["path_loss_db"] = rf_metrics["path_loss_db"]
                 link_info["per"] = rf_metrics["per"]
                 if rf_metrics["rx_power_dbm"] is not None:

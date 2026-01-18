@@ -161,6 +161,33 @@ def _print_deployment_summary(summary: dict) -> None:
 
             console.print(link_table)
 
+            # Print RF metrics and MCS info for wireless links
+            for link in summary["links"]:
+                if link.get("type") == "wireless" and link.get("snr_db") is not None:
+                    rf_info = f"  [cyan]{link['link']}[/]:"
+
+                    # Show SNR/SINR
+                    if link.get("sinr_db") is not None:
+                        # MAC model present - show both SNR and SINR
+                        snr_db = link["snr_db"]
+                        sinr_db = link["sinr_db"]
+                        interference_db = snr_db - sinr_db
+                        rf_info += f" SNR: {snr_db:.1f} dB | SINR: {sinr_db:.1f} dB (interference: {interference_db:+.1f} dB)"
+                        if link.get("mac_model_type"):
+                            rf_info += f" [{link['mac_model_type'].upper()}]"
+                    else:
+                        # No MAC model - just SNR
+                        rf_info += f" SNR: {link['snr_db']:.1f} dB"
+
+                    # Show MCS info if available
+                    if link.get("mcs_index") is not None:
+                        metric_used = "SINR" if link.get("sinr_db") is not None else "SNR"
+                        rf_info += f"\n    MCS: {link['mcs_index']} (selected on {metric_used}, "
+                        rf_info += f"{link.get('modulation', 'N/A')} rate-{link.get('code_rate', 'N/A')} "
+                        rf_info += f"{link.get('fec_type', 'N/A')})"
+
+                    console.print(rf_info)
+
 
 @click.group()
 @click.version_option(version="0.1.0", prog_name="sine")
@@ -260,14 +287,23 @@ def deploy(topology: Path, channel_server: str, enable_mobility: bool, mobility_
             console.print(f"[dim]Example: curl -X POST http://localhost:{mobility_port}/api/mobility/update \\")
             console.print("[dim]         -H 'Content-Type: application/json' \\")
             console.print("[dim]         -d '{'\"node\": \"node2\", \"x\": 10.0, \"y\": 5.0, \"z\": 1.5}'[/]")
+            console.print(f"[dim]Query deployment: curl http://localhost:{mobility_port}/api/emulation/summary[/]")
             console.print(f"[dim]To destroy: uv run sine destroy {topology}[/]")
             console.print("[dim]Press Ctrl+C to stop emulation[/]")
 
-            # Create mobility API server (but with already-started controller)
+            # Create combined API server with both mobility and emulation endpoints
+            from sine.emulation.api import EmulationAPIServer
+
             mobility_server = MobilityAPIServer(topology)
             mobility_server.controller = controller_obj  # Use existing controller
 
-            # Start FastAPI server
+            emulation_api = EmulationAPIServer(controller_obj)
+
+            # Mount emulation API routes onto mobility API app
+            for route in emulation_api.app.routes:
+                mobility_server.app.routes.append(route)
+
+            # Start combined FastAPI server
             config = uvicorn.Config(
                 mobility_server.app,
                 host="0.0.0.0",
