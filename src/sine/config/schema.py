@@ -613,7 +613,13 @@ class TopologyDefinition(BaseModel):
                     f"(required for tc flower filters)"
                 )
 
-            # Validate IP format (CIDR notation)
+            # Validate IP format (CIDR notation required)
+            if "/" not in iface.ip_address:
+                raise ValueError(
+                    f"Invalid IP address for {node_name}:{interface_name}: "
+                    f"'{iface.ip_address}' missing subnet mask. "
+                    f"Expected CIDR notation (e.g., 192.168.100.1/24)"
+                )
             try:
                 ipaddress.ip_interface(iface.ip_address)
             except ValueError as e:
