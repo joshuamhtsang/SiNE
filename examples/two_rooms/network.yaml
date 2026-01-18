@@ -35,24 +35,21 @@
 # - Best signal when node2 is aligned with doorway (y=20m)
 #
 # Usage:
-#   1. Build node image:
-#      docker build -t sine-node:latest docker/node/
-#
-#   2. Start the channel server:
+#   1. Start the channel server:
 #      uv run sine channel-server
 #
-#   3. Deploy the emulation with mobility:
+#   2. Deploy the emulation with mobility:
 #      sudo $(which uv) run sine deploy --enable-mobility examples/two_rooms/network.yaml
 #      (IP addresses are automatically configured from the topology YAML)
 #
-#   4. Test connectivity:
+#   3. Test connectivity:
 #      docker exec -it clab-two-rooms-node1 iperf3 -s
 #      docker exec -it clab-two-rooms-node2 iperf3 -c 18.0.0.1
 #
-#   5. Run mobility (move node2 along east wall):
+#   4. Run mobility (move node2 along east wall):
 #      uv run python examples/mobility/linear_movement.py node2 30.0 10.0 1.0 30.0 30.0 1.0 1.0
 #
-#   6. Cleanup:
+#   5. Cleanup:
 #      sudo $(which uv) run sine destroy examples/two_rooms/network.yaml
 
 name: two-rooms
@@ -67,7 +64,9 @@ topology:
     # Node in Room 1 (west room)
     node1:
       kind: linux
-      image: sine-node:latest
+      image: alpine:latest
+      exec:
+        - apk add --no-cache iproute2 iputils iperf3
       interfaces:
         eth1:
           ip_address: 18.0.0.1/24
@@ -91,7 +90,9 @@ topology:
     # Node in Room 2 (east room)
     node2:
       kind: linux
-      image: sine-node:latest
+      image: alpine:latest
+      exec:
+        - apk add --no-cache iproute2 iputils iperf3
       interfaces:
         eth1:
           ip_address: 18.0.0.2/24

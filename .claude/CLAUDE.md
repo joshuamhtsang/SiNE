@@ -1,1 +1,1 @@
-If a command requires `sudo` to run, give the instructions and commands to run to the user to run manually, and ask for the resulting output.
+If a command requires `sudo` to run, give the instructions and commands to run to the user to run manually, and ask for the resulting output. If it is a pytest command, always add pytest '-s' flag for more verbose output.

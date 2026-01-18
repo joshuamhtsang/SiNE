@@ -52,7 +52,9 @@ topology:
     # First node at origin
     node1:
       kind: linux
-      image: sine-node:latest
+      image: alpine:latest
+      exec:
+        - apk add --no-cache iproute2 iputils iperf3
       interfaces:
         eth1:
           ip_address: 192.168.1.1/24
@@ -75,7 +77,9 @@ topology:
     # Second node at 20m distance
     node2:
       kind: linux
-      image: sine-node:latest
+      image: alpine:latest
+      exec:
+        - apk add --no-cache iproute2 iputils iperf3
       interfaces:
         eth1:
           ip_address: 192.168.1.2/24

@@ -154,17 +154,12 @@ Legend:
 
 ### Step-by-Step Setup
 
-1. **Build the node image**: Used to spin up container(s) representing the nodes (includes iperf3, tcpdump, etc.):
-   ```bash
-   docker build -t sine-node:latest docker/node/
-   ```
-
-2. **Start the channel server** Responsible for computing the link characteristics (delay, bandwidth, packet loss % etc.):
+1. **Start the channel server** Responsible for computing the link characteristics (delay, bandwidth, packet loss % etc.):
    ```bash
    uv run sine channel-server
    ```
 
-3. **Deploy an emulation** (in a separate terminal):
+2. **Deploy an emulation** (in a separate terminal):
    ```bash
    # Note: Requires sudo for netem (network emulation) configuration
    # Use full path to uv to avoid "command not found" with sudo
@@ -175,37 +170,12 @@ Legend:
 
    **Alternative**: Configure passwordless sudo (see "Sudo Configuration" section below) to run without `sudo` prefix.
 
-4. **Configure IP addresses** (containers have no IPs by default):
-
-   **Option A: IPv4 (recommended)**
+3. **Test connectivity** (IP addresses are automatically configured from the topology YAML):
    ```bash
-   # Assign IPv4 addresses to the wireless interfaces
-   docker exec -it clab-vacuum-20m-node1 ip addr add 18.0.0.1/24 dev eth1
-   docker exec -it clab-vacuum-20m-node2 ip addr add 18.0.0.2/24 dev eth1
-   ```
-
-   **Option B: Use IPv6 link-local (auto-configured)**
-   ```bash
-   # Get node1's IPv6 address
-   docker exec -it clab-vacuum-20m-node1 ip -6 addr show dev eth1 | grep fe80
-   # Example output: inet6 fe80::a8b9:48ff:fe4a:a1f6/64
-   ```
-
-   Note: No performance difference between IPv4 and IPv6 - same underlying veth and netem.
-
-5. **Test connectivity** (in separate terminals):
-   ```bash
-   ## IPv4 method
    # iperf3 server on node 1
    docker exec -it clab-vacuum-20m-node1 iperf3 -s
    # iperf3 client on node 2
-   docker exec -it clab-vacuum-20m-node2 iperf3 -c 18.0.0.1
-
-   ## OR IPv6 method
-   # iperf3 server on node 1
-   docker exec -it clab-vacuum-20m-node1 iperf3 -s
-   # iperf3 client on node 2 (one-liner using node1's link-local address)
-   docker exec -it clab-vacuum-20m-node2 iperf3 -c $(docker exec clab-vacuum-20m-node1 ip -6 addr show dev eth1 | grep fe80 | awk '{print $2}' | cut -d'/' -f1)%eth1
+   docker exec -it clab-vacuum-20m-node2 iperf3 -c 192.168.1.1
    ```
 
    **Expected output** (throughput limited by emulated wireless channel):
@@ -222,7 +192,7 @@ Legend:
    ./examples/vacuum_20m/check_netem.sh
    ```
 
-6. **Cleanup**:
+4. **Cleanup**:
    ```bash
    uv run sine destroy examples/vacuum_20m/network.yaml
    ```
@@ -242,29 +212,18 @@ Define the physical environment for ray tracing. Scene files use Mitsuba XML for
 
 See `scenes/generate_room.py` for programmatic scene generation.
 
-### 2. Build Node Container Images
-
-Build Docker images containing the software your nodes will run:
-
-```bash
-# Use the provided base image (includes iperf3, tcpdump, etc.)
-docker build -t sine-node:latest docker/node/
-
-# Or build your own custom image
-docker build -t my-app:latest ./my-app/
-```
-
-### 3. Create a Network Topology (`network.yaml`)
+### 2. Create a Network Topology (`network.yaml`)
 
 Define your network topology specifying:
-- **Nodes**: Container image, interfaces, and their configurations
+- **Nodes**: Use `alpine:latest` with `exec` field to install packages (e.g., `apk add --no-cache iproute2 iputils iperf3`)
+- **Interfaces**: Each node defines interfaces with either `wireless` or `fixed_netem` parameters
 - **Interface type**: `wireless` (ray-traced) or `fixed_netem` (direct parameters)
 - **Links**: Connections between node interfaces
 - **Scene**: Path to your Mitsuba XML scene file (for wireless links)
 
 See `examples/` for reference topologies.
 
-### 4. Deploy the Emulation
+### 3. Deploy the Emulation
 
 ```bash
 # Terminal 1: Start the channel server (computes wireless link parameters)
@@ -274,15 +233,7 @@ uv run sine channel-server
 sudo $(which uv) run sine deploy path/to/network.yaml
 ```
 
-### 5. Configure IP Addresses (Optional)
-
-Containers start with no IP addresses. Assign them manually:
-
-```bash
-docker exec -it clab-<topology>-<node> ip addr add <ip>/<mask> dev eth1
-```
-
-### 6. Run Applications and Tests
+### 4. Run Applications and Tests
 
 Execute your applications, performance tests, or mobility scripts:
 
@@ -296,7 +247,9 @@ curl -X POST http://localhost:8001/api/mobility/update \
      -d '{"node": "node1", "x": 5.0, "y": 3.0, "z": 1.0}'
 ```
 
-### 7. Cleanup
+Note: IP addresses are automatically configured from the topology YAML. No manual IP assignment is needed.
+
+### 5. Cleanup
 
 ```bash
 uv run sine destroy path/to/network.yaml

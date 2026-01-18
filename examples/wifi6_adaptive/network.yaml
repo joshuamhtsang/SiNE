@@ -50,7 +50,9 @@ topology:
     # Access Point
     node1:
       kind: linux
-      image: sine-node:latest
+      image: alpine:latest
+      exec:
+        - apk add --no-cache iproute2 iputils iperf3
       interfaces:
         eth1:
           ip_address: 192.168.1.1/24
@@ -73,7 +75,9 @@ topology:
     # Client device
     node2:
       kind: linux
-      image: sine-node:latest
+      image: alpine:latest
+      exec:
+        - apk add --no-cache iproute2 iputils iperf3
       interfaces:
         eth1:
           ip_address: 192.168.1.2/24
