@@ -199,7 +199,7 @@ I suggested going for option 2, as this results in the network.yaml being a comp
 
 # Lesson Learned 3 - Creating good integration tests is key to shaping the development
 
-It was really hard getting SINR and MAC-level protocols (CSMA, TDMA) feature implemented, need lots of steering. But having integration tests codified the human requirements for SiNE. Claude Code goes around in circles due to catch-22's (around CSMA and carrier sensing range), Claude is not great at spatial reasoning.  I suggested lienar topology to bring out hidden node problem better.
+It was really hard getting SINR and MAC-level protocols (CSMA, TDMA) feature implemented, need lots of steering. But having integration tests codified the human requirements for SiNE. Claude Code goes around in circles due to catch-22's (around CSMA and carrier sensing range), Claude is not great at spatial reasoning.  Some trouble with getting MCS to work with SINR, but before ACLR is implemented etc. I suggested lienar topology to bring out hidden node problem better.
 
 I discovered errors in how 'ip route add' was being used my SiNE (it was using host only /32 suffix...). Kept prompting to refine the integration tests, so future issues are discovered earlier - this take domain knowledge to identify the common pitfalls in Linux networking.
 

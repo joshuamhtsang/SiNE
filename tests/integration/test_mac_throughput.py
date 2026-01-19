@@ -149,7 +149,7 @@ def test_csma_throughput_spatial_reuse(channel_server, examples_dir: Path):
             server_node="node1",
             client_node="node2",
             client_ip="192.168.100.1",  # Use existing bridge IP
-            duration_sec=30,
+            duration_sec=15,
         )
 
         # Validate: 95-100% of ~256 Mbps (per-destination rate limit)
@@ -196,7 +196,7 @@ def test_tdma_fixed_throughput_matches_slot_ownership(channel_server, examples_d
             server_node="node1",
             client_node="node2",
             client_ip="192.168.100.1",  # Use existing bridge IP
-            duration_sec=30,
+            duration_sec=15,
         )
 
         # Validate: 95-99% of ~51 Mbps (based on deployment output showing 51.2 Mbps rate limit)
@@ -245,7 +245,7 @@ def test_tdma_roundrobin_throughput(channel_server, examples_dir: Path):
             server_node="node1",
             client_node="node2",
             client_ip="192.168.100.1",  # Use existing bridge IP
-            duration_sec=30,
+            duration_sec=15,
         )
 
         # Validate: 95-100% of ~85 Mbps (33.3% slot ownership)
@@ -385,7 +385,7 @@ def test_csma_mcs_uses_sinr(mobility_deployment):
         server_node="node3",
         client_node="node2",
         client_ip="192.168.100.3",
-        duration_sec=30,
+        duration_sec=15,
     )
 
     # Calculate expected throughput based on selected MCS
@@ -441,7 +441,7 @@ def test_csma_vs_tdma_ratio(channel_server, examples_dir: Path):
             server_node="node1",
             client_node="node2",
             client_ip="192.168.100.1",  # Use existing bridge IP
-            duration_sec=30,
+            duration_sec=15,
         )
         stop_deployment_process(csma_process)
         destroy_topology(str(csma_yaml))
@@ -455,7 +455,7 @@ def test_csma_vs_tdma_ratio(channel_server, examples_dir: Path):
             server_node="node1",
             client_node="node2",
             client_ip="192.168.100.1",  # Use existing bridge IP
-            duration_sec=30,
+            duration_sec=15,
         )
 
         # Compute ratio

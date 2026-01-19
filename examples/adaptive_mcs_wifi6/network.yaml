@@ -65,7 +65,7 @@ topology:
             frequency_ghz: 5.18
             bandwidth_mhz: 80
             # Adaptive MCS selection
-            mcs_table: examples/adaptive_mcs_wifi6/data/wifi6_mcs.csv
+            mcs_table: examples/common_data/wifi6_mcs.csv
             mcs_hysteresis_db: 2.0
             position:
               x: 0.0
@@ -90,7 +90,7 @@ topology:
             frequency_ghz: 5.18
             bandwidth_mhz: 80
             # Same MCS table for symmetric link
-            mcs_table: examples/adaptive_mcs_wifi6/data/wifi6_mcs.csv
+            mcs_table: examples/common_data/wifi6_mcs.csv
             mcs_hysteresis_db: 2.0
             position:
               x: 20.0                       # 20m from AP

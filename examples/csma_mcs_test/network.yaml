@@ -71,7 +71,7 @@ topology:
             antenna_gain_dbi: 0.0        # 0 dBi (omnidirectional)
 
             # Adaptive MCS selection (key test feature)
-            mcs_table: examples/wifi6_adaptive/data/wifi6_mcs.csv
+            mcs_table: examples/common_data/wifi6_mcs.csv
             mcs_hysteresis_db: 2.0
 
             # MAC layer: CSMA/CA model
@@ -98,7 +98,7 @@ topology:
             antenna_pattern: iso
             polarization: V
             antenna_gain_dbi: 0.0
-            mcs_table: examples/wifi6_adaptive/data/wifi6_mcs.csv
+            mcs_table: examples/common_data/wifi6_mcs.csv
             mcs_hysteresis_db: 2.0
 
             # Same CSMA config
@@ -125,7 +125,7 @@ topology:
             antenna_pattern: iso
             polarization: V
             antenna_gain_dbi: 0.0
-            mcs_table: examples/wifi6_adaptive/data/wifi6_mcs.csv
+            mcs_table: examples/common_data/wifi6_mcs.csv
             mcs_hysteresis_db: 2.0
 
             csma:

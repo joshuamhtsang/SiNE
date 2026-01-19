@@ -182,7 +182,7 @@ def run_iperf3_test(
     time.sleep(2)
 
     # Run iperf3 client
-    print(f"Running iperf3 client on {client_container} -> {client_ip}...")
+    print(f"Running iperf3 client on {client_container} -> {client_ip}... (expected duration {duration_sec}s)")
     client_cmd = (
         f"docker exec {client_container} iperf3 -c {client_ip} "
         f"-t {duration_sec} -J"
@@ -276,9 +276,7 @@ def channel_server():
 
     process = subprocess.Popen(
         [uv_path, "run", "sine", "channel-server"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
+        # stdout and stderr will go to the test output (not piped)
     )
 
     # Wait for server to be ready (check health endpoint)

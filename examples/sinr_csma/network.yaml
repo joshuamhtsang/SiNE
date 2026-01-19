@@ -45,7 +45,7 @@ topology:
 
             # Modulation (adaptive MCS or fixed)
             # Option 1: Adaptive MCS (recommended)
-            mcs_table: examples/wifi6_adaptive/data/wifi6_mcs.csv
+            mcs_table: examples/common_data/wifi6_mcs.csv
             mcs_hysteresis_db: 2.0
 
             # Option 2: Fixed modulation (uncomment to use)
@@ -76,7 +76,7 @@ topology:
             antenna_pattern: iso
             polarization: V
             antenna_gain_dbi: 0.0
-            mcs_table: examples/wifi6_adaptive/data/wifi6_mcs.csv
+            mcs_table: examples/common_data/wifi6_mcs.csv
             mcs_hysteresis_db: 2.0
 
             # Same CSMA config
@@ -102,7 +102,7 @@ topology:
             antenna_pattern: iso
             polarization: V
             antenna_gain_dbi: 0.0
-            mcs_table: examples/wifi6_adaptive/data/wifi6_mcs.csv
+            mcs_table: examples/common_data/wifi6_mcs.csv
             mcs_hysteresis_db: 2.0
 
             csma:
