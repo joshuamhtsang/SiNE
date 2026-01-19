@@ -391,6 +391,28 @@ curl -X POST http://localhost:8001/api/mobility/update \
 
 See [examples/mobility/README.md](examples/mobility/README.md) for detailed mobility documentation.
 
+## Testing
+
+SiNE includes unit tests and integration tests. Tests are run using pytest.
+
+### Running Tests
+
+```bash
+# Install test dependencies
+uv sync --extra dev
+
+# Run all unit tests (fast, no sudo required)
+uv run pytest tests/unit/ -s
+
+# Run all integration tests (requires sudo for container deployment)
+uv run pytest tests/integration/ -s
+
+# Run all tests
+uv run pytest -s
+```
+
+**Note**: Integration tests require `sudo` for container deployment and netem configuration. The `-s` flag provides verbose output including print statements.
+
 ## Example Topologies
 
 Topologies are described in YAML files. Example topologies are provided:

@@ -19,333 +19,37 @@ Running these tests:
     sudo -v && uv run pytest tests/integration/test_mac_throughput.py -v -m integration
 """
 
+import json
 import logging
-import os
 import subprocess
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 import pytest
 
+# Import shared fixtures and helpers
+from .fixtures import (
+    channel_server,
+    configure_ips,
+    deploy_topology,
+    destroy_topology,
+    get_uv_path,
+    run_iperf3_test,
+    stop_deployment_process,
+)
+
 logger = logging.getLogger(__name__)
 
 
-def get_uv_path() -> str:
-    """
-    Get the path to the uv executable.
-
-    Tries multiple methods to find uv:
-    1. which uv (if in PATH)
-    2. Common installation locations
-    3. Fallback to 'uv' and let shell resolve it
-
-    Returns:
-        Path to uv executable
-    """
-    # Try 'which uv' first
-    try:
-        result = subprocess.run(
-            ["which", "uv"],
-            capture_output=True,
-            text=True,
-            check=False,  # Don't raise on error
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
-    except Exception:
-        pass
-
-    # Try common installation locations
-    common_paths = [
-        os.path.expanduser("~/.local/bin/uv"),
-        os.path.expanduser("~/.cargo/bin/uv"),
-        "/usr/local/bin/uv",
-        "/usr/bin/uv",
-    ]
-
-    for path in common_paths:
-        if os.path.isfile(path) and os.access(path, os.X_OK):
-            return path
-
-    # Fallback: return 'uv' and hope it's in PATH
-    return "uv"
+# Prevent "imported but unused" warnings - these are pytest fixtures
+__all__ = ["channel_server"]
 
 
-def deploy_topology(yaml_path: str) -> subprocess.Popen:
-    """
-    Deploy a topology using sine CLI in background.
-
-    Args:
-        yaml_path: Path to topology YAML file
-
-    Returns:
-        Popen object for the running deployment process
-    """
-    # Use full path to uv to avoid "command not found" with sudo
-    uv_path = get_uv_path()
-
-    print(f"\n{'='*70}")
-    print(f"Deploying topology: {yaml_path}")
-    print(f"{'='*70}\n")
-
-    # Start deployment in background (Popen, not run)
-    # Capture output so we can monitor for "Emulation deployed successfully!"
-    process = subprocess.Popen(
-        ["sudo", uv_path, "run", "sine", "deploy", yaml_path],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1,  # Line buffered
-    )
-
-    # Wait for deployment to complete by watching stdout
-    print("Waiting for deployment to complete...")
-    deployment_ready = False
-    for line in process.stdout:
-        print(line, end="")  # Echo output in real-time
-        if "Emulation deployed successfully!" in line:
-            deployment_ready = True
-            break
-        # Check if process exited with error
-        if process.poll() is not None:
-            raise RuntimeError(f"Deployment process exited unexpectedly (code {process.returncode})")
-
-    if not deployment_ready:
-        process.terminate()
-        raise RuntimeError("Deployment did not complete successfully")
-
-    print(f"\n{'='*70}")
-    print(f"Deployment complete (process running in background)")
-    print(f"{'='*70}\n")
-
-    # Give containers a moment to fully initialize
-    time.sleep(2)
-
-    return process
-
-
-def stop_deployment_process(process: subprocess.Popen | None) -> None:
-    """
-    Stop a running deployment process gracefully.
-
-    Args:
-        process: The deployment Popen object to stop
-    """
-    if not process:
-        return
-
-    print("\nStopping deployment process...")
-    process.terminate()
-    try:
-        process.wait(timeout=10)
-        print("  Deployment process stopped")
-    except subprocess.TimeoutExpired:
-        print("  Force killing deployment process...")
-        process.kill()
-        process.wait()
-        print("  Deployment process killed")
-
-
-def destroy_topology(yaml_path: str) -> None:
-    """
-    Destroy a topology using sine CLI.
-
-    Args:
-        yaml_path: Path to topology YAML file
-    """
-    # Use full path to uv to avoid "command not found" with sudo
-    uv_path = get_uv_path()
-
-    print(f"Cleaning up existing deployment (if any)...")
-    # Suppress output for destroy - we don't care if it fails (no existing deployment)
-    result = subprocess.run(
-        ["sudo", uv_path, "run", "sine", "destroy", yaml_path],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-
-    if result.returncode != 0:
-        print(f"  No existing deployment to clean up")
-    else:
-        print(f"  Cleaned up existing deployment")
-
-
-def configure_ips(container_prefix: str, node_ips: dict[str, str]) -> None:
-    """
-    Configure IP addresses on container interfaces.
-
-    Args:
-        container_prefix: Container name prefix (e.g., "clab-sinr-csma-wifi6")
-        node_ips: Dictionary {node_name: ip_address}
-    """
-    print(f"\nConfiguring IP addresses...")
-    for node_name, ip_addr in node_ips.items():
-        container_name = f"{container_prefix}-{node_name}"
-        cmd = f"docker exec {container_name} ip addr add {ip_addr}/24 dev eth1"
-        subprocess.run(cmd, shell=True, capture_output=True, timeout=10)
-        print(f"  {node_name}:eth1 = {ip_addr}/24")
-
-
-def run_iperf3_test(
-    container_prefix: str,
-    server_node: str,
-    client_node: str,
-    client_ip: str,
-    duration_sec: int = 30,
-) -> float:
-    """
-    Run iperf3 test and return measured throughput.
-
-    Args:
-        container_prefix: Container name prefix
-        server_node: Server node name
-        client_node: Client node name
-        client_ip: Client IP address (to connect to server)
-        duration_sec: Test duration in seconds
-
-    Returns:
-        Throughput in Mbps
-    """
-    server_container = f"{container_prefix}-{server_node}"
-    client_container = f"{container_prefix}-{client_node}"
-
-    print(f"\n{'='*70}")
-    print(f"Running iperf3 throughput test ({duration_sec}s)")
-    print(f"  Server: {server_container}")
-    print(f"  Client: {client_container} -> {client_ip}")
-    print(f"{'='*70}\n")
-
-    # Start iperf3 server in background
-    print(f"Starting iperf3 server on {server_node}...")
-    server_cmd = f"docker exec -d {server_container} iperf3 -s"
-    subprocess.run(server_cmd, shell=True, timeout=10)
-    time.sleep(2)  # Give server time to start
-
-    # Run iperf3 client with real-time output
-    print(f"Running iperf3 client from {client_node} (this will take {duration_sec}s)...")
-
-    client_cmd = (
-        f"docker exec {client_container} iperf3 -c {client_ip} "
-        f"-t {duration_sec} -J"
-    )
-    print(f"\n{'─'*70}")
-    process = subprocess.Popen(
-        client_cmd,
-        shell=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1,  # Line buffered
-    )
-
-    # Collect output for JSON parsing while displaying progress
-    output_lines = []
-    json_started = False
-
-    for line in process.stdout:
-        output_lines.append(line)
-
-        # Detect when JSON output starts (begins with '{')
-        if line.strip().startswith("{"):
-            json_started = True
-
-        # Only print non-JSON lines (the progress output)
-        if not json_started:
-            print(line, end="")
-
-    process.wait(timeout=duration_sec + 10)
-    print(f"{'─'*70}\n")
-
-    if process.returncode != 0:
-        raise RuntimeError(f"iperf3 test failed with code {process.returncode}")
-
-    # Parse JSON output to extract throughput
-    import json
-
-    # Join all lines to get complete JSON
-    full_output = "".join(output_lines)
-
-    # Extract JSON portion (everything from first '{' to last '}')
-    json_start = full_output.find("{")
-    json_end = full_output.rfind("}") + 1
-
-    if json_start == -1 or json_end == 0:
-        raise RuntimeError("Could not find JSON output from iperf3")
-
-    json_output = full_output[json_start:json_end]
-    iperf_data = json.loads(json_output)
-    throughput_bps = iperf_data["end"]["sum_received"]["bits_per_second"]
-    throughput_mbps = throughput_bps / 1e6
-
-    print(f"\nMeasured throughput: {throughput_mbps:.1f} Mbps\n")
-
-    # Kill iperf3 server
-    kill_cmd = f"docker exec {server_container} pkill iperf3"
-    subprocess.run(kill_cmd, shell=True, timeout=10)
-
-    return throughput_mbps
-
-
-@pytest.fixture(scope="session")
-def channel_server():
-    """Start channel server for tests, stop after all tests complete."""
-    # Get uv path
-    uv_path = get_uv_path()
-
-    # Start channel server in background with output visible
-    logger.info("Starting channel server...")
-    print("\n" + "="*70)
-    print("CHANNEL SERVER OUTPUT (stdout/stderr will be shown below)")
-    print("="*70 + "\n")
-
-    # Don't pipe stdout/stderr - let them go to console
-    process = subprocess.Popen(
-        [uv_path, "run", "sine", "channel-server"],
-        # stdout and stderr will go to the test output
-    )
-
-    # Wait for server to be ready (check health endpoint)
-    import urllib.request
-    import urllib.error
-
-    server_url = "http://localhost:8000"
-    max_retries = 30
-    for i in range(max_retries):
-        try:
-            with urllib.request.urlopen(f"{server_url}/health", timeout=1) as response:
-                if response.status == 200:
-                    logger.info(f"Channel server ready at {server_url}")
-                    print(f"\n{'='*70}")
-                    print(f"Channel server is ready at {server_url}")
-                    print(f"{'='*70}\n")
-                    break
-        except (urllib.error.URLError, OSError):
-            if i < max_retries - 1:
-                time.sleep(1)
-            else:
-                process.kill()
-                raise RuntimeError("Channel server failed to start")
-
-    yield server_url
-
-    # Cleanup: stop channel server
-    logger.info("Stopping channel server...")
-    print("\n" + "="*70)
-    print("Stopping channel server...")
-    print("="*70 + "\n")
-    process.terminate()
-    try:
-        process.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait()
-
-
-@pytest.fixture
-def examples_dir() -> Path:
-    """Return path to examples directory."""
-    return Path(__file__).parent.parent.parent / "examples"
+# =============================================================================
+# Deployment Fixture (Specific to MAC tests)
+# =============================================================================
 
 
 @pytest.fixture

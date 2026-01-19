@@ -1,4 +1,8 @@
-"""Pytest configuration and fixtures for SiNE tests."""
+"""Pytest configuration and fixtures for SiNE tests.
+
+This file provides shared fixtures available to all test files.
+Fixtures are automatically discovered by pytest - no imports needed.
+"""
 
 import pytest
 from pathlib import Path
@@ -6,29 +10,49 @@ from pathlib import Path
 
 @pytest.fixture
 def project_root() -> Path:
-    """Return the project root directory."""
+    """Return the project root directory.
+
+    Example:
+        def test_something(project_root: Path):
+            config_path = project_root / "pyproject.toml"
+    """
     return Path(__file__).parent.parent
 
 
 @pytest.fixture
 def examples_dir(project_root: Path) -> Path:
-    """Return the examples directory."""
+    """Return the examples directory.
+
+    Used by integration tests to locate topology files.
+
+    Example:
+        def test_deployment(examples_dir: Path):
+            yaml_path = examples_dir / "vacuum_20m" / "network.yaml"
+    """
     return project_root / "examples"
 
 
 @pytest.fixture
 def scenes_dir(project_root: Path) -> Path:
-    """Return the scenes directory."""
+    """Return the scenes directory.
+
+    Contains Mitsuba XML scene files for ray tracing.
+
+    Example:
+        def test_scene_loading(scenes_dir: Path):
+            scene_path = scenes_dir / "vacuum.xml"
+    """
     return project_root / "scenes"
 
 
 @pytest.fixture
-def sample_topology_path(examples_dir: Path) -> Path:
-    """Return path to sample topology file."""
-    return examples_dir / "two_room_wifi" / "network.yaml"
+def fixtures_dir() -> Path:
+    """Return the test fixtures directory.
 
+    Contains test data files like MCS tables, test topologies, etc.
 
-@pytest.fixture
-def default_scene_path(scenes_dir: Path) -> Path:
-    """Return path to default scene file."""
-    return scenes_dir / "two_room_default.xml"
+    Example:
+        def test_mcs_loading(fixtures_dir: Path):
+            mcs_table = fixtures_dir / "mcs_tables" / "wifi6.csv"
+    """
+    return Path(__file__).parent / "fixtures"
