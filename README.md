@@ -110,11 +110,6 @@ Define the physical environment for ray tracing using Mitsuba XML format:
 - For free-space propagation, use `scenes/vacuum.xml`
 - For fixed netem links only, no scene file is required
 
-Generate scenes programmatically:
-```bash
-uv run python scenes/generate_room.py -o scenes/my_scene.xml --room1-size 10,8,3
-```
-
 ### 2. Create Network Topology (`network.yaml`)
 
 Define nodes, interfaces, and links:
