@@ -186,28 +186,16 @@ def test_manet_shared_bridge_bidirectional_throughput(channel_server, examples_d
 
 
 if __name__ == "__main__":
-    # Run tests manually for debugging
+    # Run tests via pytest for proper fixture handling
     import sys
 
     logging.basicConfig(level=logging.INFO)
 
-    examples = Path(__file__).parent.parent.parent / "examples"
+    print("=" * 80)
+    print("Running MANET shared bridge tests via pytest...")
+    print("=" * 80)
+    print("\nUsage: sudo -v && uv run pytest tests/integration/test_manet_shared_bridge.py -v -s")
+    print("\nNote: Cannot run test functions directly - they require pytest fixtures.")
+    print("=" * 80)
 
-    print("=" * 80)
-    print("MANET Shared Bridge Connectivity Test")
-    print("=" * 80)
-    test_manet_shared_bridge_connectivity(None, examples)
-
-    print("\n" + "=" * 80)
-    print("MANET Shared Bridge Throughput Test")
-    print("=" * 80)
-    test_manet_shared_bridge_throughput(None, examples)
-
-    print("\n" + "=" * 80)
-    print("MANET Shared Bridge Bidirectional Throughput Test")
-    print("=" * 80)
-    test_manet_shared_bridge_bidirectional_throughput(None, examples)
-
-    print("\n" + "=" * 80)
-    print("All tests passed!")
-    print("=" * 80)
+    sys.exit(1)

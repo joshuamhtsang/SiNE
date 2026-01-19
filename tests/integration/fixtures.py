@@ -70,6 +70,10 @@ def deploy_topology(yaml_path: str) -> subprocess.Popen:
     # Wait for deployment to complete (read stdout until success message)
     print("Waiting for deployment to complete...")
     deployment_ready = False
+
+    # Type assertion: stdout is guaranteed to be available since we passed PIPE
+    assert process.stdout is not None, "stdout should not be None when PIPE is used"
+
     for line in process.stdout:
         print(line, end="")
         if "Emulation deployed successfully!" in line:

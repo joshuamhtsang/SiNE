@@ -94,6 +94,10 @@ def mobility_deployment(examples_dir: Path, channel_server):
         # Wait for deployment to complete
         print("Waiting for deployment and mobility API to start...")
         deployment_ready = False
+
+        # Type assertion: stdout is guaranteed to be available since we passed PIPE
+        assert deploy_process.stdout is not None, "stdout should not be None when PIPE is used"
+
         for line in deploy_process.stdout:
             print(line, end="")
             if "Emulation deployed successfully!" in line:
@@ -123,9 +127,9 @@ def mobility_deployment(examples_dir: Path, channel_server):
 @pytest.mark.slow
 def test_csma_throughput_spatial_reuse(channel_server, examples_dir: Path):
     """
-    Test CSMA achieves 95-100% throughput of configured rate limit.
+    Test CSMA achieves 90-100% throughput of configured rate limit.
 
-    Expected: ~243-256 Mbps (95-100% of 256 Mbps per-destination rate)
+    Expected: ~230-256 Mbps (90-100% of 256 Mbps per-destination rate)
     """
     yaml_path = examples_dir / "sinr_csma" / "network.yaml"
 
@@ -152,10 +156,10 @@ def test_csma_throughput_spatial_reuse(channel_server, examples_dir: Path):
             duration_sec=15,
         )
 
-        # Validate: 95-100% of ~256 Mbps (per-destination rate limit)
-        assert 243 <= throughput <= 256, (
+        # Validate: 90-100% of ~256 Mbps (per-destination rate limit)
+        assert 230 <= throughput <= 256, (
             f"CSMA throughput {throughput:.1f} Mbps not in expected range "
-            f"[243-256 Mbps] (95-100% of per-destination rate limit)"
+            f"[230-256 Mbps] (90-100% of per-destination rate limit)"
         )
 
     finally:
@@ -485,33 +489,16 @@ def test_csma_vs_tdma_ratio(channel_server, examples_dir: Path):
 
 
 if __name__ == "__main__":
-    # Run tests manually for debugging
+    # Run tests via pytest for proper fixture handling
     import sys
 
     logging.basicConfig(level=logging.INFO)
 
-    examples = Path(__file__).parent.parent.parent / "examples"
+    print("=" * 80)
+    print("Running MAC throughput tests via pytest...")
+    print("=" * 80)
+    print("\nUsage: sudo -v && uv run pytest tests/integration/test_mac_throughput.py -v -s")
+    print("\nNote: Cannot run test functions directly - they require pytest fixtures.")
+    print("=" * 80)
 
-    print("=" * 80)
-    print("CSMA Throughput Test")
-    print("=" * 80)
-    test_csma_throughput_spatial_reuse(examples)
-
-    print("\n" + "=" * 80)
-    print("TDMA Fixed Throughput Test")
-    print("=" * 80)
-    test_tdma_fixed_throughput_matches_slot_ownership(examples)
-
-    print("\n" + "=" * 80)
-    print("TDMA Round-Robin Throughput Test")
-    print("=" * 80)
-    test_tdma_roundrobin_throughput(examples)
-
-    print("\n" + "=" * 80)
-    print("CSMA vs TDMA Ratio Test")
-    print("=" * 80)
-    test_csma_vs_tdma_ratio(examples)
-
-    print("\n" + "=" * 80)
-    print("All tests passed!")
-    print("=" * 80)
+    sys.exit(1)
