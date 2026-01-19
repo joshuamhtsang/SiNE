@@ -1,0 +1,104 @@
+# SiNE Example: WiFi 6 Adaptive MCS Selection
+#
+# This example demonstrates adaptive MCS (Modulation and Coding Scheme)
+# selection similar to WiFi 6 (802.11ax). The system automatically selects
+# the optimal modulation and coding based on the current SNR conditions.
+#
+# Key features:
+# - MCS table loaded from data/wifi6_mcs.csv
+# - Automatic MCS selection based on computed SNR
+# - Hysteresis to prevent rapid MCS switching (2 dB default)
+# - MCS 0-11 covering BPSK to 1024-QAM
+#
+# The MCS table defines:
+# - mcs_index: MCS index (0-11)
+# - modulation: bpsk, qpsk, 16qam, 64qam, 256qam, 1024qam
+# - code_rate: FEC code rate (0.5 to 0.833)
+# - min_snr_db: Minimum SNR threshold for this MCS
+# - fec_type: Forward error correction type (ldpc)
+# - bandwidth_mhz: Channel bandwidth
+#
+# At 20m in free-space with 20 dBm TX power:
+# - Expected SNR: ~42 dB
+# - Expected MCS: MCS 11 (1024-QAM, rate-5/6)
+# - Expected rate: ~533 Mbps (80 MHz * 10 bits * 0.833 * 0.8)
+#
+# Usage:
+#   1. Start the channel server:
+#      uv run sine channel-server
+#
+#   2. Deploy the emulation:
+#      sudo $(which uv) run sine deploy examples/adaptive_mcs_wifi6/network.yaml
+#      (IP addresses are automatically configured from the topology YAML)
+#
+#   3. Test connectivity:
+#      docker exec -it clab-adaptive-mcs-wifi6-node1 iperf3 -s
+#      docker exec -it clab-adaptive-mcs-wifi6-node2 iperf3 -c 192.168.1.1
+#
+#   4. Cleanup:
+#      sudo $(which uv) run sine destroy examples/adaptive_mcs_wifi6/network.yaml
+
+name: adaptive-mcs-wifi6
+prefix: clab
+
+topology:
+  # Empty vacuum scene (free-space propagation)
+  scene:
+    file: scenes/vacuum.xml
+
+  nodes:
+    # Access Point
+    node1:
+      kind: linux
+      image: alpine:latest
+      exec:
+        - apk add --no-cache iproute2 iputils iperf3
+      interfaces:
+        eth1:
+          ip_address: 192.168.1.1/24
+          wireless:
+            rf_power_dbm: 20.0
+            rx_sensitivity_dbm: -82.0       # WiFi 6 receiver sensitivity (MCS 0, 20 MHz)
+            antenna_pattern: iso
+            polarization: V
+            antenna_gain_dbi: 3.0           # Antenna pattern selection (NOT added to link budget)
+            frequency_ghz: 5.18
+            bandwidth_mhz: 80
+            # Adaptive MCS selection
+            mcs_table: examples/adaptive_mcs_wifi6/data/wifi6_mcs.csv
+            mcs_hysteresis_db: 2.0
+            position:
+              x: 0.0
+              y: 0.0
+              z: 2.5                        # Ceiling-mounted AP
+
+    # Client device
+    node2:
+      kind: linux
+      image: alpine:latest
+      exec:
+        - apk add --no-cache iproute2 iputils iperf3
+      interfaces:
+        eth1:
+          ip_address: 192.168.1.2/24
+          wireless:
+            rf_power_dbm: 15.0              # Lower TX power (client device)
+            rx_sensitivity_dbm: -82.0       # WiFi 6 receiver sensitivity (MCS 0, 20 MHz)
+            antenna_pattern: iso
+            polarization: V
+            antenna_gain_dbi: 0.0           # Antenna pattern selection (NOT added to link budget)
+            frequency_ghz: 5.18
+            bandwidth_mhz: 80
+            # Same MCS table for symmetric link
+            mcs_table: examples/adaptive_mcs_wifi6/data/wifi6_mcs.csv
+            mcs_hysteresis_db: 2.0
+            position:
+              x: 20.0                       # 20m from AP
+              y: 0.0
+              z: 1.0                        # Desk height
+
+  links:
+    - endpoints: [node1:eth1, node2:eth1]
+
+  channel_server: "http://localhost:8000"
+  mobility_poll_ms: 100
