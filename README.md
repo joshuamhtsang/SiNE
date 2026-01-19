@@ -115,38 +115,59 @@ Define the physical environment for ray tracing using Mitsuba XML format:
 Define nodes, interfaces, and links:
 
 ```yaml
-nodes:
-  node1:
-    kind: linux
-    image: alpine:latest
-    exec:
-      - apk add --no-cache iproute2 iputils iperf3
-    interfaces:
-      eth1:
-        ip_address: 192.168.1.1
-        wireless:
-          position: {x: 0, y: 0, z: 1}
-          frequency_ghz: 5.18
-          bandwidth_mhz: 80
-          mcs_table: path/to/mcs_table.csv  # Or fixed modulation/fec
-          rf_power_dbm: 20.0
-          antenna_gain_dbi: 2.15
-
-  node2:
-    kind: linux
-    image: alpine:latest
-    interfaces:
-      eth1:
-        ip_address: 192.168.1.2
-        wireless:
-          position: {x: 20, y: 0, z: 1}
-          # ... same wireless params
+name: my-network
+prefix: clab
 
 topology:
   scene:
     file: scenes/vacuum.xml
+
+  nodes:
+    node1:
+      kind: linux
+      image: alpine:latest
+      exec:
+        - apk add --no-cache iproute2 iputils iperf3
+      interfaces:
+        eth1:
+          ip_address: 192.168.1.1/24
+          wireless:
+            position: {x: 0, y: 0, z: 1}
+            frequency_ghz: 5.18
+            bandwidth_mhz: 80
+            rf_power_dbm: 20.0
+            rx_sensitivity_dbm: -82.0
+            antenna_pattern: iso
+            polarization: V
+            antenna_gain_dbi: 2.15
+            mcs_table: examples/common_data/wifi6_mcs.csv  # Or use fixed modulation/fec
+            mcs_hysteresis_db: 2.0
+
+    node2:
+      kind: linux
+      image: alpine:latest
+      exec:
+        - apk add --no-cache iproute2 iputils iperf3
+      interfaces:
+        eth1:
+          ip_address: 192.168.1.2/24
+          wireless:
+            position: {x: 20, y: 0, z: 1}
+            frequency_ghz: 5.18
+            bandwidth_mhz: 80
+            rf_power_dbm: 20.0
+            rx_sensitivity_dbm: -82.0
+            antenna_pattern: iso
+            polarization: V
+            antenna_gain_dbi: 2.15
+            mcs_table: examples/common_data/wifi6_mcs.csv
+            mcs_hysteresis_db: 2.0
+
   links:
     - endpoints: [node1:eth1, node2:eth1]
+
+  channel_server: "http://localhost:8000"
+  mobility_poll_ms: 100
 ```
 
 **Key points:**
