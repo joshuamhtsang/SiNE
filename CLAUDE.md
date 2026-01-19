@@ -99,6 +99,9 @@ network.yaml -> EmulationController -> Containerlab (Docker containers + veth li
 | Interface Config | Per-interface on node | Each interface has either `wireless` or `fixed_netem` params |
 | netem Access | sudo nsenter | Required for container network namespace access |
 | Container Naming | `clab-<lab>-<node>` | Follows containerlab convention for consistency |
+| SINR Computation | ACLR-filtered | IEEE 802.11ax-2021 spectral mask for frequency-selective interference |
+| Interference Model | Linear power summation | Sum interference powers in linear domain (watts) before SINR calculation |
+| TDMA Support | Probability-weighted | Interference scaled by transmission probability (slot duty cycle) |
 
 ## Claude and AI Resources
 
@@ -155,29 +158,6 @@ SiNE includes specialized Claude Code agents for domain-specific expertise. Thes
 - Setting up per-destination traffic control with tc filters
 - Wireless network emulation with IEEE 802.11s mesh
 
-### Example Usage
-
-```python
-# In Claude Code conversation, invoke an agent via Task tool:
-# For RF/wireless questions:
-Task(subagent_type="wireless-comms-engineer",
-     prompt="Validate the SNR calculation in this link budget...")
-
-# For Linux networking questions:
-Task(subagent_type="linux-networking-specialist",
-     prompt="Debug why netem is not applying to containerlab interfaces...")
-```
-
-## CLI Tool
-
-This project provides the `sine` CLI tool, defined in `pyproject.toml`:
-
-```toml
-[project.scripts]
-sine = "sine.cli:main"
-```
-
-When you run `uv sync`, it creates `.venv/bin/sine` which calls the `main()` function in `src/sine/cli.py`. The CLI is built with [Click](https://click.palletsprojects.com/).
 
 ## Setup
 
@@ -249,22 +229,46 @@ uv run ruff check src/sine
 
 Example topologies are provided in `examples/`:
 
-| Example | Description | Link Type | Scene | README |
-|---------|-------------|-----------|-------|--------|
-| `vacuum_20m/` | Baseline free-space wireless (2 nodes, 20m) | wireless | `vacuum.xml` | [README](examples/vacuum_20m/README.md) |
-| `fixed_link/` | Fixed netem parameters (no RF) | fixed_netem | (none) | [README](examples/fixed_link/README.md) |
-| `wifi6_adaptive/` | Adaptive MCS selection (WiFi 6) | wireless | `vacuum.xml` | [README](examples/wifi6_adaptive/README.md) |
-| `two_rooms/` | Indoor multipath (2 rooms with doorway) | wireless | `two_rooms.xml` | [README](examples/two_rooms/README.md) |
-| `manet_triangle_shared/` | 3-node MANET with shared bridge | wireless (shared) | `vacuum.xml` | [README](examples/manet_triangle_shared/README.md) |
-| `mobility/` | Movement scripts and API examples | N/A (scripts) | N/A | [README](examples/mobility/README.md) |
+### Basic Examples
+
+| Example | Description | Link Type | Scene |
+|---------|-------------|-----------|-------|
+| `vacuum_20m/` | Baseline free-space wireless (2 nodes, 20m) | wireless | `vacuum.xml` |
+| `fixed_link/` | Fixed netem parameters (no RF) | fixed_netem | (none) |
+| `two_rooms/` | Indoor multipath (2 rooms with doorway) | wireless | `two_rooms.xml` |
+
+### Adaptive MCS Examples
+
+| Example | Description | MAC Protocol | Features |
+|---------|-------------|--------------|----------|
+| `adaptive_mcs_wifi6/` | WiFi 6 MCS selection (2 nodes) | N/A | SNR-based adaptive modulation |
+| `csma_mcs_test/` | CSMA/CA with adaptive MCS | CSMA/CA | Carrier sensing, MCS adaptation |
+| `sinr_csma/` | CSMA with SINR (3+ nodes) | CSMA/CA | Interference-aware MCS |
+
+### SINR/Interference Examples
+
+| Example | Description | MAC Protocol | Interference Model |
+|---------|-------------|--------------|-------------------|
+| `manet_triangle_shared/` | 3-node MANET, shared bridge | N/A | Point-to-point links |
+| `manet_triangle_shared_sinr/` | 3-node MANET with SINR | N/A | Co-channel interference |
+| `sinr_tdma_roundrobin/` | Round-robin TDMA (equal slots) | TDMA | Probability-weighted (20% each) |
+| `sinr_tdma_fixed/` | Fixed TDMA schedule | TDMA | Per-node slot assignments |
+
+### Mobility Examples
+
+| Example | Description | Features |
+|---------|-------------|----------|
+| `mobility/` | Movement scripts and API examples | Dynamic position updates, API endpoints |
 
 The examples demonstrate:
 - **Free-space propagation** (`vacuum_20m/`)
 - **Indoor multipath** (`two_rooms/`)
-- **Adaptive modulation** (`wifi6_adaptive/`)
+- **Adaptive modulation** (`adaptive_mcs_wifi6/`, `csma_mcs_test/`)
 - **MANET broadcast domains** (`manet_triangle_shared/`)
 - **Fixed link emulation** (`fixed_link/`)
 - **Node mobility** (`mobility/`)
+- **SINR computation** (`manet_triangle_shared_sinr/`, `sinr_csma/`, `sinr_tdma_*`)
+- **MAC protocols** (CSMA/CA, TDMA)
 
 ## Channel Server API
 
@@ -276,7 +280,67 @@ The channel server (`uv run sine channel-server`) exposes REST endpoints:
 | `/scene/load` | POST | Load ray tracing scene |
 | `/compute/single` | POST | Compute channel for single link |
 | `/compute/batch` | POST | Compute channels for multiple links |
+| `/compute/sinr` | POST | Compute SINR with interference from multiple transmitters |
 | `/debug/paths` | POST | Get detailed path info for debugging |
+
+### SINR Endpoint: `POST /compute/sinr`
+
+Computes Signal-to-Interference-plus-Noise Ratio for multi-node scenarios with ACLR filtering:
+
+**Request**:
+```json
+{
+  "receiver": {
+    "node_name": "node1",
+    "position": [0, 0, 1],
+    "antenna_gain_dbi": 2.15,
+    "frequency_hz": 5.18e9,
+    "bandwidth_hz": 80e6
+  },
+  "desired_tx": {
+    "node_name": "node2",
+    "position": [20, 0, 1],
+    "tx_power_dbm": 20.0,
+    "antenna_gain_dbi": 2.15,
+    "frequency_hz": 5.18e9,
+    "bandwidth_hz": 80e6
+  },
+  "interferers": [
+    {
+      "node_name": "node3",
+      "position": [10, 17.3, 1],
+      "tx_power_dbm": 20.0,
+      "antenna_gain_dbi": 2.15,
+      "frequency_hz": 5.28e9,
+      "bandwidth_hz": 80e6,
+      "is_active": true,
+      "tx_probability": 0.2
+    }
+  ]
+}
+```
+
+**Response**:
+```json
+{
+  "sinr_db": 24.5,
+  "snr_db": 28.3,
+  "signal_power_dbm": -65.2,
+  "noise_power_dbm": -93.5,
+  "interference_power_dbm": -89.8,
+  "interference_terms": [
+    {
+      "node_name": "node3",
+      "power_dbm": -89.8,
+      "path_loss_db": 72.0,
+      "frequency_separation_hz": 100e6,
+      "aclr_db": 40.0
+    }
+  ]
+}
+```
+
+**ACLR Filtering**: Automatically applies IEEE 802.11ax spectral mask based on frequency separation and bandwidth.
 
 ### Debug Endpoint: `POST /debug/paths`
 
@@ -366,9 +430,42 @@ per = 1 - (1 - ber)^(packet_size_bits)
 per = bler
 ```
 
-### 6. Netem Parameter Conversion
+### 6. SINR Calculation (Multi-Node Scenarios)
 
-The final PER is converted to netem parameters:
+Signal-to-Interference-plus-Noise Ratio accounts for interference from other active transmitters:
+
+```
+SINR (dB) = 10·log10(Signal_power / (Noise_power + Total_interference_power))
+
+Where:
+- Signal_power: From desired transmitter (TX power + gains - path loss)
+- Noise_power: Thermal noise floor
+- Total_interference_power: Sum of interference from all other active transmitters
+```
+
+**Adjacent-Channel Leakage Ratio (ACLR)**: For multi-frequency scenarios, SiNE applies IEEE 802.11ax-2021 spectral mask filtering:
+
+| Frequency Separation (80 MHz BW) | ACLR (dB) | Description |
+|----------------------------------|-----------|-------------|
+| 0-40 MHz (< BW/2) | 0 dB | Co-channel (channels overlap) |
+| 40-80 MHz | 20-28 dB | Transition band (linear interpolation) |
+| 80-120 MHz | 40 dB | 1st adjacent channel |
+| >120 MHz | 45 dB | Orthogonal (filtered out) |
+
+**Benefits**:
+- Multi-frequency MANET topologies with frequency diversity
+- Dual-band scenarios (2.4 GHz + 5 GHz) with zero cross-band interference
+- Adjacent-channel coexistence modeling
+- TDMA networks on adjacent frequencies with reduced interference
+
+**TDMA Support**: For time-division scenarios, interference is weighted by transmission probability:
+```
+SINR_TDMA = Signal / (Noise + Σ(Interference_i × slot_probability_i))
+```
+
+### 7. Netem Parameter Conversion
+
+The final PER (or SINR for multi-node scenarios) is converted to netem parameters:
 
 | Parameter | Calculation |
 |-----------|-------------|
@@ -393,11 +490,20 @@ Example (80 MHz, 64-QAM, rate-1/2 LDPC):
 ```
 Ray Tracing → CIR (paths) → Path Loss → SNR
                                          ↓
-                              BER (from modulation)
-                                         ↓
-                              BLER (with FEC gain)
-                                         ↓
-                              PER (packet errors)
+                              ┌──────────┴──────────┐
+                              │                     │
+                         Single-Link           Multi-Node
+                              │                     │
+                              ↓                     ↓
+                    BER (from modulation)    SINR (with ACLR)
+                              │                     │
+                              ↓                     ↓
+                    BLER (with FEC gain)   BER (from SINR)
+                              │                     │
+                              ↓                     ↓
+                        PER (packet errors)    BLER/PER
+                              │                     │
+                              └──────────┬──────────┘
                                          ↓
                     Netem Params (delay, jitter, loss%, rate)
 ```
@@ -428,17 +534,21 @@ Ray Tracing → CIR (paths) → Path Loss → SNR
 
 ## Important Notes
 
-- **Interface Configuration**: Define per-interface on each node using `interfaces.<iface>.wireless` or `interfaces.<iface>.fixed_netem`
+### Configuration Requirements
+- **Interface Configuration**: Define per-interface using `interfaces.<iface>.wireless` or `interfaces.<iface>.fixed_netem`
 - **Link Endpoints**: Must use `node:interface` format (e.g., `endpoints: [node1:eth1, node2:eth1]`)
-- **Link Type Consistency**: Both endpoints of a link must be same type (both wireless OR both fixed_netem)
-- **Scene Configuration**: Required for wireless links (specify `scene.file`), optional for fixed_netem-only topologies
-- **Sionna Scene Materials**: Must use ITU naming convention (e.g., `itu_concrete`, not `concrete`)
-- **netem Configuration**: Requires `sudo` for `nsenter` to access container network namespaces
-- **Sionna v1.2.1 API**: Use `Scene()` for empty scenes, `load_scene()` for files
-- **Antenna Patterns**: Valid pattern names are `"iso"`, `"dipole"`, `"hw_dipole"`, `"tr38901"` (not `"isotropic"`)
-- **Antenna Polarization**: Valid polarization values are `"V"`, `"H"`, `"VH"`, `"cross"`
-- **Scene Loading**: Use `load_scene(file, merge_shapes=False)` to keep individual surfaces separate for inspection; default merges same-material surfaces for performance
-- **Render Command**: Does NOT require channel server - uses local SionnaEngine directly
+- **Link Type Consistency**: Both endpoints must be same type (both wireless OR both fixed_netem)
+- **Scene Configuration**: Required for wireless links; optional for fixed_netem-only topologies
+- **netem**: Requires `sudo` for container network namespace access
+
+### Sionna-Specific
+- **Scene Materials**: Must use ITU naming (e.g., `itu_concrete`, not `concrete`)
+- **Antenna Patterns**: `"iso"`, `"dipole"`, `"hw_dipole"`, `"tr38901"`
+- **Antenna Polarization**: `"V"`, `"H"`, `"VH"`, `"cross"`
+
+### SINR/Interference
+- Multi-node scenarios automatically compute SINR with IEEE 802.11ax-2021 ACLR filtering
+- Orthogonal channels (>120 MHz separation for 80 MHz BW) are automatically filtered
 
 ## Scene Visualization
 
@@ -553,43 +663,11 @@ A: Each direction is independently limited by its own interface's netem. For sym
 
 The link is effectively bottlenecked by the egress netem on the sending side for each direction.
 
-### Why does Containerlab use a Linux bridge?
+### Containerlab Bridge Architecture
 
-**Q: How are containers connected in Containerlab?**
+**Q: How are containers connected?**
 
-A: Containerlab connects containers via a **Linux bridge**, not direct veth pairs:
-
-```
-Direct veth (NOT how it works):
-Node1:eth1 ════════════════════ Node2:eth1
-         single veth pair
-
-Containerlab architecture (ACTUAL):
-Node1:eth1 ══════╗          ╔══════ Node2:eth1
-                 ║          ║
-            ┌────╨──────────╨────┐
-            │    Linux Bridge    │
-            └────────────────────┘
-```
-
-**Q: What are the implications of the bridge architecture?**
-
-**Pros:**
-- **Scalability**: Easy to add more nodes to the same network segment
-- **Flexibility**: Supports complex topologies (mesh, star, etc.)
-- **Isolation**: Bridge provides network namespace separation
-- **Monitoring**: Can attach tcpdump to the bridge for debugging
-- **Standard tooling**: Works with standard Linux networking tools
-
-**Cons:**
-- **Extra hop**: Packets traverse the bridge (minimal latency impact, ~microseconds)
-- **Bridge overhead**: Small CPU overhead for bridge processing
-- **MAC learning**: Bridge maintains MAC address table (negligible for small topologies)
-- **Not point-to-point**: Technically a shared medium, though with only 2 nodes it behaves like point-to-point
-
-**Q: Does the bridge affect netem accuracy?**
-
-A: The bridge adds negligible latency (~1-10 microseconds) compared to the wireless delays being emulated (typically 0.1-10+ milliseconds). For wireless network emulation purposes, this overhead is insignificant.
+A: Containerlab uses a **Linux bridge** to connect containers (not direct veth pairs). This provides scalability and flexibility for complex topologies. The bridge adds negligible latency (~1-10 μs) compared to wireless delays being emulated (0.1-10+ ms), making the overhead insignificant for network emulation purposes.
 
 ### Channel updates and netem synchronization
 
@@ -669,80 +747,22 @@ Benefits:
 
 For topologies with 3+ nodes, SiNE tracks which interface connects to which peer via `ContainerlabManager._interface_mapping`. This allows the controller to apply the correct netem parameters to each interface based on the link endpoint.
 
-### MANET Example
+### MANET Examples
 
-See `examples/manet_triangle/network.yaml` for a 3-node MANET topology:
+- **Shared bridge**: `examples/manet_triangle_shared/` (broadcast domain with per-destination tc filters)
+- **Shared bridge + SINR**: `examples/manet_triangle_shared_sinr/` (with interference modeling)
 
-```bash
-# Deploy MANET example
-sudo $(which uv) run sine deploy examples/manet_triangle/network.yaml
+### Shared Bridge Model (Implemented)
 
-# Verify all 3 links have netem configured
-./CLAUDE_RESOURCES/check_netem.sh
-```
-
-### Shared Bridge Model (Future Enhancement)
-
-A more realistic MANET implementation would use a shared broadcast medium:
-
-```
-All nodes share a single Linux bridge (broadcast domain)
-            ╔═══════════════════════════════╗
-Node1:eth1 ═╣                               ╠═ Node2:eth1
-            ║       Shared Bridge           ║
-Node3:eth1 ═╣   (single broadcast domain)   ╠═ Node4:eth1
-            ╚═══════════════════════════════╝
-```
-
-**Key differences from point-to-point:**
+The shared bridge model provides a true broadcast medium:
 - Single interface per node (like real MANETs)
-- All nodes "hear" all transmissions (broadcast medium)
-- Requires per-destination filtering for netem (complex)
-- Hidden node problem can be modeled
-
-**Implementation approach:**
-1. Create single bridge connecting all wireless nodes
-2. Use eBPF/tc filters to apply per-destination netem rules
-3. Broadcast packets see worst-case channel to any receiver
-
-This is not yet implemented but could be added for applications requiring true broadcast semantics.
+- All nodes "hear" all transmissions
+- Per-destination tc flower filters apply channel-specific netem rules
+- Supports hidden node modeling
 
 ### Routing Configuration for Shared Bridge
 
-**Problem**: IP addresses alone don't enable connectivity. Containers need routes to know which interface to use for reaching the bridge subnet.
-
-**Without routing (broken)**:
-```bash
-$ docker exec clab-node1 ip route
-default via 172.17.0.1 dev eth0  # Docker default (WRONG for MANET traffic)
-192.168.100.1 dev eth1 scope link proto kernel  # Link-local only
-```
-Result: Packets destined for 192.168.100.0/24 use eth0 → bypass bridge → ping fails ❌
-
-**With routing (fixed)**:
-```bash
-$ docker exec clab-node1 ip route
-192.168.100.0/24 dev eth1        # Bridge subnet route (CORRECT) ✅
-default via 172.17.0.1 dev eth0  # Docker default (for management)
-```
-Result: Packets to other nodes use eth1 → bridge → netem applied → ping succeeds ✅
-
-**How SiNE configures routing**:
-1. Apply IP: `ip addr add 192.168.100.1/24 dev eth1`
-2. Add route: `ip route add 192.168.100.0/24 dev eth1` (automatically done by `apply_bridge_ips()`)
-3. Result: Packets to other bridge nodes use the correct interface
-
-**Verification**:
-```bash
-# Check routing table
-docker exec clab-manet-triangle-shared-node1 ip route
-
-# Test connectivity
-docker exec clab-manet-triangle-shared-node1 ping -c 3 192.168.100.2
-
-# Verify tc filters matching (packets traverse eth1)
-docker exec clab-manet-triangle-shared-node1 tc -s filter show dev eth1
-```
+For shared bridge topologies, SiNE automatically configures routing so that traffic to the bridge subnet uses the correct interface (eth1) rather than the default Docker route (eth0). This ensures packets traverse the bridge where netem and tc filters are applied.
 
 ## Fixed Netem Links
 
@@ -901,24 +921,7 @@ Link Parameters:
 
 ### Example
 
-See `examples/wifi6_adaptive/` for a complete adaptive MCS example:
-
-```bash
-# Start channel server
-uv run sine channel-server
-
-# Deploy (in another terminal)
-sudo $(which uv) run sine deploy examples/wifi6_adaptive/network.yaml
-
-# Test throughput
-docker exec -it clab-wifi6-adaptive-node1 ip addr add 192.168.1.1/24 dev eth1
-docker exec -it clab-wifi6-adaptive-node2 ip addr add 192.168.1.2/24 dev eth1
-docker exec -it clab-wifi6-adaptive-node1 iperf3 -s &
-docker exec -it clab-wifi6-adaptive-node2 iperf3 -c 192.168.1.1
-
-# Cleanup
-sudo $(which uv) run sine destroy examples/wifi6_adaptive/network.yaml
-```
+See `examples/adaptive_mcs_wifi6/` for a complete example with deployment and throughput testing instructions.
 
 ### Data Rate Calculation with MCS
 
@@ -935,3 +938,65 @@ Where:
 - `bits_per_symbol`: From modulation (bpsk=1, qpsk=2, 16qam=4, 64qam=6, 256qam=8, 1024qam=10)
 - `code_rate`: FEC code rate from MCS table
 - `efficiency`: 0.8 (accounts for protocol overhead)
+
+## MAC Protocol Support
+
+SiNE supports modeling interference for different Medium Access Control (MAC) protocols through transmission probability parameters.
+
+### TDMA (Time Division Multiple Access)
+
+For TDMA networks, each node transmits during assigned time slots. Interference is weighted by the probability that each interferer is transmitting when the receiver is listening.
+
+**Configuration**:
+```yaml
+# In topology YAML or via API
+interferers:
+  - node_name: node2
+    tx_probability: 0.2  # Transmits 20% of the time (1 out of 5 slots)
+    is_active: true
+```
+
+**Examples**:
+- `sinr_tdma_roundrobin/`: 5-node round-robin TDMA (each node gets 20% of slots)
+- `sinr_tdma_fixed/`: Custom TDMA schedule with different slot allocations
+
+**SINR Formula**:
+```
+SINR = Signal / (Noise + Σ(Interference_i × tx_probability_i))
+```
+
+### CSMA/CA (Carrier Sense Multiple Access with Collision Avoidance)
+
+For CSMA/CA networks (e.g., WiFi), nodes sense the channel before transmitting. Transmission probability depends on network load and contention.
+
+**Configuration**:
+```yaml
+interferers:
+  - node_name: node2
+    tx_probability: 0.3  # Estimated channel occupancy
+    is_active: true
+```
+
+**Examples**:
+- `csma_mcs_test/`: CSMA/CA with adaptive MCS
+- `sinr_csma/`: Multi-node CSMA with interference-aware MCS
+
+**Considerations**:
+- Hidden node problem: Adjacent-channel interferers may not be detected by carrier sensing
+- Transmission probability varies with load and number of contending nodes
+- Typical values: 0.1-0.4 for moderate load, 0.5+ for heavy congestion
+
+### Active/Inactive Nodes
+
+Nodes can be dynamically enabled/disabled in interference calculations:
+
+```yaml
+interferers:
+  - node_name: node3
+    is_active: false  # Powered off or out of range
+```
+
+This allows modeling:
+- Node failures or power-saving modes
+- Dynamic network topologies
+- Duty-cycled sensor networks
