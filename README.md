@@ -1047,4 +1047,4 @@ tc filter add dev lo flower help 2>&1 | grep -q "flower" && echo "Supported" || 
 
 ## License
 
-Apache License 2.0
+This project is licensed under the Apache License, Version 2.0.  See [LICENSE](./LICENSE) file for details.
