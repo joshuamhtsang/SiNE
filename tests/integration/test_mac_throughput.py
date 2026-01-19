@@ -20,6 +20,7 @@ Running these tests:
 """
 
 import logging
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -27,6 +28,47 @@ from pathlib import Path
 import pytest
 
 logger = logging.getLogger(__name__)
+
+
+def get_uv_path() -> str:
+    """
+    Get the path to the uv executable.
+
+    Tries multiple methods to find uv:
+    1. which uv (if in PATH)
+    2. Common installation locations
+    3. Fallback to 'uv' and let shell resolve it
+
+    Returns:
+        Path to uv executable
+    """
+    # Try 'which uv' first
+    try:
+        result = subprocess.run(
+            ["which", "uv"],
+            capture_output=True,
+            text=True,
+            check=False,  # Don't raise on error
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+    except Exception:
+        pass
+
+    # Try common installation locations
+    common_paths = [
+        os.path.expanduser("~/.local/bin/uv"),
+        os.path.expanduser("~/.cargo/bin/uv"),
+        "/usr/local/bin/uv",
+        "/usr/bin/uv",
+    ]
+
+    for path in common_paths:
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            return path
+
+    # Fallback: return 'uv' and hope it's in PATH
+    return "uv"
 
 
 def deploy_topology(yaml_path: str) -> subprocess.Popen:
@@ -40,9 +82,7 @@ def deploy_topology(yaml_path: str) -> subprocess.Popen:
         Popen object for the running deployment process
     """
     # Use full path to uv to avoid "command not found" with sudo
-    uv_path = subprocess.run(
-        ["which", "uv"], capture_output=True, text=True, check=True
-    ).stdout.strip()
+    uv_path = get_uv_path()
 
     print(f"\n{'='*70}")
     print(f"Deploying topology: {yaml_path}")
@@ -114,9 +154,7 @@ def destroy_topology(yaml_path: str) -> None:
         yaml_path: Path to topology YAML file
     """
     # Use full path to uv to avoid "command not found" with sudo
-    uv_path = subprocess.run(
-        ["which", "uv"], capture_output=True, text=True, check=True
-    ).stdout.strip()
+    uv_path = get_uv_path()
 
     print(f"Cleaning up existing deployment (if any)...")
     # Suppress output for destroy - we don't care if it fails (no existing deployment)
@@ -253,17 +291,18 @@ def run_iperf3_test(
 def channel_server():
     """Start channel server for tests, stop after all tests complete."""
     # Get uv path
-    uv_path = subprocess.run(
-        ["which", "uv"], capture_output=True, text=True, check=True
-    ).stdout.strip()
+    uv_path = get_uv_path()
 
-    # Start channel server in background
+    # Start channel server in background with output visible
     logger.info("Starting channel server...")
+    print("\n" + "="*70)
+    print("CHANNEL SERVER OUTPUT (stdout/stderr will be shown below)")
+    print("="*70 + "\n")
+
+    # Don't pipe stdout/stderr - let them go to console
     process = subprocess.Popen(
         [uv_path, "run", "sine", "channel-server"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
+        # stdout and stderr will go to the test output
     )
 
     # Wait for server to be ready (check health endpoint)
@@ -277,6 +316,9 @@ def channel_server():
             with urllib.request.urlopen(f"{server_url}/health", timeout=1) as response:
                 if response.status == 200:
                     logger.info(f"Channel server ready at {server_url}")
+                    print(f"\n{'='*70}")
+                    print(f"Channel server is ready at {server_url}")
+                    print(f"{'='*70}\n")
                     break
         except (urllib.error.URLError, OSError):
             if i < max_retries - 1:
@@ -289,6 +331,9 @@ def channel_server():
 
     # Cleanup: stop channel server
     logger.info("Stopping channel server...")
+    print("\n" + "="*70)
+    print("Stopping channel server...")
+    print("="*70 + "\n")
     process.terminate()
     try:
         process.wait(timeout=5)
@@ -454,8 +499,13 @@ def test_csma_mcs_uses_sinr(channel_server, examples_dir: Path):
     interference was present. With CSMA, we compute SINR and MCS should be
     selected based on SINR, not SNR.
 
+    Linear topology:
+        node1 ──────── node2 ──────── node3
+        (0,0,1)      (20,0,1)      (40,0,1)
+
     Expected behavior:
-    - SINR < SNR (interference from node3)
+    - node1 ↔ node3: Hidden nodes (40m > CS range of 39.5m)
+    - node2 → node3 link: SINR < SNR (interference from hidden node1)
     - MCS index matches SINR threshold (not SNR)
     - Deployment summary shows both SNR and SINR
     - MAC model type shown as "csma"
@@ -469,12 +519,10 @@ def test_csma_mcs_uses_sinr(channel_server, examples_dir: Path):
     destroy_topology(str(yaml_path))
 
     # Deploy with mobility enabled so we can query the emulation API
-    uv_path = subprocess.run(
-        ["which", "uv"], capture_output=True, text=True, check=True
-    ).stdout.strip()
+    uv_path = get_uv_path()
 
     print(f"\n{'='*70}")
-    print(f"Deploying topology with mobility API: {yaml_path}")
+    print(f"Deploying linear topology with hidden node scenario: {yaml_path}")
     print(f"{'='*70}\n")
 
     # Start deployment with mobility API in background
@@ -514,10 +562,10 @@ def test_csma_mcs_uses_sinr(channel_server, examples_dir: Path):
         with urllib.request.urlopen("http://localhost:8001/api/emulation/summary") as response:
             summary = json.loads(response.read())
 
-        # Find link node1 -> node2
+        # Find link node2 -> node3 (primary test link with interference from node1)
         link_found = False
         for link in summary.get("links", []):
-            if link["tx_node"] == "node1" and link["rx_node"] == "node2":
+            if link["tx_node"] == "node2" and link["rx_node"] == "node3":
                 link_found = True
                 snr_db = link["snr_db"]
                 sinr_db = link.get("sinr_db")
@@ -525,7 +573,7 @@ def test_csma_mcs_uses_sinr(channel_server, examples_dir: Path):
                 mac_model = link.get("mac_model_type")
 
                 print(f"\n{'='*70}")
-                print(f"Link node1 → node2:")
+                print(f"Link node2 → node3 (test link):")
                 print(f"  SNR: {snr_db:.1f} dB")
                 print(f"  SINR: {sinr_db:.1f} dB" if sinr_db else "  SINR: None")
                 print(f"  MCS: {mcs_index}" if mcs_index is not None else "  MCS: None")
@@ -535,10 +583,10 @@ def test_csma_mcs_uses_sinr(channel_server, examples_dir: Path):
                 # Validation 1: SINR must be present (MAC model case)
                 assert sinr_db is not None, "SINR should be computed for CSMA MAC model"
 
-                # Validation 2: SINR < SNR (interference present)
+                # Validation 2: SINR < SNR (interference from hidden node1)
                 assert sinr_db < snr_db, (
                     f"SINR ({sinr_db:.1f} dB) should be less than SNR ({snr_db:.1f} dB) "
-                    f"due to interference from node3"
+                    f"due to interference from hidden node1"
                 )
 
                 # Validation 3: MAC model type should be "csma"
@@ -548,26 +596,41 @@ def test_csma_mcs_uses_sinr(channel_server, examples_dir: Path):
                 assert mcs_index is not None, "MCS index should be selected"
 
                 # Validation 5: Check that selected MCS makes sense for SINR
-                # For free-space at 20m with 20 dBm TX power:
-                # - Expected SNR ≈ 48 dB
-                # - Expected SINR ≈ 44-46 dB (with interference)
-                # - Should select high MCS (MCS 10 or 11 for 1024-QAM)
-                assert 40 <= sinr_db <= 50, (
-                    f"SINR {sinr_db:.1f} dB out of expected range [40-50 dB] "
+                # For free-space at 20m with strong interference from 40m:
+                # - Expected SNR ≈ 42 dB (20m FSPL ≈ 73 dB @ 5.18 GHz, 20 dBm TX)
+                # - Expected SINR ≈ 11 dB (interference-limited! I >> N)
+                # - Should select LOW MCS (MCS 1-3 for QPSK/16-QAM) based on SINR
+                assert 38 <= snr_db <= 46, (
+                    f"SNR {snr_db:.1f} dB out of expected range [38-46 dB] "
                     f"for 20m free-space link"
                 )
-                assert 10 <= mcs_index <= 11, (
-                    f"MCS {mcs_index} should be 10 or 11 for SINR ≈ 45 dB"
+                assert 8 <= sinr_db <= 15, (
+                    f"SINR {sinr_db:.1f} dB out of expected range [8-15 dB] "
+                    f"for interference-limited link (node1 @ 40m, 30% traffic)"
+                )
+                assert 1 <= mcs_index <= 4, (
+                    f"MCS {mcs_index} should be 1-4 (QPSK/16-QAM) for SINR ≈ 11 dB, "
+                    f"NOT high MCS based on SNR=42 dB"
+                )
+
+                # Validation 6: SINR degradation should be large (interference-limited)
+                # Interference from node1 (40m, 30% prob) creates -64 dBm effective interference
+                # which dominates noise (-95 dBm), making SINR << SNR
+                sinr_degradation_db = snr_db - sinr_db
+                assert 20 <= sinr_degradation_db <= 35, (
+                    f"SINR degradation {sinr_degradation_db:.1f} dB should be large "
+                    f"(20-35 dB) for interference-limited scenario"
                 )
 
                 print(f"✓ MCS selection uses SINR (not SNR)")
-                print(f"✓ SINR < SNR (interference accounted for)")
+                print(f"✓ SINR << SNR (interference-limited scenario)")
                 print(f"✓ MAC model type is 'csma'")
-                print(f"✓ Selected MCS matches SINR threshold\n")
+                print(f"✓ Selected MCS matches SINR threshold (~11 dB), not SNR (42 dB)")
+                print(f"✓ SINR degradation: {sinr_degradation_db:.1f} dB (large due to interference)\n")
 
                 break
 
-        assert link_found, "Link node1 → node2 not found in deployment summary"
+        assert link_found, "Link node2 → node3 not found in deployment summary"
 
     finally:
         # Stop deployment process

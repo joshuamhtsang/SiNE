@@ -199,4 +199,4 @@ I suggested going for option 2, as this results in the network.yaml being a comp
 
 # Lesson Learned 3 - Creating good integration tests is key to shaping the development
 
-It was really hard getting SINR feature implemented, need lots of steering. But having integration tests codifed the human requirements for SiNE.
+It was really hard getting SINR feature implemented, need lots of steering. But having integration tests codifed the human requirements for SiNE. Claude Code goes around in circles due to catch-22's.  I suggest lienar topology to bring out hidden node problem better.

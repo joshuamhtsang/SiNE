@@ -110,9 +110,9 @@ class SINRCalculator:
                 rx_node=rx_node,
                 signal_power_dbm=signal_power_dbm,
                 noise_power_dbm=noise_power_dbm,
-                total_interference_dbm=-np.inf,
-                snr_db=-np.inf,
-                sinr_db=-np.inf,
+                total_interference_dbm=-200.0,
+                snr_db=-200.0,
+                sinr_db=-200.0,
                 num_interferers=0,
                 interference_terms=[],
                 regime="unusable",
@@ -151,7 +151,8 @@ class SINRCalculator:
             total_interference_dbm = 10 * math.log10(interference_linear)
         else:
             interference_linear = 0.0
-            total_interference_dbm = -np.inf
+            # Use very low value instead of -inf for JSON serialization
+            total_interference_dbm = -200.0
 
         # Calculate SINR
         noise_linear = 10 ** (noise_power_dbm / 10.0)
@@ -302,7 +303,8 @@ class SINRCalculator:
         if expected_interference_linear > 0:
             total_interference_dbm = 10 * math.log10(expected_interference_linear)
         else:
-            total_interference_dbm = -np.inf
+            # Use very low value instead of -inf for JSON serialization
+            total_interference_dbm = -200.0
 
         # Calculate SINR
         noise_linear = 10 ** (noise_power_dbm / 10.0)
@@ -426,7 +428,8 @@ class SINRCalculator:
         if expected_interference_linear > 0:
             total_interference_dbm = 10 * math.log10(expected_interference_linear)
         else:
-            total_interference_dbm = -np.inf
+            # Use very low value instead of -inf for JSON serialization
+            total_interference_dbm = -200.0
 
         # Calculate SINR
         noise_linear = 10 ** (noise_power_dbm / 10.0)
@@ -497,8 +500,8 @@ class SINRCalculator:
         Returns:
             "noise-limited", "interference-limited", or "mixed"
         """
-        if total_interference_dbm == -np.inf:
-            # No interference
+        if total_interference_dbm <= -200.0:
+            # No interference (or negligible)
             return "noise-limited"
 
         # Compare interference to noise (10 dB threshold)

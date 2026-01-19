@@ -170,6 +170,7 @@ class ChannelResponse(BaseModel):
     mac_model_type: str | None = None  # "csma", "tdma", or None
     sinr_db: float | None = None  # SINR when using MAC models
     hidden_nodes: int | None = None  # CSMA: Number of hidden nodes
+    expected_interference_dbm: float | None = None  # CSMA: Expected interference power with probabilities
     throughput_multiplier: float | None = None  # TDMA: Slot ownership fraction
 
 
@@ -720,30 +721,42 @@ async def _compute_batch_with_mac_model(
                 active_states={name: True for name in interferer_nodes},  # Assume all active for now
             )
 
-            # Combine interference powers with MAC model probabilities
-            interference_terms = []
-            for intf_term in interference_result.interference_terms:
-                interferer_name = intf_term.source  # Access as attribute, not dict key
-                intf_power_dbm = intf_term.power_dbm  # Access as attribute, not dict key
+            # Pass all interference terms to SINR calculator
+            # The MAC-specific methods will apply probability scaling internally
+            interference_terms_list = list(interference_result.interference_terms)
 
-                # Get MAC model probability for this interferer
-                prob = interference_probs.get(interferer_name, 0.0)
-
-                if prob > 0:
-                    interference_terms.append({
-                        "interferer": interferer_name,
-                        "interference_power_dbm": intf_power_dbm,
-                        "probability": prob,
-                    })
-
-            # Compute SINR
-            sinr_result = _sinr_calculator.calculate_sinr(
-                tx_node=link.tx_node,
-                rx_node=link.rx_node,
-                signal_power_dbm=signal_power_dbm,
-                noise_power_dbm=noise_power_dbm,
-                interference_terms=interference_terms,
-            )
+            # Compute SINR using MAC-specific methods
+            if mac_model_config.type == "csma":
+                # CSMA model: Use probabilistic interference
+                sinr_result, mac_metadata = _sinr_calculator.calculate_sinr_with_csma(
+                    tx_node=link.tx_node,
+                    rx_node=link.rx_node,
+                    signal_power_dbm=signal_power_dbm,
+                    noise_power_dbm=noise_power_dbm,
+                    interference_terms=interference_terms_list,
+                    interference_probs=interference_probs,
+                )
+            elif mac_model_config.type == "tdma":
+                # TDMA model: Use slot-based interference
+                sinr_result, mac_metadata = _sinr_calculator.calculate_sinr_with_tdma(
+                    tx_node=link.tx_node,
+                    rx_node=link.rx_node,
+                    signal_power_dbm=signal_power_dbm,
+                    noise_power_dbm=noise_power_dbm,
+                    interference_terms=interference_terms_list,
+                    interference_probs=interference_probs,
+                )
+            else:
+                # Fallback: Phase 1 all-transmitting (should not happen with MAC models)
+                logger.warning(f"Unknown MAC model type: {mac_model_config.type}")
+                sinr_result = _sinr_calculator.calculate_sinr(
+                    tx_node=link.tx_node,
+                    rx_node=link.rx_node,
+                    signal_power_dbm=signal_power_dbm,
+                    noise_power_dbm=noise_power_dbm,
+                    interference_terms=interference_terms_list,
+                )
+                mac_metadata = {}
 
             # Use SINR instead of SNR for MCS selection and BER/BLER/PER calculation
             effective_snr = sinr_result.sinr_db
@@ -760,8 +773,10 @@ async def _compute_batch_with_mac_model(
             result.sinr_db = effective_snr  # Add SINR (with interference)
             result.mac_model_type = mac_model_config.type
 
+            # Extract MAC-specific metadata from SINR calculation
             if mac_model_config.type == "csma":
-                result.hidden_nodes = sum(1 for p in interference_probs.values() if p > 0)
+                result.hidden_nodes = mac_metadata.get("num_hidden_nodes", 0)
+                result.expected_interference_dbm = mac_metadata.get("expected_interference_dbm")
             elif mac_model_config.type == "tdma":
                 result.throughput_multiplier = mac_model.get_throughput_multiplier(
                     link.tx_node, all_nodes=list(all_nodes)
