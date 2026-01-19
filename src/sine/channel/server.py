@@ -275,6 +275,7 @@ class InterfererInfo(BaseModel):
     tx_power_dbm: float
     antenna_gain_dbi: float
     frequency_hz: float
+    bandwidth_hz: float = Field(default=80e6, description="Transmitter channel bandwidth in Hz")
     is_active: bool = Field(default=True, description="Whether this interferer is currently transmitting")
 
 
@@ -1349,6 +1350,7 @@ async def compute_sinr(request: SINRLinkRequest):
                 tx_power_dbm=intf.tx_power_dbm,
                 antenna_gain_dbi=intf.antenna_gain_dbi,
                 frequency_hz=intf.frequency_hz,
+                bandwidth_hz=intf.bandwidth_hz,
             )
             for intf in request.interferers
         ]
@@ -1359,13 +1361,15 @@ async def compute_sinr(request: SINRLinkRequest):
             for intf in request.interferers
         }
 
-        # Compute interference
+        # Compute interference with ACLR (Phase 2: Adjacent-Channel Interference)
         interference_result = _interference_engine.compute_interference_at_receiver(
             rx_position=request.rx_position.as_tuple(),
             rx_antenna_gain_dbi=request.rx_gain_dbi,
             rx_node=request.rx_node,
             interferers=interferers,
             active_states=active_states,
+            rx_frequency_hz=request.frequency_hz,
+            rx_bandwidth_hz=request.bandwidth_hz,
         )
 
         # Calculate SINR

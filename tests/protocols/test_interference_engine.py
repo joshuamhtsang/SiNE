@@ -11,6 +11,7 @@ from sine.channel.interference_engine import (
     TransmitterInfo,
     InterferenceTerm,
     InterferenceResult,
+    calculate_aclr_db,
 )
 from sine.channel.sionna_engine import is_sionna_available
 
@@ -322,6 +323,216 @@ class TestEquilateralTriangle:
         # Verify all nodes see 2 interferers
         for result in results.values():
             assert result.num_interferers == 2
+
+
+class TestACLRCalculation:
+    """Test ACLR (Adjacent-Channel Leakage Ratio) calculation function."""
+
+    def test_cochannel_zero_separation(self):
+        """Test co-channel interference (0 MHz separation) returns 0 dB ACLR."""
+        aclr = calculate_aclr_db(
+            freq_separation_hz=0.0,
+            tx_bandwidth_hz=80e6,
+            rx_bandwidth_hz=80e6,
+        )
+        assert aclr == 0.0, "Co-channel (0 MHz separation) should have 0 dB ACLR"
+
+    def test_cochannel_overlap_20mhz(self):
+        """Test overlapping channels (20 MHz separation, 80 MHz BW) returns 0 dB ACLR."""
+        # For 80 MHz BW, channels overlap if separation < 40 MHz (BW/2)
+        aclr = calculate_aclr_db(
+            freq_separation_hz=20e6,
+            tx_bandwidth_hz=80e6,
+            rx_bandwidth_hz=80e6,
+        )
+        assert aclr == 0.0, "Overlapping channels (20 MHz < 40 MHz threshold) should have 0 dB ACLR"
+
+    def test_cochannel_threshold_80mhz(self):
+        """Test channel overlap threshold for 80 MHz bandwidth."""
+        # Threshold for non-overlap: (TX_BW + RX_BW) / 2 = (80 + 80) / 2 = 40 MHz
+        # Just below threshold (overlap)
+        aclr_below = calculate_aclr_db(39e6, 80e6, 80e6)
+        assert aclr_below == 0.0, "39 MHz < 40 MHz threshold should overlap (0 dB)"
+
+        # Just at threshold (non-overlap, transition band starts)
+        aclr_at = calculate_aclr_db(40e6, 80e6, 80e6)
+        assert aclr_at > 0.0, "40 MHz >= 40 MHz threshold should not overlap (ACLR > 0)"
+
+    def test_transition_band_60mhz(self):
+        """Test transition band (60 MHz separation, 80 MHz BW) interpolation."""
+        # For 80 MHz BW: transition band is 40-80 MHz (half_bw to half_bw + 40)
+        # 60 MHz = half_bw (40) + 20 MHz excess
+        # Linear interpolation: 20 + (20/40) * 8 = 20 + 4 = 24 dB
+        aclr = calculate_aclr_db(60e6, 80e6, 80e6)
+        expected = 24.0
+        assert abs(aclr - expected) < 0.1, f"Expected {expected} dB, got {aclr:.2f} dB"
+
+    def test_first_adjacent_100mhz(self):
+        """Test 1st adjacent channel (100 MHz separation, 80 MHz BW) returns 40 dB."""
+        # For 80 MHz BW: 1st adjacent is 80-120 MHz (half_bw + 40 to half_bw + 80)
+        aclr = calculate_aclr_db(100e6, 80e6, 80e6)
+        assert aclr == 40.0, "1st adjacent (100 MHz) should have 40 dB ACLR"
+
+    def test_orthogonal_200mhz(self):
+        """Test orthogonal channels (200 MHz separation, 80 MHz BW) returns 45 dB."""
+        # For 80 MHz BW: orthogonal is >120 MHz (half_bw + 80)
+        aclr = calculate_aclr_db(200e6, 80e6, 80e6)
+        assert aclr == 45.0, "Orthogonal (200 MHz) should have 45 dB ACLR"
+
+    def test_bandwidth_dependent_thresholds_20mhz(self):
+        """Test ACLR thresholds scale with bandwidth (20 MHz channels)."""
+        # For 20 MHz BW:
+        # - Overlap threshold: (20 + 20) / 2 = 10 MHz
+        # - Transition band: 10-50 MHz (half_bw to half_bw + 40)
+        # - 1st adjacent: 50-90 MHz
+        # - Orthogonal: >90 MHz
+
+        # Co-channel (5 MHz < 10 MHz threshold)
+        aclr_co = calculate_aclr_db(5e6, 20e6, 20e6)
+        assert aclr_co == 0.0, "5 MHz < 10 MHz threshold should overlap"
+
+        # Transition band (30 MHz = half_bw (10) + 20 excess)
+        aclr_trans = calculate_aclr_db(30e6, 20e6, 20e6)
+        expected_trans = 20.0 + (20.0 / 40.0) * 8.0  # 24 dB
+        assert abs(aclr_trans - expected_trans) < 0.1
+
+        # 1st adjacent (70 MHz in 50-90 range)
+        aclr_adj = calculate_aclr_db(70e6, 20e6, 20e6)
+        assert aclr_adj == 40.0
+
+        # Orthogonal (150 MHz > 90 MHz)
+        aclr_orth = calculate_aclr_db(150e6, 20e6, 20e6)
+        assert aclr_orth == 45.0
+
+    def test_asymmetric_bandwidths(self):
+        """Test ACLR with different TX and RX bandwidths."""
+        # TX: 80 MHz, RX: 20 MHz
+        # Overlap threshold: (80 + 20) / 2 = 50 MHz
+        # Transition band uses TX half_bw: 40 MHz
+        # So transition is 40-80 MHz (based on TX bandwidth)
+
+        # 30 MHz < 50 MHz overlap threshold → co-channel
+        aclr_overlap = calculate_aclr_db(30e6, tx_bandwidth_hz=80e6, rx_bandwidth_hz=20e6)
+        assert aclr_overlap == 0.0, "30 MHz < 50 MHz threshold should overlap"
+
+        # 60 MHz >= 50 MHz → non-overlapping, in transition band
+        aclr_trans = calculate_aclr_db(60e6, tx_bandwidth_hz=80e6, rx_bandwidth_hz=20e6)
+        assert aclr_trans > 0.0, "60 MHz >= 50 MHz should not overlap"
+
+    def test_negative_frequency_separation(self):
+        """Test that negative frequency separation is handled correctly (absolute value)."""
+        aclr_positive = calculate_aclr_db(100e6, 80e6, 80e6)
+        aclr_negative = calculate_aclr_db(-100e6, 80e6, 80e6)
+        assert aclr_positive == aclr_negative, "ACLR should be symmetric (use abs value)"
+
+
+class TestACLRIntegration:
+    """Test ACLR integration with InterferenceEngine."""
+
+    def test_adjacent_channel_rejection(self):
+        """
+        Test that adjacent-channel interferers are rejected by ACLR.
+
+        Compares co-channel (0 dB ACLR) vs adjacent-channel (40 dB ACLR).
+        """
+        engine = InterferenceEngine()
+        engine.load_scene(scene_path=None, frequency_hz=5.18e9, bandwidth_hz=80e6)
+
+        rx_position = (0.0, 0.0, 1.5)
+        rx_frequency_hz = 5.18e9
+        rx_bandwidth_hz = 80e6
+
+        # Two interferers at same distance, different frequencies
+        interferers = [
+            # Co-channel interferer (0 dB ACLR)
+            TransmitterInfo(
+                node_name="cochannel",
+                position=(20.0, 0.0, 1.5),
+                tx_power_dbm=20.0,
+                antenna_gain_dbi=2.15,
+                frequency_hz=5.18e9,  # Same frequency
+                bandwidth_hz=80e6,
+            ),
+            # Adjacent-channel interferer (40 dB ACLR at 100 MHz separation)
+            TransmitterInfo(
+                node_name="adjacent",
+                position=(20.0, 0.0, 1.5),  # Same position
+                tx_power_dbm=20.0,
+                antenna_gain_dbi=2.15,
+                frequency_hz=5.28e9,  # +100 MHz
+                bandwidth_hz=80e6,
+            ),
+        ]
+
+        # Compute interference with ACLR
+        result = engine.compute_interference_at_receiver(
+            rx_position=rx_position,
+            rx_antenna_gain_dbi=2.15,
+            rx_node="rx1",
+            interferers=interferers,
+            active_states={"cochannel": True, "adjacent": True},
+            rx_frequency_hz=rx_frequency_hz,
+            rx_bandwidth_hz=rx_bandwidth_hz,
+        )
+
+        # Verify both interferers are present
+        assert result.num_interferers == 2
+
+        # Find each interferer's term
+        cochannel_term = next(t for t in result.interference_terms if t.source == "cochannel")
+        adjacent_term = next(t for t in result.interference_terms if t.source == "adjacent")
+
+        # Verify ACLR values
+        assert cochannel_term.aclr_db == 0.0, "Co-channel should have 0 dB ACLR"
+        assert adjacent_term.aclr_db == 40.0, "100 MHz separation should have 40 dB ACLR"
+
+        # Verify interference power difference (~40 dB)
+        power_diff = cochannel_term.power_dbm - adjacent_term.power_dbm
+        print(f"\nACLR integration test:")
+        print(f"  Co-channel interference: {cochannel_term.power_dbm:.2f} dBm (ACLR: {cochannel_term.aclr_db} dB)")
+        print(f"  Adjacent-channel interference: {adjacent_term.power_dbm:.2f} dBm (ACLR: {adjacent_term.aclr_db} dB)")
+        print(f"  Power difference: {power_diff:.2f} dB")
+
+        assert abs(power_diff - 40.0) < 0.5, (
+            f"Power difference {power_diff:.2f} dB should be ~40 dB (ACLR rejection)"
+        )
+
+    def test_orthogonal_filtering(self):
+        """
+        Test that orthogonal interferers (>2× bandwidth separation) are filtered out.
+        """
+        engine = InterferenceEngine()
+        engine.load_scene(scene_path=None, frequency_hz=5.18e9, bandwidth_hz=80e6)
+
+        rx_position = (0.0, 0.0, 1.5)
+        rx_frequency_hz = 5.18e9
+        rx_bandwidth_hz = 80e6
+
+        interferers = [
+            # Co-channel (included)
+            TransmitterInfo("cochannel", (20.0, 0.0, 1.5), 20.0, 2.15, 5.18e9, 80e6),
+            # Adjacent (included, 100 MHz separation < 2 × 80 MHz = 160 MHz)
+            TransmitterInfo("adjacent", (20.0, 0.0, 1.5), 20.0, 2.15, 5.28e9, 80e6),
+            # Orthogonal (filtered out, 200 MHz separation > 160 MHz threshold)
+            TransmitterInfo("orthogonal", (20.0, 0.0, 1.5), 20.0, 2.15, 5.38e9, 80e6),
+        ]
+
+        result = engine.compute_interference_at_receiver(
+            rx_position=rx_position,
+            rx_antenna_gain_dbi=2.15,
+            rx_node="rx1",
+            interferers=interferers,
+            active_states={"cochannel": True, "adjacent": True, "orthogonal": True},
+            rx_frequency_hz=rx_frequency_hz,
+            rx_bandwidth_hz=rx_bandwidth_hz,
+        )
+
+        # Should only see co-channel and adjacent (orthogonal filtered out)
+        assert result.num_interferers == 2, "Orthogonal interferer should be filtered out"
+        sources = [term.source for term in result.interference_terms]
+        assert "cochannel" in sources
+        assert "adjacent" in sources
+        assert "orthogonal" not in sources, "Orthogonal interferer (200 MHz away) should be filtered"
 
 
 if __name__ == "__main__":

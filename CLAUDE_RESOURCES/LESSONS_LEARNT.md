@@ -204,3 +204,9 @@ It was really hard getting SINR and MAC-level protocols (CSMA, TDMA) feature imp
 I discovered errors in how 'ip route add' was being used my SiNE (it was using host only /32 suffix...). Kept prompting to refine the integration tests, so future issues are discovered earlier - this take domain knowledge to identify the common pitfalls in Linux networking.
 
 Claude Code is so smart, but occasionally make basic errors.  "So smart, but so stupid, like Jan in Love is Blind".
+
+
+
+## Lesson Learned 4 - Building SiNE sometimes involved building unphysical emulations first, to keep initial complexity down
+
+When implementing SINR, SiNE initially assumed that at a receiver, all peer nodes contributed interference regardless of the lack of bandwidth overlap.  Only later was ACLR incorporated, and the MAC level protocols like TDMA and CSMA had to be implemented first.
