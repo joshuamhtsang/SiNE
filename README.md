@@ -112,7 +112,7 @@ Define the physical environment for ray tracing using Mitsuba XML format:
 
 ### 2. Create Network Topology (`network.yaml`)
 
-Define nodes, interfaces, and links:
+Define nodes, interfaces, and links (from [network.yaml](./examples/adaptive_mcs_wifi6/network.yaml)):
 
 ```yaml
 name: my-network
@@ -306,6 +306,8 @@ sudo $(which uv) run sine deploy examples/two_rooms/network.yaml
 uv run --with jupyter jupyter notebook scenes/viewer_live.ipynb
 ```
 
+Due to the nature of Jupyter notebooks, it's easier to make a copy of the notebook [viewer_live.ipynb](./scenes/viewer_live.ipynb) before running.
+
 **Features:**
 - RMS delay spread, coherence bandwidth, K-factor
 - 3D scene preview with propagation paths
@@ -391,7 +393,7 @@ uv run pytest -s
 
 **Cause:** netem not applied (deployment ran without sudo)
 
-**Solution:**
+**Solution:** Run deployment with sudo
 ```bash
 uv run sine destroy <topology.yaml>
 sudo $(which uv) run sine deploy <topology.yaml>
