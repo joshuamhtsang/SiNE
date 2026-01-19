@@ -446,13 +446,13 @@ class EmulationController:
             }
 
             # Store MCS info if available
-            if result.get("mcs_index") is not None:
+            if result.get("selected_mcs_index") is not None:
                 self._link_mcs_info[(tx_node, rx_node)] = {
-                    "mcs_index": result.get("mcs_index"),
-                    "modulation": result.get("modulation"),
-                    "code_rate": result.get("code_rate"),
-                    "fec_type": result.get("fec_type"),
-                    "bandwidth_mhz": result.get("bandwidth_mhz"),
+                    "mcs_index": result.get("selected_mcs_index"),
+                    "modulation": result.get("selected_modulation"),
+                    "code_rate": result.get("selected_code_rate"),
+                    "fec_type": result.get("selected_fec_type"),
+                    "bandwidth_mhz": result.get("selected_bandwidth_mhz"),
                 }
 
         # 4. Apply per-destination netem to all nodes

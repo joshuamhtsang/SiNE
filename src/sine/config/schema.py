@@ -106,9 +106,10 @@ class CSMAConfig(BaseModel):
         default=20.0,
         description="SNR threshold (dB) for communication range estimation. "
         "20 dB = WiFi 6 practical range (64-QAM), 10 dB = BPSK max range, "
-        "30 dB = high-rate 256-QAM zone. Used to estimate where nodes can communicate.",
+        "30 dB = high-rate 256-QAM zone, 40+ dB = very short range (hidden node testing). "
+        "Used to estimate where nodes can communicate.",
         ge=5.0,
-        le=40.0,
+        le=50.0,
     )
 
 

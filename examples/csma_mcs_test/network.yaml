@@ -12,21 +12,21 @@
 #
 # Test topology (linear arrangement):
 #
-#   node1 ──────── node2 ──────── node3
-#   (0,0,1)      (20,0,1)      (40,0,1)
+#   node1 ──────────────── node2 ────── node3
+#   (0,0,1)              (30,0,1)   (40,0,1)
 #
 #   Distances:
-#   - node1 ↔ node2: 20m
-#   - node2 ↔ node3: 20m  (primary test link)
+#   - node1 ↔ node2: 30m (OUTSIDE CS range → hidden node)
+#   - node2 ↔ node3: 10m (primary test link)
 #   - node1 ↔ node3: 40m
 #
 #   Expected SINR computation @ node3:
-#   - Signal from node2 (20m): -52.7 dBm
-#   - Interference from node1 (40m, 30% prob): -64.0 dBm effective
-#   - Noise floor: -95.0 dBm
-#   - SNR: 42.2 dB
-#   - SINR: 11.3 dB (interference-limited!)
-#   - Degradation: 31 dB (interference >> noise)
+#   - Signal from node2 (10m): ~-47 dBm
+#   - Interference from node1 (40m, 30% prob): ~-64 dBm effective
+#   - Noise floor: -88.0 dBm
+#   - SNR: ~41 dB (signal-to-noise, no interference)
+#   - SINR: < SNR (interference-limited!)
+#   - node1 is HIDDEN from node2 (30m > 27.5m CS range)
 #
 # Note: With this spacing, interference dominates. The test validates that MCS
 # is selected on SINR (11 dB) not SNR (42 dB), demonstrating correct SINR-based
@@ -79,7 +79,7 @@ topology:
               enabled: true                          # Enable CSMA/CA model
               carrier_sense_range_multiplier: 2.5    # CS range = 2.5× communication range
               traffic_load: 0.3                      # 30% duty cycle
-              communication_range_snr_threshold_db: 38.0  # High threshold to make CS range ~50m (2.5 × 20m)
+              communication_range_snr_threshold_db: 40.4  # Gives comm_range=11m, CS_range=27.5m (node1 @ 30m is hidden)
 
     # Node 2: WiFi 6 client (primary receiver)
     node2:
@@ -106,7 +106,7 @@ topology:
               enabled: true
               carrier_sense_range_multiplier: 2.5
               traffic_load: 0.3
-              communication_range_snr_threshold_db: 38.0  # High threshold to make CS range ~50m (2.5 × 20m)
+              communication_range_snr_threshold_db: 40.4  # Gives comm_range=11m, CS_range=27.5m (node1 @ 30m is hidden)
 
     # Node 3: Interferer (creates SINR degradation)
     node3:
@@ -132,7 +132,7 @@ topology:
               enabled: true
               carrier_sense_range_multiplier: 2.5
               traffic_load: 0.3
-              communication_range_snr_threshold_db: 38.0  # High threshold to make CS range ~50m (2.5 × 20m)
+              communication_range_snr_threshold_db: 40.4  # Gives comm_range=11m, CS_range=27.5m (node1 @ 30m is hidden)
 
 # Expected Results (with SINR fix):
 #

@@ -596,21 +596,21 @@ def test_csma_mcs_uses_sinr(channel_server, examples_dir: Path):
                 assert mcs_index is not None, "MCS index should be selected"
 
                 # Validation 5: Check that selected MCS makes sense for SINR
-                # For free-space at 20m with strong interference from 40m:
-                # - Expected SNR ≈ 42 dB (20m FSPL ≈ 73 dB @ 5.18 GHz, 20 dBm TX)
-                # - Expected SINR ≈ 11 dB (interference-limited! I >> N)
-                # - Should select LOW MCS (MCS 1-3 for QPSK/16-QAM) based on SINR
+                # For free-space at 10m (node2->node3) with interference from 40m (node1->node3):
+                # - Expected SNR ≈ 41 dB (10m FSPL ≈ 67 dB @ 5.18 GHz, 20 dBm TX)
+                # - Expected SINR ≈ 17 dB (interference from 40m with 30% traffic load)
+                # - Should select MEDIUM MCS (MCS 3-4 for QPSK/16-QAM) based on SINR
                 assert 38 <= snr_db <= 46, (
                     f"SNR {snr_db:.1f} dB out of expected range [38-46 dB] "
-                    f"for 20m free-space link"
+                    f"for 10m free-space link"
                 )
-                assert 8 <= sinr_db <= 15, (
-                    f"SINR {sinr_db:.1f} dB out of expected range [8-15 dB] "
-                    f"for interference-limited link (node1 @ 40m, 30% traffic)"
+                assert 15 <= sinr_db <= 20, (
+                    f"SINR {sinr_db:.1f} dB out of expected range [15-20 dB] "
+                    f"for interference-limited link (node1 @ 40m from RX, 30% traffic)"
                 )
-                assert 1 <= mcs_index <= 4, (
-                    f"MCS {mcs_index} should be 1-4 (QPSK/16-QAM) for SINR ≈ 11 dB, "
-                    f"NOT high MCS based on SNR=42 dB"
+                assert 3 <= mcs_index <= 5, (
+                    f"MCS {mcs_index} should be 3-5 (QPSK/16-QAM) for SINR ≈ 17 dB, "
+                    f"NOT high MCS (6-11) based on SNR=41 dB"
                 )
 
                 # Validation 6: SINR degradation should be large (interference-limited)
