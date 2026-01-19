@@ -29,6 +29,8 @@ from .fixtures import (
     run_iperf3_test,
     stop_deployment_process,
     test_ping_connectivity,
+    verify_route_to_cidr,
+    verify_tc_config,
 )
 
 logger = logging.getLogger(__name__)
@@ -177,6 +179,146 @@ def test_manet_shared_bridge_bidirectional_throughput(channel_server, examples_d
             f"node1→node2: {throughput_1_to_2:.1f} Mbps, "
             f"node2→node1: {throughput_2_to_1:.1f} Mbps"
         )
+
+    finally:
+        # Stop deployment process
+        stop_deployment_process(deploy_process)
+        # Cleanup containers
+        destroy_topology(str(yaml_path))
+
+
+@pytest.mark.integration
+def test_manet_shared_bridge_routing(channel_server, examples_dir: Path):
+    """
+    Test MANET shared bridge routing configuration.
+
+    Expected: All nodes have routes to the bridge subnet (192.168.100.0/24) on eth1.
+    """
+    yaml_path = examples_dir / "manet_triangle_shared" / "network.yaml"
+
+    if not yaml_path.exists():
+        pytest.skip(f"Example not found: {yaml_path}")
+
+    # Cleanup any existing deployment first
+    destroy_topology(str(yaml_path))
+
+    deploy_process = None
+    try:
+        # Deploy (returns background process)
+        deploy_process = deploy_topology(str(yaml_path))
+
+        # Verify routing for all nodes
+        for node in ["node1", "node2", "node3"]:
+            verify_route_to_cidr(
+                "clab-manet-triangle-shared",
+                node,
+                "192.168.100.0/24",
+                "eth1"
+            )
+            logger.info(f"✓ {node}: Route to 192.168.100.0/24 verified on eth1")
+
+        print("\n" + "="*70)
+        print("All routing verification tests passed!")
+        print("="*70 + "\n")
+
+    finally:
+        # Stop deployment process
+        stop_deployment_process(deploy_process)
+        # Cleanup containers
+        destroy_topology(str(yaml_path))
+
+
+@pytest.mark.integration
+def test_manet_shared_bridge_tc_config(channel_server, examples_dir: Path):
+    """
+    Test MANET shared bridge TC configuration.
+
+    Expected: Per-destination TC with HTB classes, netem qdiscs, and flower filters.
+    """
+    yaml_path = examples_dir / "manet_triangle_shared" / "network.yaml"
+
+    if not yaml_path.exists():
+        pytest.skip(f"Example not found: {yaml_path}")
+
+    # Cleanup any existing deployment first
+    destroy_topology(str(yaml_path))
+
+    deploy_process = None
+    try:
+        # Deploy (returns background process)
+        deploy_process = deploy_topology(str(yaml_path))
+
+        # Expected parameters (from network.yaml: 64-QAM, 80 MHz, rate-1/2 LDPC)
+        # PHY rate = 80 MHz × 6 bits/symbol × 0.5 code_rate × 0.8 efficiency = 192 Mbps
+        expected_rate = 192.0
+        # Note: Delay may be very small (<0.1ms) and might not show up in netem
+        # We'll verify it's present but not check exact value
+        expected_loss = 0.0  # High SNR (no packet loss)
+
+        # Verify TC config for node1 → node2
+        print("\nVerifying node1 → node2 TC configuration...")
+        result = verify_tc_config(
+            container_prefix="clab-manet-triangle-shared",
+            node="node1",
+            interface="eth1",
+            dst_node_ip="192.168.100.2",
+            expected_rate_mbps=expected_rate,
+            expected_loss_percent=expected_loss,
+            rate_tolerance_mbps=2.0,  # Allow 2 Mbps tolerance
+            loss_tolerance_percent=0.1,
+        )
+        assert result["mode"] == "shared_bridge"
+        assert result["filter_match"] is True
+        # Delay and jitter may be 0 or very small for short distances - just verify they exist
+        assert result["delay_ms"] is not None
+        assert result["jitter_ms"] is not None
+        logger.info(f"✓ node1 → node2: mode={result['mode']}, rate={result['rate_mbps']:.1f}Mbps, "
+                   f"delay={result['delay_ms']:.3f}ms, jitter={result['jitter_ms']:.3f}ms, "
+                   f"loss={result['loss_percent']:.2f}%, classid={result['htb_classid']}")
+
+        # Verify TC config for node1 → node3
+        print("\nVerifying node1 → node3 TC configuration...")
+        result = verify_tc_config(
+            container_prefix="clab-manet-triangle-shared",
+            node="node1",
+            interface="eth1",
+            dst_node_ip="192.168.100.3",
+            expected_rate_mbps=expected_rate,
+            expected_loss_percent=expected_loss,
+            rate_tolerance_mbps=2.0,
+            loss_tolerance_percent=0.1,
+        )
+        assert result["mode"] == "shared_bridge"
+        assert result["filter_match"] is True
+        assert result["delay_ms"] is not None
+        assert result["jitter_ms"] is not None
+        logger.info(f"✓ node1 → node3: mode={result['mode']}, rate={result['rate_mbps']:.1f}Mbps, "
+                   f"delay={result['delay_ms']:.3f}ms, jitter={result['jitter_ms']:.3f}ms, "
+                   f"loss={result['loss_percent']:.2f}%, classid={result['htb_classid']}")
+
+        # Verify TC config for node2 → node1
+        print("\nVerifying node2 → node1 TC configuration...")
+        result = verify_tc_config(
+            container_prefix="clab-manet-triangle-shared",
+            node="node2",
+            interface="eth1",
+            dst_node_ip="192.168.100.1",
+            expected_rate_mbps=expected_rate,
+            expected_loss_percent=expected_loss,
+            rate_tolerance_mbps=2.0,
+            loss_tolerance_percent=0.1,
+        )
+        assert result["mode"] == "shared_bridge"
+        assert result["filter_match"] is True
+        assert result["delay_ms"] is not None
+        assert result["jitter_ms"] is not None
+        logger.info(f"✓ node2 → node1: mode={result['mode']}, rate={result['rate_mbps']:.1f}Mbps, "
+                   f"delay={result['delay_ms']:.3f}ms, jitter={result['jitter_ms']:.3f}ms, "
+                   f"loss={result['loss_percent']:.2f}%, classid={result['htb_classid']}")
+
+        print("\n" + "="*70)
+        print("All TC configuration verification tests passed!")
+        print("="*70 + "\n")
 
     finally:
         # Stop deployment process
