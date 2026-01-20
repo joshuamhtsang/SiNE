@@ -28,7 +28,7 @@ from .fixtures import (
     destroy_topology,
     run_iperf3_test,
     stop_deployment_process,
-    test_ping_connectivity,
+    verify_ping_connectivity,
     verify_route_to_cidr,
     verify_tc_config,
 )
@@ -73,7 +73,7 @@ def test_manet_shared_bridge_connectivity(channel_server, examples_dir: Path):
             "node3": "192.168.100.3",
         }
 
-        test_ping_connectivity("clab-manet-triangle-shared", node_ips)
+        verify_ping_connectivity("clab-manet-triangle-shared", node_ips)
 
     finally:
         # Stop deployment process
