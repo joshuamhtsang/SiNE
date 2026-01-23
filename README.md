@@ -432,6 +432,45 @@ For shared bridge mode troubleshooting (flower filters, HTB, per-destination net
 - [examples/manet_triangle_shared/TESTING.md](examples/manet_triangle_shared/TESTING.md)
 - Test scripts in `examples/manet_triangle_shared/`
 
+## Debugging and Inspection
+
+### Inspecting the Generated Containerlab Topology
+
+When you deploy a network, SiNE generates a pure containerlab YAML file that can be inspected:
+
+**File**: `.sine_clab_topology.yaml` (in the same directory as your `network.yaml`)
+
+This file contains the topology after stripping all SiNE-specific wireless and netem parameters. It shows exactly what gets passed to the `containerlab deploy` command.
+
+**Lifecycle**:
+- ✅ Created during `sine deploy`
+- ✅ Available throughout the emulation session
+- ❌ Deleted during `sine destroy`
+
+**What's in this file**:
+- Pure containerlab format (standard `kind`, `image`, `cmd`, etc.)
+- Link endpoints in containerlab format: `endpoints: ["node1:eth1", "node2:eth1"]`
+- No wireless parameters (position, frequency, RF power, antenna config, MCS)
+- No fixed_netem parameters (delay, jitter, loss, rate)
+
+**When to inspect**:
+- Verify container configuration before deployment
+- Debug containerlab deployment issues
+- Understand the exact topology containerlab is creating
+- Confirm interface naming matches expectations
+
+**Example**:
+```bash
+# Deploy network
+sudo $(which uv) run sine deploy examples/vacuum_20m/network.yaml
+
+# Inspect generated containerlab topology
+cat examples/vacuum_20m/.sine_clab_topology.yaml
+
+# File will exist until you destroy
+uv run sine destroy examples/vacuum_20m/network.yaml
+```
+
 ## License
 
 Apache License 2.0. See [LICENSE](./LICENSE) for details.

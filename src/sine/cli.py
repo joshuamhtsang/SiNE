@@ -224,6 +224,10 @@ def deploy(topology: Path, channel_server: str, enable_mobility: bool, mobility_
 
     TOPOLOGY is the path to a network.yaml file defining the emulation.
 
+    Generates .sine_clab_topology.yaml in the same directory as the input
+    topology. This file can be inspected to see the pure containerlab format
+    used for deployment.
+
     With --enable-mobility, the deployment also starts a REST API server
     that allows external scripts to update node positions in real-time.
     """

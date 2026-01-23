@@ -17,6 +17,23 @@ SiNE uses containerlab as a core component for deploying the network topology:
    - Links become standard veth links: `endpoints: ["node1:eth1", "node2:eth1"]`
    - Output: `.sine_clab_topology.yaml` file
 
+#### Generated Containerlab Topology File
+
+**File**: `.sine_clab_topology.yaml`
+**Location**: Same directory as input `network.yaml`
+**Lifecycle**:
+- Created during `sine deploy` (before containerlab command execution)
+- Persists throughout emulation session
+- Deleted automatically during `sine destroy`
+
+**Purpose**: Pure containerlab format topology with all SiNE-specific parameters removed:
+- Strips `wireless` parameters: position, frequency, RF power, antenna config, MCS settings
+- Strips `fixed_netem` parameters: delay_ms, jitter_ms, loss_percent, rate_mbps
+- Keeps standard containerlab fields: kind, image, cmd, binds, env, exec
+- Preserves link endpoint format: `endpoints: ["node1:eth1", "node2:eth1"]`
+
+**Inspection**: Users can inspect this file during emulation to verify the containerlab topology or debug deployment issues. The file is available as long as the emulation is running.
+
 2. **Container Deployment**:
    - Executes `containerlab deploy -t .sine_clab_topology.yaml`
    - Creates Docker containers with naming pattern: `clab-<lab_name>-<node_name>`
