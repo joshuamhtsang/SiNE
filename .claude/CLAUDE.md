@@ -14,6 +14,7 @@ When running pytest commands:
 - Always add the `-s` flag for verbose output (captures stdout/stderr)
 - Example: `uv run pytest -s tests/protocols/test_interference_engine.py`
 - This helps with debugging test failures by showing print statements and logging
+- Integration tests under tests/integration/ always require sudo, so follow "Running Commands with sudo" above.
 
 ## Working with SiNE
 

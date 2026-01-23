@@ -157,7 +157,7 @@ def run_iperf3_test(
     server_node: str,
     client_node: str,
     client_ip: str,
-    duration_sec: int = 10,
+    duration_sec: int = 8,
 ) -> float:
     """Run iperf3 throughput test between two containers.
 

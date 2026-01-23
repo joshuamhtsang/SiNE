@@ -148,6 +148,7 @@ class ChannelResponse(BaseModel):
     path_loss_db: float
     num_paths: int
     dominant_path_type: str
+    delay_spread_ns: float  # RMS delay spread in nanoseconds
     # Link budget
     received_power_dbm: float
     snr_db: float
@@ -797,6 +798,7 @@ async def _compute_batch_with_mac_model(
                     path_loss_db=200.0,
                     num_paths=0,
                     dominant_path_type="error",
+                    delay_spread_ns=0.0,
                     received_power_dbm=-200.0,
                     snr_db=-50.0,
                     ber=0.5,
@@ -974,6 +976,7 @@ def compute_channel_for_link(
         path_loss_db=path_result.path_loss_db,
         num_paths=path_result.num_paths,
         dominant_path_type=path_result.dominant_path_type,
+        delay_spread_ns=path_result.delay_spread_ns,
         received_power_dbm=rx_power,
         snr_db=snr_db,
         ber=ber,
@@ -1194,6 +1197,7 @@ async def compute_batch_links(request: BatchChannelRequest):
                         path_loss_db=200.0,
                         num_paths=0,
                         dominant_path_type="error",
+                        delay_spread_ns=0.0,
                         received_power_dbm=-200.0,
                         snr_db=-50.0,
                         ber=0.5,
