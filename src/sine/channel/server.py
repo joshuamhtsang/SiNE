@@ -943,7 +943,19 @@ def compute_channel_for_link(
 
     # Convert netem parameters
     delay_ms = path_result.min_delay_ns / 1e6
-    jitter_ms = path_result.delay_spread_ns / 1e6
+
+    # IMPORTANT: Jitter set to 0.0 because delay spread does NOT cause packet jitter
+    # - Delay spread is PHY-layer multipath timing dispersion (20-300 ns typical)
+    # - For OFDM (WiFi 6), this is absorbed by cyclic prefix (800-3200 ns)
+    # - Real packet jitter is caused by MAC layer effects (0.1-10 ms):
+    #   * CSMA/CA backoff and contention
+    #   * HARQ retransmissions
+    #   * Queue dynamics and buffer drain variability
+    #   * Frame aggregation (A-MPDU)
+    # - Mapping delay_spread_ns to jitter would underestimate by 1000-10000x
+    # - To model jitter properly, implement MAC/queue simulation
+    jitter_ms = 0.0  # Jitter requires MAC/queue modeling (not currently implemented)
+
     loss_percent = per * 100.0
 
     # Validate results for physics sanity

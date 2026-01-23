@@ -51,7 +51,7 @@ SiNE uses containerlab as a core component for deploying the network topology:
    - SiNE abstracts the outputs of Sionna RT and link-level simulation into netem parameters:
      ```python
      delay_ms = propagation_delay       # From strongest path computed in Sionna RT
-     jitter_ms = delay_spread           # RMS delay spread from multipath (Sionna RT)
+     jitter_ms = 0.0                    # Set to 0 (requires MAC/queue modeling, not PHY)
      loss_percent = PER × 100           # From BER/BLER calculation (AWGN formulas)
      rate_mbps = modulation_based_rate  # BW × bits_per_symbol × code_rate × efficiency × (1-PER)
      ```
@@ -487,7 +487,7 @@ The final PER (or SINR for multi-node scenarios) is converted to netem parameter
 | Parameter | Calculation |
 |-----------|-------------|
 | **delay_ms** | Propagation delay from strongest path (distance/c) |
-| **jitter_ms** | Delay spread from multipath (τ_max - τ_min) |
+| **jitter_ms** | Set to 0.0 (requires MAC/queue modeling, not PHY delay spread) |
 | **loss_percent** | PER × 100 (packet loss probability) |
 | **rate_mbps** | Shannon capacity or modulation-based rate |
 
@@ -525,6 +525,66 @@ Ray Tracing → CIR (paths) → Path Loss → SNR
                     Netem Params (delay, jitter, loss%, rate)
 ```
 
+### Physical Phenomena: What SiNE Captures vs. What It Doesn't
+
+**Important:** SiNE is designed for **WiFi 6/OFDM network emulation**, not PHY waveform simulation. The channel model reflects how OFDM receivers process multipath signals.
+
+#### ✅ Correctly Captured (for OFDM/WiFi 6)
+
+| Phenomenon | How SiNE Captures It | Physical Basis |
+|------------|---------------------|----------------|
+| **Multipath diversity gain** | Incoherent power summation (Σ\|aᵢ\|²) | OFDM receiver coherently combines paths per subcarrier, then averages across 234+ subcarriers → diversity gain (0-3 dB typical) |
+| **Geometry-based path loss** | Ray tracing with reflections/diffractions | Accurate modeling of LOS/NLOS transitions, wall penetration, multipath propagation |
+| **Delay spread → coherence bandwidth** | Computed but diagnostic only (τ_rms) | For WiFi 6: τ_rms (20-300 ns) << cyclic prefix (800-3200 ns) → no ISI |
+| **SNR-based packet loss** | AWGN BER formulas → PER → loss_percent | Valid for OFDM with proper cyclic prefix (no ISI after equalization) |
+| **Frequency selectivity (multi-freq)** | ACLR filtering for SINR computation | IEEE 802.11ax spectral mask prevents cross-channel interference |
+| **LOS vs. NLOS propagation** | K-factor, dominant path type | Ray tracing identifies LOS/NLOS conditions, affects SNR |
+
+**Why incoherent summation is correct:**
+- OFDM performs FFT → per-subcarrier channel: H(f) = Σ aᵢ·e^(-j2πfτᵢ)
+- Each subcarrier is equalized independently
+- Averaging across subcarriers → E[\|H(f)\|²] ≈ Σ\|aᵢ\|²
+- Valid when τ_rms << cyclic prefix (20-300 ns << 800-3200 ns) ✅
+
+#### ⚠️ Limitations (What's NOT Captured)
+
+| Missing Phenomenon | Why Not Captured | Impact |
+|-------------------|------------------|--------|
+| **Jitter (packet timing variation)** | Currently set to 0.0 | Real jitter requires MAC/queue modeling (CSMA/CA backoff, retransmissions, queueing) - 0.1-10 ms typical |
+| **Fast fading (time-varying)** | Static channel per computation | No Doppler, Rayleigh, or Rician fading over time unless positions change |
+| **ISI (inter-symbol interference)** | AWGN BER formulas only | Not needed for OFDM - cyclic prefix absorbs delay spread |
+| **MAC layer effects** | No MAC protocol modeling | No CSMA/CA contention, no HARQ retransmissions, no frame aggregation |
+| **Per-subcarrier fading nulls** | Averaged across subcarriers | OFDM frequency diversity smooths out nulls |
+| **Coherent combining effects** | Incoherent summation | Narrowband single-carrier would need coherent sum (not WiFi 6) |
+
+#### 📊 Valid Operating Range
+
+SiNE's OFDM-based channel model is valid when:
+
+| Parameter | Valid Range | Typical Indoor | Notes |
+|-----------|-------------|----------------|-------|
+| **Delay spread (τ_rms)** | < 800 ns | 20-300 ns | WiFi 6 short GI cyclic prefix |
+| **Bandwidth** | 20-160 MHz | 80 MHz | Typical OFDM channel bandwidths |
+| **Coherence bandwidth (Bc)** | > 312.5 kHz | 1-10 MHz | Bc ≈ 1/(2πτ_rms) > subcarrier spacing |
+| **Environment** | Indoor/urban | N/A | τ_rms typically stays within valid range |
+
+**When SiNE's model would be invalid:**
+- Narrowband single-carrier systems (GPS, FSK/PSK) - would need coherent summation
+- Extreme delay spread (τ_rms > 800 ns) - would exceed cyclic prefix
+- Systems without OFDM - AWGN assumptions may not hold
+
+#### 🔧 What Requires Additional Modeling
+
+To model phenomena beyond SiNE's current scope:
+
+| Desired Phenomenon | Implementation Approach |
+|-------------------|------------------------|
+| **Jitter** | Implement MAC/queue simulator with CSMA/CA, retransmission logic |
+| **Fast fading** | Add stochastic perturbations to SNR based on Doppler/velocity |
+| **HARQ retransmissions** | MAC layer with ARQ/HARQ state machine |
+| **CSMA/CA contention** | Carrier sense and exponential backoff logic |
+| **Frame aggregation** | A-MPDU/A-MSDU with variable frame sizes |
+
 ### Relationship Between Channel Metrics and Netem Parameters
 
 **Important:** SiNE operates as **network emulation** (application-layer testing), not **PHY simulation** (waveform-level). Enhanced channel metrics like RMS delay spread (τ_rms), coherence bandwidth (Bc), and Rician K-factor are **diagnostic only** for visualization and debugging.
@@ -533,21 +593,21 @@ Ray Tracing → CIR (paths) → Path Loss → SNR
 
 | Physical Effect | How It's Captured/Abstracted in Netem |
 |----------------|----------------------------------------|
-| **Delay spread (τ_rms)** | Directly used for `jitter_ms` parameter (packet timing variation) |
+| **Delay spread (τ_rms)** | Not used for netem (diagnostic only). Real jitter requires MAC/queue modeling. |
 | **Frequency selectivity (Bc)** | Not directly captured; SiNE uses AWGN BER formulas (frequency-flat assumption) |
 | **K-factor (LOS/NLOS)** | Indirectly via SNR (LOS has lower path loss → higher SNR → lower loss%) |
 | **Coherence time (Tc)** | May inform visualization update interval, not netem params |
 
-**Note on BER Calculation:** SiNE uses theoretical AWGN (frequency-flat) BER formulas based purely on SNR and modulation scheme. ISI and frequency selectivity are NOT modeled in the BER calculation - only the RMS delay spread is used for jitter. This is appropriate for network emulation where packet-level behavior matters more than symbol-level distortion.
+**Note on BER Calculation:** SiNE uses theoretical AWGN (frequency-flat) BER formulas based purely on SNR and modulation scheme. ISI and frequency selectivity are NOT modeled in the BER calculation. This is appropriate for OFDM systems (WiFi 6) where the cyclic prefix absorbs delay spread and prevents ISI at the packet level.
 
 **Use diagnostic metrics to:**
-- Understand **why** certain netem parameters were chosen (e.g., high jitter from large delay spread)
+- Understand **why** certain netem parameters were chosen (e.g., low SNR causing high packet loss)
 - Validate that netem parameters make sense given channel conditions
 - Determine appropriate visualization update rates for mobility scenarios
 - Debug link quality issues by understanding the underlying RF propagation
-- Identify when poor SNR (not ISI) is causing high packet loss
+- Verify delay spread is within OFDM cyclic prefix bounds (τ_rms < 800 ns for WiFi 6)
 
-**Example:** If visualization shows high loss_percent with τ_rms = 50 ns, this does NOT mean ISI is causing the loss. The τ_rms contributes to jitter_ms (packet timing variation), while loss_percent comes from low SNR. If SNR is low due to high path loss, increase TX power, improve antenna gains, or reduce distance. The delay spread itself does not directly cause packet loss in SiNE's abstraction model.
+**Example:** If visualization shows high loss_percent with τ_rms = 50 ns, the delay spread is NOT causing the loss. The τ_rms is absorbed by OFDM cyclic prefix (800-3200 ns). The loss_percent comes from low SNR. If SNR is low due to high path loss, increase TX power, improve antenna gains, or reduce distance.
 
 ## Important Notes
 

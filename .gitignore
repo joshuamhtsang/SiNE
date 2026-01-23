@@ -209,5 +209,6 @@ __marimo__/
 # Claude Code MCP configuration (user-specific paths)
 .mcp.json
 
-# SiNE (user-specific paths)
+# SiNE (user-specific paths and auto-generated files)
 cleanup.sh
+.sine_clab_topology.yaml
