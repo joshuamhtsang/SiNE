@@ -598,7 +598,34 @@ To model phenomena beyond SiNE's current scope:
 | **K-factor (LOS/NLOS)** | Indirectly via SNR (LOS has lower path loss → higher SNR → lower loss%) |
 | **Coherence time (Tc)** | May inform visualization update interval, not netem params |
 
-**Note on BER Calculation:** SiNE uses theoretical AWGN (frequency-flat) BER formulas based purely on SNR and modulation scheme. ISI and frequency selectivity are NOT modeled in the BER calculation. This is appropriate for OFDM systems (WiFi 6) where the cyclic prefix absorbs delay spread and prevents ISI at the packet level.
+**Note on BER Calculation:**
+
+SiNE uses **theoretical AWGN (frequency-flat) BER formulas** based purely on SNR and modulation scheme, NOT Sionna's link-level simulation capabilities (bit generation → mapping → channel → demapping). This provides:
+
+- **Speed**: Instant computation (microseconds) vs Monte Carlo simulation (seconds)
+- **Deterministic**: No random variation from finite simulation runs
+- **Scalability**: Compute thousands of links per second for large topologies
+
+**BER Formulas** ([src/sine/channel/modulation.py:73-113](src/sine/channel/modulation.py#L73-L113)):
+- **BPSK/QPSK**: `BER = 0.5 × erfc(√(Eb/N0))`
+- **M-QAM**: Symbol error rate → BER via Gray coding approximation
+
+**BLER Approximation** (for coded systems, [modulation.py:185-233](src/sine/channel/modulation.py#L185-L233)):
+- Applies coding gain offset to SNR: `effective_snr = snr_db + coding_gain`
+- Coding gains (approximate, at BER ≈ 10⁻⁵):
+  - LDPC: +6.5 dB
+  - Polar: +6.0 dB
+  - Turbo: +5.5 dB
+- Then calculates BER at effective SNR
+
+**Note**: A `SionnaBERCalculator` class exists ([modulation.py:270-348](src/sine/channel/modulation.py#L270-L348)) that implements full link-level simulation (bits → symbols → AWGN → demapping → error counting), but it is **not used** in the main channel computation pipeline.
+
+**Validity**: Theoretical formulas are appropriate for OFDM systems (WiFi 6) where the cyclic prefix absorbs delay spread and prevents ISI at the packet level. Valid when τ_rms < 800 ns (short GI), which is typical for indoor environments (20-300 ns).
+
+**Limitations**:
+- Does not capture frequency selectivity within OFDM bandwidth (assumes frequency-flat fading)
+- Coding gains are approximations (real LDPC/Polar performance varies with block length, code rate, decoder iterations)
+- No modeling of interleaving, puncturing, or other practical FEC implementation details
 
 **Use diagnostic metrics to:**
 - Understand **why** certain netem parameters were chosen (e.g., low SNR causing high packet loss)

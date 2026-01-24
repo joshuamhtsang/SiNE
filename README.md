@@ -24,6 +24,8 @@ loss_percent = PER × 100           # From BER/BLER calculation
 rate_mbps = modulation_based_rate  # Based on MCS, bandwidth, code rate
 ```
 
+**Note:** BER/BLER calculation uses theoretical AWGN formulas (not Sionna link-level simulation) for speed and deterministic results. Coding gains are applied as SNR offsets (LDPC: +6.5 dB, Polar: +6.0 dB, Turbo: +5.5 dB). This approach is valid for OFDM systems like WiFi 6 where the cyclic prefix absorbs delay spread. See [CLAUDE.md](CLAUDE.md) for details.
+
 ## Features
 
 - YAML-based network topology configuration
