@@ -19,12 +19,12 @@ SiNE (pronounced "SHEE-na") stands for **Si**onna **N**etwork **E**mulation. Bui
 
 ```python
 delay_ms = propagation_delay       # From strongest path (Sionna RT)
-jitter_ms = delay_spread           # RMS delay spread from multipath
+jitter_ms = 0.0                    # Set to 0 (requires MAC/queue modeling, not PHY)
 loss_percent = PER × 100           # From BER/BLER calculation
 rate_mbps = modulation_based_rate  # Based on MCS, bandwidth, code rate
 ```
 
-**Note:** BER/BLER calculation uses theoretical AWGN formulas (not Sionna link-level simulation) for speed and deterministic results. Coding gains are applied as SNR offsets (LDPC: +6.5 dB, Polar: +6.0 dB, Turbo: +5.5 dB). This approach is valid for OFDM systems like WiFi 6 where the cyclic prefix absorbs delay spread. See [CLAUDE.md](CLAUDE.md) for details.
+**Note:** BER/BLER calculation uses theoretical AWGN formulas (not Sionna link-level simulation) for speed and deterministic results. Coding gains are applied as SNR offsets (LDPC: +6.5 dB, Polar: +6.0 dB, Turbo: +5.5 dB). This approach is valid for OFDM systems like WiFi 6 where the cyclic prefix absorbs delay spread. Jitter is set to 0 because RMS delay spread (20-300 ns) is absorbed by the OFDM cyclic prefix (800-3200 ns) and does not cause packet-level timing variation. Real jitter (0.1-10 ms) comes from MAC layer effects (CSMA/CA backoff, retransmissions, queueing) which require separate MAC/queue modeling. See [CLAUDE.md](CLAUDE.md) for details.
 
 ## Features
 
