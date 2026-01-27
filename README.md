@@ -473,6 +473,11 @@ cat examples/vacuum_20m/.sine_clab_topology.yaml
 uv run sine destroy examples/vacuum_20m/network.yaml
 ```
 
+## 🤝 Collaboration
+
+If you’re interested in collaborating on SiNE, please open an issue to reach out
+or start a discussion describing your idea!
+
 ## License
 
 Apache License 2.0. See [LICENSE](./LICENSE) for details.
