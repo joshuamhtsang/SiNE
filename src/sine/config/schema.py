@@ -180,9 +180,24 @@ class WirelessParams(BaseModel):
         le=0.0,
         ge=-150.0,
     )
-    antenna_pattern: AntennaPattern = Field(default=AntennaPattern.ISO)
+    antenna_pattern: AntennaPattern | None = Field(
+        default=None,
+        description=(
+            "Antenna pattern for Sionna RT with embedded gain. "
+            "Options: iso (0.0dBi), dipole (1.76dBi), hw_dipole (2.16dBi), tr38901 (8.0dBi). "
+            "Mutually exclusive with antenna_gain_dbi."
+        )
+    )
     polarization: Polarization = Field(default=Polarization.V)
-    antenna_gain_dbi: float = Field(default=0.0, description="Antenna gain in dBi")
+    antenna_gain_dbi: float | None = Field(
+        default=None,
+        description=(
+            "Explicit antenna gain in dBi for custom configurations or fallback mode. "
+            "Mutually exclusive with antenna_pattern."
+        ),
+        ge=-10.0,  # Realistic minimum (lossy antenna)
+        le=30.0,   # Realistic maximum (high-gain directional)
+    )
     frequency_ghz: float = Field(
         default=5.18, description="RF frequency in GHz", gt=0.0, le=100.0
     )
@@ -243,6 +258,32 @@ class WirelessParams(BaseModel):
             raise ValueError(
                 "Cannot enable both CSMA and TDMA models. "
                 "Choose one MAC layer model per interface."
+            )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_antenna_config(self) -> "WirelessParams":
+        """Ensure exactly one of antenna_pattern or antenna_gain_dbi is specified."""
+        has_pattern = self.antenna_pattern is not None
+        has_gain = self.antenna_gain_dbi is not None
+
+        if not has_pattern and not has_gain:
+            raise ValueError(
+                "Wireless interface requires exactly one of:\n"
+                "  - 'antenna_pattern': Sionna RT pattern (iso/dipole/hw_dipole/tr38901)\n"
+                "  - 'antenna_gain_dbi': Explicit gain value (custom/fallback mode)\n"
+                "Specify one, but not both."
+            )
+
+        if has_pattern and has_gain:
+            raise ValueError(
+                f"Cannot specify both 'antenna_pattern' ({self.antenna_pattern.value}) "
+                f"and 'antenna_gain_dbi' ({self.antenna_gain_dbi} dBi).\n"
+                "Choose ONE:\n"
+                "  - 'antenna_pattern' for Sionna RT (gain embedded in path coefficients)\n"
+                "  - 'antenna_gain_dbi' for explicit gain (custom antenna)\n"
+                "Using both causes double-counting of antenna gain."
             )
 
         return self

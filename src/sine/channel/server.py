@@ -274,7 +274,8 @@ class InterfererInfo(BaseModel):
     node_name: str
     position: Position
     tx_power_dbm: float
-    antenna_gain_dbi: float
+    antenna_gain_dbi: float | None = Field(default=None, description="Explicit antenna gain in dBi (mutually exclusive with antenna_pattern)")
+    antenna_pattern: str | None = Field(default=None, description="Antenna pattern name (mutually exclusive with antenna_gain_dbi)")
     frequency_hz: float
     bandwidth_hz: float = Field(default=80e6, description="Transmitter channel bandwidth in Hz")
     is_active: bool = Field(default=True, description="Whether this interferer is currently transmitting")
@@ -1290,6 +1291,36 @@ async def get_path_details(request: PathDetailsRequest):
         raise HTTPException(status_code=500, detail=f"Failed to get path details: {str(e)}")
 
 
+def resolve_antenna_gain(
+    antenna_pattern: str | None,
+    antenna_gain_dbi: float | None,
+) -> float:
+    """
+    Resolve antenna gain from either pattern name or explicit value.
+
+    Args:
+        antenna_pattern: Sionna pattern name (iso/dipole/hw_dipole/tr38901)
+        antenna_gain_dbi: Explicit gain in dBi
+
+    Returns:
+        Antenna gain in dBi
+
+    Raises:
+        ValueError: If neither or both are specified
+    """
+    from sine.channel.antenna_patterns import get_antenna_gain
+
+    has_pattern = antenna_pattern is not None
+    has_gain = antenna_gain_dbi is not None
+
+    if has_pattern and has_gain:
+        raise ValueError("Cannot specify both antenna_pattern and antenna_gain_dbi")
+    if not has_pattern and not has_gain:
+        raise ValueError("Must specify either antenna_pattern or antenna_gain_dbi")
+
+    return get_antenna_gain(antenna_pattern) if has_pattern else antenna_gain_dbi
+
+
 @app.post("/compute/sinr", response_model=SINRResponse)
 async def compute_sinr(request: SINRLinkRequest):
     """
@@ -1359,12 +1390,15 @@ async def compute_sinr(request: SINRLinkRequest):
         )
 
         # Convert interferer infos to TransmitterInfo list
+        # Pass both antenna_pattern and antenna_gain_dbi through - InterferenceEngine will use pattern if available
         interferers = [
             TransmitterInfo(
                 node_name=intf.node_name,
                 position=intf.position.as_tuple(),
                 tx_power_dbm=intf.tx_power_dbm,
                 antenna_gain_dbi=intf.antenna_gain_dbi,
+                antenna_pattern=intf.antenna_pattern,
+                polarization="V",  # TODO: Add polarization field to InterfererInfo if needed
                 frequency_hz=intf.frequency_hz,
                 bandwidth_hz=intf.bandwidth_hz,
             )
@@ -1386,6 +1420,8 @@ async def compute_sinr(request: SINRLinkRequest):
             active_states=active_states,
             rx_frequency_hz=request.frequency_hz,
             rx_bandwidth_hz=request.bandwidth_hz,
+            rx_antenna_pattern=request.antenna_pattern,
+            rx_polarization=request.polarization,
         )
 
         # Calculate SINR

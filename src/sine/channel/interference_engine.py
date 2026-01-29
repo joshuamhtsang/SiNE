@@ -31,8 +31,10 @@ class TransmitterInfo:
     node_name: str
     position: tuple[float, float, float]  # (x, y, z) in meters
     tx_power_dbm: float
-    antenna_gain_dbi: float
-    frequency_hz: float
+    antenna_gain_dbi: float | None = None  # Explicit gain (mutually exclusive with antenna_pattern)
+    antenna_pattern: str | None = None      # Pattern name for Sionna RT (mutually exclusive with antenna_gain_dbi)
+    polarization: str = "V"                 # Antenna polarization
+    frequency_hz: float = 5.18e9
     bandwidth_hz: float = 80e6  # Default 80 MHz for WiFi 6
 
 
@@ -199,6 +201,8 @@ class InterferenceEngine:
         active_states: Optional[dict[str, bool]] = None,
         rx_frequency_hz: float = 5.18e9,
         rx_bandwidth_hz: float = 80e6,
+        rx_antenna_pattern: str = "iso",
+        rx_polarization: str = "V",
     ) -> InterferenceResult:
         """
         Compute interference from all active interferers at RX position.
@@ -266,11 +270,19 @@ class InterferenceEngine:
                 logger.debug("Using cached path for %s→%s", interferer.node_name, rx_node)
             else:
                 # Compute path from interferer to receiver using PathSolver
+                # Use antenna patterns if available, otherwise fall back to iso
+                tx_pattern = interferer.antenna_pattern or "iso"
+                tx_polar = interferer.polarization or "V"
+
                 path_result = self._compute_interference_path(
                     interferer.position,
                     rx_position,
                     interferer.node_name,
-                    rx_node
+                    rx_node,
+                    tx_antenna_pattern=tx_pattern,
+                    tx_polarization=tx_polar,
+                    rx_antenna_pattern=rx_antenna_pattern,
+                    rx_polarization=rx_polarization,
                 )
 
                 # Cache for static topologies
@@ -332,6 +344,10 @@ class InterferenceEngine:
         rx_position: tuple[float, float, float],
         tx_name: str,
         rx_name: str,
+        tx_antenna_pattern: str = "iso",
+        tx_polarization: str = "V",
+        rx_antenna_pattern: str = "iso",
+        rx_polarization: str = "V",
     ) -> PathResult:
         """
         Compute propagation path from interferer to receiver using PathSolver.
@@ -341,6 +357,10 @@ class InterferenceEngine:
             rx_position: Receiver position
             tx_name: Transmitter node name (for logging)
             rx_name: Receiver node name (for logging)
+            tx_antenna_pattern: Transmitter antenna pattern (iso/dipole/hw_dipole/tr38901)
+            tx_polarization: Transmitter polarization (V/H/VH/cross)
+            rx_antenna_pattern: Receiver antenna pattern
+            rx_polarization: Receiver polarization
 
         Returns:
             PathResult with path loss and propagation characteristics
@@ -348,9 +368,9 @@ class InterferenceEngine:
         # Clear previous devices
         self._engine.clear_devices()
 
-        # Add TX and RX for this interference link
-        self._engine.add_transmitter(f"tx_{tx_name}", tx_position)
-        self._engine.add_receiver(f"rx_{rx_name}", rx_position)
+        # Add TX and RX for this interference link with antenna patterns
+        self._engine.add_transmitter(f"tx_{tx_name}", tx_position, tx_antenna_pattern, tx_polarization)
+        self._engine.add_receiver(f"rx_{rx_name}", rx_position, rx_antenna_pattern, rx_polarization)
 
         # Compute paths using PathSolver
         path_result = self._engine.compute_paths()

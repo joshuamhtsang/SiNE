@@ -73,9 +73,8 @@ topology:
           wireless:
             rf_power_dbm: 20.0              # WiFi 6 typical TX power
             rx_sensitivity_dbm: -80.0       # WiFi 6 receiver sensitivity (minimum detectable signal)
-            antenna_pattern: iso            # Omnidirectional
             polarization: V                 # Vertical polarization
-            antenna_gain_dbi: 2.0           # Antenna pattern selection (NOT added to link budget)
+            antenna_gain_dbi: 2.0           # Custom omnidirectional antenna with 2.0 dBi gain
             frequency_ghz: 5.18             # WiFi 6 channel 36 (5.18 GHz)
             bandwidth_mhz: 80               # 80 MHz channel
             # Higher-order modulation (256-QAM)
@@ -99,9 +98,8 @@ topology:
           wireless:
             rf_power_dbm: 20.0
             rx_sensitivity_dbm: -80.0       # WiFi 6 receiver sensitivity (minimum detectable signal)
-            antenna_pattern: iso
             polarization: V
-            antenna_gain_dbi: 2.0           # Antenna pattern selection (NOT added to link budget)
+            antenna_gain_dbi: 2.0           # Custom omnidirectional antenna with 2.0 dBi gain
             frequency_ghz: 5.18
             bandwidth_mhz: 80
             # Same modulation as node1 (symmetric link)

@@ -119,6 +119,7 @@ network.yaml -> EmulationController -> Containerlab (Docker containers + veth li
 | SINR Computation | ACLR-filtered | IEEE 802.11ax-2021 spectral mask for frequency-selective interference |
 | Interference Model | Linear power summation | Sum interference powers in linear domain (watts) before SINR calculation |
 | TDMA Support | Probability-weighted | Interference scaled by transmission probability (slot duty cycle) |
+| Antenna Config | antenna_pattern XOR antenna_gain_dbi | Mutual exclusion prevents double-counting Sionna RT pattern gains |
 
 ## Claude and AI Resources
 
@@ -736,6 +737,119 @@ Mitsuba XML scenes can be created with:
 3. **Hand-edit XML** - For simple modifications or custom geometries
 
 Key requirement: Material names must use `itu_` prefix (e.g., `itu_concrete`, `itu_glass`)
+
+## Migration Guides
+
+### Antenna Configuration (Breaking Change in v2.0)
+
+**BREAKING CHANGE**: `antenna_pattern` and `antenna_gain_dbi` are now mutually exclusive in wireless interface configurations.
+
+#### Why This Change?
+
+Sionna RT antenna patterns (iso, dipole, hw_dipole, tr38901) have built-in directional gains that are automatically included in path loss calculations. Specifying both `antenna_pattern` and `antenna_gain_dbi` caused confusion about which value was actually used and could lead to incorrect expectations about link performance.
+
+#### BEFORE (v1.x)
+
+```yaml
+wireless:
+  antenna_pattern: hw_dipole
+  antenna_gain_dbi: 2.15  # IGNORED by Sionna RT!
+```
+
+Both fields were allowed, but `antenna_gain_dbi` was ignored when using Sionna RT, making configurations misleading.
+
+#### AFTER (v2.0)
+
+Choose ONE based on your use case:
+
+**Option A: Use Sionna RT pattern (recommended for most scenarios)**
+```yaml
+wireless:
+  antenna_pattern: hw_dipole  # Gain = 2.16 dBi (from Sionna's antenna pattern model)
+  polarization: V
+```
+
+Use this when:
+- Using standard antenna types (omnidirectional, dipole, etc.)
+- Want directional radiation pattern modeling in Sionna RT
+- Following WiFi 6 / 802.11ax typical configurations
+
+**Option B: Use explicit gain (for custom antennas)**
+```yaml
+wireless:
+  antenna_gain_dbi: 3.0  # Custom omnidirectional antenna with 3 dBi gain
+  polarization: V
+```
+
+Use this when:
+- Using custom antenna with specific gain not matching standard patterns
+- Testing with specific gain values
+- Using FSPL fallback mode (non-Sionna scenarios)
+
+#### Antenna Pattern Gain Reference
+
+| Pattern | Gain (dBi) | Description |
+|---------|-----------|-------------|
+| `iso` | 0.0 | Isotropic (ideal omnidirectional) |
+| `dipole` | 1.76 | Short dipole |
+| `hw_dipole` | 2.16 | Half-wavelength dipole (typical WiFi) |
+| `tr38901` | 8.0 | 3GPP directional antenna (cellular) |
+
+Values from Sionna RT v1.2.1 measurements.
+
+#### Error Messages
+
+If you specify both fields:
+```
+ValueError: Cannot specify both 'antenna_pattern' (hw_dipole) and 'antenna_gain_dbi' (2.15 dBi).
+Choose ONE:
+  - 'antenna_pattern' for Sionna RT (gain embedded in path coefficients)
+  - 'antenna_gain_dbi' for explicit gain (custom antenna)
+Using both causes double-counting of antenna gain.
+```
+
+If you specify neither:
+```
+ValueError: Wireless interface requires exactly one of:
+  - 'antenna_pattern': Sionna RT pattern (iso/dipole/hw_dipole/tr38901)
+  - 'antenna_gain_dbi': Explicit gain value (custom/fallback mode)
+Specify one, but not both.
+```
+
+#### Migration Steps
+
+1. **Review your topology**: Identify which antenna type you're using
+2. **Standard antenna (iso/dipole/hw_dipole/tr38901)**:
+   - Keep `antenna_pattern` field
+   - Remove `antenna_gain_dbi` line entirely
+3. **Custom antenna gain**:
+   - Keep `antenna_gain_dbi` field
+   - Remove `antenna_pattern` line entirely
+4. **Validate**: Run `uv run sine validate <your_topology.yaml>`
+
+#### Example Migration
+
+**Before** (manet_triangle_shared/network.yaml):
+```yaml
+wireless:
+  antenna_pattern: dipole
+  polarization: V
+  antenna_gain_dbi: 3.0  # Actually used dipole's 1.76 dBi, not 3.0!
+```
+
+**After** (choose closest match):
+```yaml
+wireless:
+  antenna_pattern: hw_dipole  # 2.16 dBi, closest to intended 3.0 dBi
+  polarization: V
+```
+
+Or use explicit gain if 3.0 dBi is critical:
+```yaml
+wireless:
+  antenna_gain_dbi: 3.0  # Explicit 3.0 dBi custom antenna
+  polarization: V
+```
 
 ## FAQ - Frequently Asked Questions
 
