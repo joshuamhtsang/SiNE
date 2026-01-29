@@ -10,7 +10,7 @@ Tests that rx_sensitivity_dbm is properly:
 """
 
 import pytest
-from sine.config.schema import WirelessParams, Position, ModulationType, FECType
+from sine.config.schema import WirelessParams, Position, ModulationType, FECType, AntennaPattern
 from sine.channel.snr import SNRCalculator
 from sine.channel.sinr import SINRCalculator
 from sine.channel.interference_engine import InterferenceTerm
@@ -23,6 +23,7 @@ class TestRxSensitivitySchema:
         """Test that rx_sensitivity_dbm defaults to -80 dBm (WiFi 6)."""
         params = WirelessParams(
             position=Position(x=0, y=0, z=1),
+            antenna_pattern=AntennaPattern.ISO,
             modulation=ModulationType.QAM64,
             fec_type=FECType.LDPC,
             fec_code_rate=0.5,
@@ -33,6 +34,7 @@ class TestRxSensitivitySchema:
         """Test setting rx_sensitivity for WiFi 5 (-75 dBm)."""
         params = WirelessParams(
             position=Position(x=0, y=0, z=1),
+            antenna_pattern=AntennaPattern.ISO,
             rx_sensitivity_dbm=-75.0,  # WiFi 5 is less sensitive
             modulation=ModulationType.QAM64,
             fec_type=FECType.LDPC,
@@ -44,6 +46,7 @@ class TestRxSensitivitySchema:
         """Test setting rx_sensitivity for LoRa (-137 dBm, extremely sensitive)."""
         params = WirelessParams(
             position=Position(x=0, y=0, z=1),
+            antenna_pattern=AntennaPattern.ISO,
             rx_sensitivity_dbm=-137.0,  # LoRa with SF12
             modulation=ModulationType.BPSK,
             fec_type=FECType.LDPC,
@@ -55,6 +58,7 @@ class TestRxSensitivitySchema:
         """Test setting rx_sensitivity for 5G base station (-95 dBm)."""
         params = WirelessParams(
             position=Position(x=0, y=0, z=1),
+            antenna_pattern=AntennaPattern.ISO,
             rx_sensitivity_dbm=-95.0,  # 5G NR base station
             modulation=ModulationType.QAM64,
             fec_type=FECType.LDPC,
@@ -66,6 +70,7 @@ class TestRxSensitivitySchema:
         """Test setting rx_sensitivity for cheap IoT radio (-70 dBm, poor sensitivity)."""
         params = WirelessParams(
             position=Position(x=0, y=0, z=1),
+            antenna_pattern=AntennaPattern.ISO,
             rx_sensitivity_dbm=-70.0,  # Cheap IoT radio
             modulation=ModulationType.QPSK,
             fec_type=FECType.NONE,
@@ -99,6 +104,7 @@ class TestRxSensitivitySchema:
         """Test rx_sensitivity at lower boundary (-150 dBm) is accepted."""
         params = WirelessParams(
             position=Position(x=0, y=0, z=1),
+            antenna_pattern=AntennaPattern.ISO,
             rx_sensitivity_dbm=-150.0,  # Extreme but valid
             modulation=ModulationType.QPSK,
             fec_type=FECType.LDPC,
@@ -110,6 +116,7 @@ class TestRxSensitivitySchema:
         """Test rx_sensitivity at upper boundary (0 dBm) is accepted."""
         params = WirelessParams(
             position=Position(x=0, y=0, z=1),
+            antenna_pattern=AntennaPattern.ISO,
             rx_sensitivity_dbm=0.0,  # Very poor sensitivity but valid
             modulation=ModulationType.QPSK,
             fec_type=FECType.LDPC,

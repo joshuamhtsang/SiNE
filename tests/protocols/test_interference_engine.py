@@ -197,8 +197,8 @@ class TestFreeSpaceInterference:
         rx_antenna_gain_dbi = 2.15
 
         interferers = [
-            TransmitterInfo("active", (20.0, 0.0, 1.5), 20.0, 2.15, 5.18e9),
-            TransmitterInfo("inactive", (30.0, 0.0, 1.5), 20.0, 2.15, 5.18e9),
+            TransmitterInfo("active", (20.0, 0.0, 1.5), 20.0, 2.15, frequency_hz=5.18e9),
+            TransmitterInfo("inactive", (30.0, 0.0, 1.5), 20.0, 2.15, frequency_hz=5.18e9),
         ]
 
         # Only activate first interferer
@@ -224,7 +224,7 @@ class TestInterferenceCache:
         engine.load_scene(scene_path=None, frequency_hz=5.18e9, bandwidth_hz=80e6)
 
         rx_position = (0.0, 0.0, 1.5)
-        interferer = TransmitterInfo("i1", (20.0, 0.0, 1.5), 20.0, 2.15, 5.18e9)
+        interferer = TransmitterInfo("i1", (20.0, 0.0, 1.5), 20.0, 2.15, frequency_hz=5.18e9)
 
         # First computation - should populate cache
         result1 = engine.compute_interference_at_receiver(
@@ -510,11 +510,11 @@ class TestACLRIntegration:
 
         interferers = [
             # Co-channel (included)
-            TransmitterInfo("cochannel", (20.0, 0.0, 1.5), 20.0, 2.15, 5.18e9, 80e6),
+            TransmitterInfo("cochannel", (20.0, 0.0, 1.5), 20.0, 2.15, frequency_hz=5.18e9, bandwidth_hz=80e6),
             # Adjacent (included, 100 MHz separation < 2 × 80 MHz = 160 MHz)
-            TransmitterInfo("adjacent", (20.0, 0.0, 1.5), 20.0, 2.15, 5.28e9, 80e6),
+            TransmitterInfo("adjacent", (20.0, 0.0, 1.5), 20.0, 2.15, frequency_hz=5.28e9, bandwidth_hz=80e6),
             # Orthogonal (filtered out, 200 MHz separation > 160 MHz threshold)
-            TransmitterInfo("orthogonal", (20.0, 0.0, 1.5), 20.0, 2.15, 5.38e9, 80e6),
+            TransmitterInfo("orthogonal", (20.0, 0.0, 1.5), 20.0, 2.15, frequency_hz=5.38e9, bandwidth_hz=80e6),
         ]
 
         result = engine.compute_interference_at_receiver(
