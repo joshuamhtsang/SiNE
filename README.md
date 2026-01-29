@@ -19,10 +19,12 @@ SiNE (pronounced "SHEE-na") stands for **Si**onna **N**etwork **E**mulation. Bui
 
 ```python
 delay_ms = propagation_delay       # From strongest path (Sionna RT)
-jitter_ms = delay_spread           # RMS delay spread from multipath
+jitter_ms = 0.0                    # Set to 0 (requires MAC/queue modeling, not PHY)
 loss_percent = PER × 100           # From BER/BLER calculation
 rate_mbps = modulation_based_rate  # Based on MCS, bandwidth, code rate
 ```
+
+**Note:** BER/BLER calculation uses theoretical AWGN formulas (not Sionna link-level simulation) for speed and deterministic results. Coding gains are applied as SNR offsets (LDPC: +6.5 dB, Polar: +6.0 dB, Turbo: +5.5 dB). This approach is valid for OFDM systems like WiFi 6 where the cyclic prefix absorbs delay spread. Jitter is set to 0 because RMS delay spread (20-300 ns) is absorbed by the OFDM cyclic prefix (800-3200 ns) and does not cause packet-level timing variation. Real jitter (0.1-10 ms) comes from MAC layer effects (CSMA/CA backoff, retransmissions, queueing) which require separate MAC/queue modeling. See [CLAUDE.md](CLAUDE.md) for details.
 
 ## Features
 
@@ -431,6 +433,50 @@ sudo chmod 0440 /etc/sudoers.d/sine
 For shared bridge mode troubleshooting (flower filters, HTB, per-destination netem), see:
 - [examples/manet_triangle_shared/TESTING.md](examples/manet_triangle_shared/TESTING.md)
 - Test scripts in `examples/manet_triangle_shared/`
+
+## Debugging and Inspection
+
+### Inspecting the Generated Containerlab Topology
+
+When you deploy a network, SiNE generates a pure containerlab YAML file that can be inspected:
+
+**File**: `.sine_clab_topology.yaml` (in the same directory as your `network.yaml`)
+
+This file contains the topology after stripping all SiNE-specific wireless and netem parameters. It shows exactly what gets passed to the `containerlab deploy` command.
+
+**Lifecycle**:
+- ✅ Created during `sine deploy`
+- ✅ Available throughout the emulation session
+- ❌ Deleted during `sine destroy`
+
+**What's in this file**:
+- Pure containerlab format (standard `kind`, `image`, `cmd`, etc.)
+- Link endpoints in containerlab format: `endpoints: ["node1:eth1", "node2:eth1"]`
+- No wireless parameters (position, frequency, RF power, antenna config, MCS)
+- No fixed_netem parameters (delay, jitter, loss, rate)
+
+**When to inspect**:
+- Verify container configuration before deployment
+- Debug containerlab deployment issues
+- Understand the exact topology containerlab is creating
+- Confirm interface naming matches expectations
+
+**Example**:
+```bash
+# Deploy network
+sudo $(which uv) run sine deploy examples/vacuum_20m/network.yaml
+
+# Inspect generated containerlab topology
+cat examples/vacuum_20m/.sine_clab_topology.yaml
+
+# File will exist until you destroy
+uv run sine destroy examples/vacuum_20m/network.yaml
+```
+
+## 🤝 Collaboration
+
+If you’re interested in collaborating on SiNE, please open an issue to reach out
+or start a discussion describing your idea!
 
 ## License
 

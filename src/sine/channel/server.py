@@ -148,6 +148,7 @@ class ChannelResponse(BaseModel):
     path_loss_db: float
     num_paths: int
     dominant_path_type: str
+    delay_spread_ns: float  # RMS delay spread in nanoseconds
     # Link budget
     received_power_dbm: float
     snr_db: float
@@ -797,6 +798,7 @@ async def _compute_batch_with_mac_model(
                     path_loss_db=200.0,
                     num_paths=0,
                     dominant_path_type="error",
+                    delay_spread_ns=0.0,
                     received_power_dbm=-200.0,
                     snr_db=-50.0,
                     ber=0.5,
@@ -943,7 +945,19 @@ def compute_channel_for_link(
 
     # Convert netem parameters
     delay_ms = path_result.min_delay_ns / 1e6
-    jitter_ms = path_result.delay_spread_ns / 1e6
+
+    # IMPORTANT: Jitter set to 0.0 because delay spread does NOT cause packet jitter
+    # - Delay spread is PHY-layer multipath timing dispersion (20-300 ns typical)
+    # - For OFDM (WiFi 6), this is absorbed by cyclic prefix (800-3200 ns)
+    # - Real packet jitter is caused by MAC layer effects (0.1-10 ms):
+    #   * CSMA/CA backoff and contention
+    #   * HARQ retransmissions
+    #   * Queue dynamics and buffer drain variability
+    #   * Frame aggregation (A-MPDU)
+    # - Mapping delay_spread_ns to jitter would underestimate by 1000-10000x
+    # - To model jitter properly, implement MAC/queue simulation
+    jitter_ms = 0.0  # Jitter requires MAC/queue modeling (not currently implemented)
+
     loss_percent = per * 100.0
 
     # Validate results for physics sanity
@@ -962,6 +976,7 @@ def compute_channel_for_link(
         path_loss_db=path_result.path_loss_db,
         num_paths=path_result.num_paths,
         dominant_path_type=path_result.dominant_path_type,
+        delay_spread_ns=path_result.delay_spread_ns,
         received_power_dbm=rx_power,
         snr_db=snr_db,
         ber=ber,
@@ -1182,6 +1197,7 @@ async def compute_batch_links(request: BatchChannelRequest):
                         path_loss_db=200.0,
                         num_paths=0,
                         dominant_path_type="error",
+                        delay_spread_ns=0.0,
                         received_power_dbm=-200.0,
                         snr_db=-50.0,
                         ber=0.5,

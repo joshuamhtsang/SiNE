@@ -157,7 +157,7 @@ def run_iperf3_test(
     server_node: str,
     client_node: str,
     client_ip: str,
-    duration_sec: int = 10,
+    duration_sec: int = 8,
 ) -> float:
     """Run iperf3 throughput test between two containers.
 
@@ -210,7 +210,7 @@ def run_iperf3_test(
     return throughput_mbps
 
 
-def test_ping_connectivity(container_prefix: str, node_ips: dict[str, str]) -> None:
+def verify_ping_connectivity(container_prefix: str, node_ips: dict[str, str]) -> None:
     """Test all-to-all ping connectivity between nodes.
 
     Args:

@@ -294,8 +294,25 @@ class SionnaEngine:
                 dominant_path_type="none",
             )
 
-        # Compute path loss from path coefficients
-        # Total received power = sum of |a_i|^2 for all paths
+        # Compute path loss from path coefficients using INCOHERENT summation
+        # This is CORRECT for OFDM systems (WiFi 6, LTE, 5G NR):
+        #
+        # Physical basis:
+        # 1. OFDM receiver performs FFT → per-subcarrier channel: H(f) = Σ aᵢ·e^(-j2πfτᵢ)
+        # 2. Each subcarrier is equalized independently (coherent combining per subcarrier)
+        # 3. Averaging across 234+ subcarriers (80 MHz WiFi 6) → E[|H(f)|²] ≈ Σ|aᵢ|²
+        # 4. Cyclic prefix (0.8-3.2 μs) >> delay spread (20-300 ns) prevents ISI
+        #
+        # Valid operating range:
+        # - Delay spread τ_rms < 800 ns (WiFi 6 short GI cyclic prefix)
+        # - Bandwidth 20-160 MHz (typical OFDM)
+        # - Environment: Indoor/urban (τ_rms typically 20-300 ns)
+        #
+        # For narrowband single-carrier systems (GPS, FSK/PSK), would use:
+        #   total_amplitude = np.sum(a_np)  # Coherent sum (phase matters)
+        #   total_path_gain = np.abs(total_amplitude) ** 2
+        #
+        # Total received power = sum of |a_i|^2 for all paths (incoherent)
         path_powers = np.abs(a_np) ** 2
         total_path_gain = np.sum(path_powers)
         path_loss_db = -10 * np.log10(total_path_gain + 1e-30)
@@ -322,6 +339,16 @@ class SionnaEngine:
             min_delay_ns = 0.0
             max_delay_ns = 0.0
             delay_spread_ns = 0.0
+
+        # Validate OFDM operating assumptions (WiFi 6 target)
+        # These warnings help users understand when SiNE's channel model may be invalid
+        if delay_spread_ns > 800:  # WiFi 6 short GI cyclic prefix
+            logger.warning(
+                f"Delay spread ({delay_spread_ns:.0f} ns) exceeds WiFi 6 short GI cyclic prefix (800 ns). "
+                f"OFDM incoherent summation assumptions may not be valid. "
+                f"Consider: (1) using long GI (1600 ns CP), (2) reducing distance/reflections, "
+                f"or (3) verifying scene geometry. Extreme delay spread can cause ISI in OFDM systems."
+            )
 
         # Determine dominant path type from strongest path's interactions
         dominant_path_type = "nlos"  # Default
