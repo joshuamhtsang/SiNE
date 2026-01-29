@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Sionna-based Network Emulation - Wireless network emulation using Sionna ray tracing and Containerlab"
 readme = "README.md"
 license = { text = "Apache-2.0" }
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.13"
 authors = [
     { name = "Joshua" }
 ]
@@ -29,10 +29,11 @@ dependencies = [
     "httpx>=0.24",
     "docker>=6.0",
     "rich>=13.0",
-    "numpy>=1.24",
+    "numpy>=1.24,<2.0.0",
     "scipy>=1.11",
     "sionna>=1.2.1",
     "tqdm>=4.67.1",
+    "tensorflow[and-cuda]==2.20.0"
 ]
 
 [project.optional-dependencies]

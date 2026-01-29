@@ -15,6 +15,8 @@ import logging
 
 import numpy as np
 
+from sine.channel.antenna_patterns import get_link_antenna_gain
+
 logger = logging.getLogger(__name__)
 
 # Check for Sionna availability
