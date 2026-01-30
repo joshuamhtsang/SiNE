@@ -360,16 +360,16 @@ class TestMixedFrequencyTopology:
 
         interferers = [
             # Group 1: Co-channel (0 dB ACLR)
-            TransmitterInfo("cochannel_1", (20.0, 0.0, 1.5), 20.0, 2.15, 5.18e9, 80e6),
-            TransmitterInfo("cochannel_2", (0.0, 20.0, 1.5), 20.0, 2.15, 5.18e9, 80e6),
+            TransmitterInfo("cochannel_1", (20.0, 0.0, 1.5), 20.0, 2.15, frequency_hz=5.18e9, bandwidth_hz=80e6),
+            TransmitterInfo("cochannel_2", (0.0, 20.0, 1.5), 20.0, 2.15, frequency_hz=5.18e9, bandwidth_hz=80e6),
 
             # Group 2: 1st adjacent (40 dB ACLR)
-            TransmitterInfo("adjacent_1", (20.0, 20.0, 1.5), 20.0, 2.15, 5.28e9, 80e6),
-            TransmitterInfo("adjacent_2", (-20.0, 0.0, 1.5), 20.0, 2.15, 5.28e9, 80e6),
+            TransmitterInfo("adjacent_1", (20.0, 20.0, 1.5), 20.0, 2.15, frequency_hz=5.28e9, bandwidth_hz=80e6),
+            TransmitterInfo("adjacent_2", (-20.0, 0.0, 1.5), 20.0, 2.15, frequency_hz=5.28e9, bandwidth_hz=80e6),
 
             # Group 3: Orthogonal (filtered out)
-            TransmitterInfo("orthogonal_1", (30.0, 0.0, 1.5), 20.0, 2.15, 5.50e9, 80e6),
-            TransmitterInfo("orthogonal_2", (0.0, 30.0, 1.5), 20.0, 2.15, 5.50e9, 80e6),
+            TransmitterInfo("orthogonal_1", (30.0, 0.0, 1.5), 20.0, 2.15, frequency_hz=5.50e9, bandwidth_hz=80e6),
+            TransmitterInfo("orthogonal_2", (0.0, 30.0, 1.5), 20.0, 2.15, frequency_hz=5.50e9, bandwidth_hz=80e6),
         ]
 
         result = engine.compute_interference_at_receiver(

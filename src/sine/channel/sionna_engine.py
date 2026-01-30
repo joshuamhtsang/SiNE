@@ -15,6 +15,8 @@ import logging
 
 import numpy as np
 
+from sine.channel.antenna_patterns import get_link_antenna_gain
+
 logger = logging.getLogger(__name__)
 
 # Check for Sionna availability
@@ -679,12 +681,18 @@ class FallbackEngine:
     Uses simple free-space path loss model for basic functionality.
     """
 
-    def __init__(self):
-        """Initialize fallback engine."""
+    def __init__(self, indoor_loss_db: float = 10.0):
+        """
+        Initialize fallback engine.
+
+        Args:
+            indoor_loss_db: Additional indoor loss in dB (default: 10.0)
+        """
         self._transmitters: dict[str, tuple[float, float, float]] = {}
         self._receivers: dict[str, tuple[float, float, float]] = {}
         self._frequency_hz = 5.18e9
         self._scene_loaded = False
+        self.indoor_loss_db = indoor_loss_db  # Configurable instead of hardcoded
 
     def load_scene(
         self,
@@ -738,16 +746,16 @@ class FallbackEngine:
             + (rx_pos[2] - tx_pos[2]) ** 2
         )
 
-        # Free-space path loss (Friis transmission equation)
-        # FSPL(dB) = 20·log₁₀(4πd/λ) = 20·log₁₀(d) + 20·log₁₀(f) + 20·log₁₀(4π/c)
-        #          = 20·log₁₀(d) + 20·log₁₀(f) - 147.55
-        # where 20·log₁₀(4π/(3×10⁸)) ≈ -147.55 dB
+        # Minimum distance to avoid log(0)
         if distance < 0.1:
-            distance = 0.1  # Minimum distance to avoid log(0)
-        fspl = 20 * np.log10(distance) + 20 * np.log10(self._frequency_hz) - 147.55
+            distance = 0.1
 
-        # Add indoor loss factor (rough estimate)
-        indoor_loss = 10.0  # dB
+        # Use SNRCalculator.free_space_path_loss() for DRY principle
+        from sine.channel.snr import SNRCalculator
+        fspl = SNRCalculator.free_space_path_loss(distance, self._frequency_hz)
+
+        # Add configurable indoor loss
+        indoor_loss = self.indoor_loss_db
 
         # Propagation delay
         speed_of_light = 3e8
@@ -784,13 +792,15 @@ class FallbackEngine:
         if distance < 0.1:
             distance = 0.1
 
-        fspl = 20 * np.log10(distance) + 20 * np.log10(self._frequency_hz) - 147.55
+        # Use SNRCalculator.free_space_path_loss() for DRY principle
+        from sine.channel.snr import SNRCalculator
+        fspl = SNRCalculator.free_space_path_loss(distance, self._frequency_hz)
         delay_ns = (distance / 3e8) * 1e9
 
         single_path = SinglePathInfo(
             path_index=0,
             delay_ns=delay_ns,
-            power_db=float(-fspl - 10.0),  # Negative FSPL + indoor loss
+            power_db=float(-fspl - self.indoor_loss_db),  # Negative FSPL + configurable indoor loss
             interaction_types=[],
             vertices=[],
             is_los=True,

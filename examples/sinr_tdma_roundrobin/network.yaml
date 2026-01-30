@@ -36,9 +36,8 @@ topology:
             bandwidth_mhz: 80
             rf_power_dbm: 20
             rx_sensitivity_dbm: -80.0    # WiFi 6 receiver sensitivity
-            antenna_pattern: iso
+            antenna_pattern: iso  # Isotropic (0.0 dBi)
             polarization: V
-            antenna_gain_dbi: 0.0
             modulation: 64qam
             fec_type: ldpc
             fec_code_rate: 0.667
@@ -65,9 +64,8 @@ topology:
             bandwidth_mhz: 80
             rf_power_dbm: 20
             rx_sensitivity_dbm: -80.0    # WiFi 6 receiver sensitivity
-            antenna_pattern: iso
+            antenna_pattern: iso  # Isotropic (0.0 dBi)
             polarization: V
-            antenna_gain_dbi: 0.0
             modulation: 64qam
             fec_type: ldpc
             fec_code_rate: 0.667
@@ -92,9 +90,8 @@ topology:
             bandwidth_mhz: 80
             rf_power_dbm: 20
             rx_sensitivity_dbm: -80.0    # WiFi 6 receiver sensitivity
-            antenna_pattern: iso
+            antenna_pattern: iso  # Isotropic (0.0 dBi)
             polarization: V
-            antenna_gain_dbi: 0.0
             modulation: 64qam
             fec_type: ldpc
             fec_code_rate: 0.667

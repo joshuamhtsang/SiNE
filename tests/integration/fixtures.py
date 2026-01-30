@@ -34,10 +34,43 @@ def get_uv_path() -> str:
     Raises:
         RuntimeError: If uv is not found
     """
-    result = subprocess.run(
-        ["which", "uv"], capture_output=True, text=True, check=True
+    import os
+    import shutil
+
+    # Try environment variable first (set by user when running with sudo)
+    uv_path = os.environ.get("UV_PATH")
+    if uv_path and os.path.exists(uv_path):
+        return uv_path
+
+    # Try using shutil.which (respects PATH)
+    uv_path = shutil.which("uv")
+    if uv_path:
+        return uv_path
+
+    # Try common installation locations
+    common_paths = [
+        os.path.expanduser("~/.local/bin/uv"),
+        os.path.expanduser("~/.cargo/bin/uv"),
+        "/usr/local/bin/uv",
+        "/usr/bin/uv",
+    ]
+
+    for path in common_paths:
+        if os.path.exists(path):
+            return path
+
+    # Last resort: try which command
+    try:
+        result = subprocess.run(
+            ["which", "uv"], capture_output=True, text=True, check=True
+        )
+        return result.stdout.strip()
+    except subprocess.CalledProcessError:
+        pass
+
+    raise RuntimeError(
+        "Could not find uv binary. Set UV_PATH environment variable or ensure uv is in PATH."
     )
-    return result.stdout.strip()
 
 
 def deploy_topology(yaml_path: str) -> subprocess.Popen:

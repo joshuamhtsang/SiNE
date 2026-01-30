@@ -56,9 +56,8 @@ topology:
             rx_sensitivity_dbm: -80.0    # WiFi 6 receiver sensitivity
 
             # Antenna configuration
-            antenna_pattern: dipole
+            antenna_pattern: hw_dipole  # Half-wave dipole (2.16 dBi)
             polarization: V
-            antenna_gain_dbi: 3.0
 
             # Modulation (fixed for Phase 2)
             modulation: 64qam
@@ -84,9 +83,8 @@ topology:
             rf_power_dbm: 20.0
             rx_sensitivity_dbm: -80.0
 
-            antenna_pattern: dipole
+            antenna_pattern: hw_dipole  # Half-wave dipole (2.16 dBi)
             polarization: V
-            antenna_gain_dbi: 3.0
 
             modulation: 64qam
             fec_type: ldpc
@@ -111,9 +109,8 @@ topology:
             rf_power_dbm: 20.0
             rx_sensitivity_dbm: -80.0
 
-            antenna_pattern: dipole
+            antenna_pattern: hw_dipole  # Half-wave dipole (2.16 dBi)
             polarization: V
-            antenna_gain_dbi: 3.0
 
             modulation: 64qam
             fec_type: ldpc

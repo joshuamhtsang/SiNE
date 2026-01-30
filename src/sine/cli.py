@@ -408,7 +408,12 @@ def status() -> None:
 @click.option("--host", default="0.0.0.0", help="Host to bind to")
 @click.option("-p", "--port", default=8000, type=int, help="Port to listen on")
 @click.option("--reload", is_flag=True, help="Enable auto-reload for development")
-def channel_server(host: str, port: int, reload: bool) -> None:
+@click.option(
+    "--force-fallback",
+    is_flag=True,
+    help="Force fallback engine only (disable Sionna). Useful for CI/CD pipelines.",
+)
+def channel_server(host: str, port: int, reload: bool, force_fallback: bool) -> None:
     """Start the channel computation server.
 
     The server provides REST API endpoints for computing wireless channel
@@ -416,16 +421,23 @@ def channel_server(host: str, port: int, reload: bool) -> None:
     """
     console.print(f"[bold blue]Starting channel server on {host}:{port}[/]")
 
-    # Check Sionna availability
-    from sine.channel.sionna_engine import is_sionna_available
-
-    if is_sionna_available():
-        console.print("[green]Sionna available - GPU acceleration enabled[/]")
+    # Set force-fallback mode if requested
+    if force_fallback:
+        import sine.channel.server as server_module
+        server_module._force_fallback_mode = True
+        console.print("[bold yellow]FORCE-FALLBACK MODE: Sionna disabled (fallback engine only)[/]")
+        console.print("[dim]Sionna requests will be rejected with HTTP 400[/]")
     else:
-        console.print(
-            "[yellow]Sionna not available - using fallback FSPL model[/]\n"
-            "[dim]Install GPU support: pip install sine[gpu][/]"
-        )
+        # Check Sionna availability
+        from sine.channel.sionna_engine import is_sionna_available
+
+        if is_sionna_available():
+            console.print("[green]Sionna available - GPU acceleration enabled[/]")
+        else:
+            console.print(
+                "[yellow]Sionna not available - using fallback FSPL model[/]\n"
+                "[dim]Install GPU support: pip install sine[gpu][/]"
+            )
 
     import uvicorn
 

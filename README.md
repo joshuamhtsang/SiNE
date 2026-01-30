@@ -139,9 +139,8 @@ topology:
             bandwidth_mhz: 80
             rf_power_dbm: 20.0
             rx_sensitivity_dbm: -82.0
-            antenna_pattern: iso
+            antenna_pattern: iso  # Or use antenna_gain_dbi: 2.15 for custom gain
             polarization: V
-            antenna_gain_dbi: 2.15
             mcs_table: examples/common_data/wifi6_mcs.csv  # Or use fixed modulation/fec
             mcs_hysteresis_db: 2.0
 
@@ -161,7 +160,6 @@ topology:
             rx_sensitivity_dbm: -82.0
             antenna_pattern: iso
             polarization: V
-            antenna_gain_dbi: 2.15
             mcs_table: examples/common_data/wifi6_mcs.csv
             mcs_hysteresis_db: 2.0
 
@@ -176,6 +174,7 @@ topology:
 - Each interface must have either `wireless` or `fixed_netem` parameters
 - Both endpoints of a link must be the same type
 - Scene file required for wireless links only
+- Antenna config: Specify **either** `antenna_pattern` (for Sionna RT patterns like `iso`/`hw_dipole`) **or** `antenna_gain_dbi` (for custom gain values), never both. When using `antenna_gain_dbi`, Sionna automatically uses the `iso` pattern (0 dBi) and adds your explicit gain during SNR calculation to prevent double-counting.
 
 See `examples/` for reference topologies.
 
@@ -328,6 +327,50 @@ uv run sine validate <topology.yaml>        # Validate topology
 uv run sine render <topology.yaml> -o img   # Render scene
 uv run sine info                            # System information
 ```
+
+## Utilities
+
+### Spectral Efficiency Calculator
+
+Analyze network topologies and compute spectral efficiency metrics for each wireless link. See [dev_resources/PLAN_calc_spectral_efficiency.md](dev_resources/PLAN_calc_spectral_efficiency.md) for full details.
+
+**Features**:
+- Shannon channel capacity (theoretical maximum)
+- Effective data rate (practical throughput with MCS)
+- Spectral efficiency (bits/s/Hz) with categorization
+- Shannon gap (distance from theoretical limit)
+- Link margin (robustness to fading)
+- BER/PER analysis
+
+**Usage**:
+```bash
+# 1. Start channel server
+uv run sine channel-server
+
+# 2. Run spectral efficiency calculator
+uv run python utilities/calc_spectralefficiency.py examples/vacuum_20m/network.yaml
+
+# Example output:
+# ╭────────────────────────────────────────────────────────╮
+# │              Spectral Efficiency Analysis              │
+# ├──────┬──────┬─────┬─────────┬────────┬─────────┬──────┤
+# │ Link │ Dist │ SNR │ Shannon │ Effec  │ Spec    │ Gap  │
+# │      │ (m)  │ (dB)│ (Mbps)  │ Rate   │ Eff     │ (dB) │
+# │      │      │     │         │ (Mbps) │ (b/s/Hz)│      │
+# ├──────┼──────┼─────┼─────────┼────────┼─────────┼──────┤
+# │ node1│ 20.0 │ 39.7│ 1059    │ 192    │ 13.2 /  │ 7.4  │
+# │ :eth1│      │     │ (13.2)  │        │ 2.4     │      │
+# │  ↔   │      │     │         │        │ (Medium)│      │
+# │ node2│      │     │         │        │         │      │
+# │ :eth1│      │     │         │        │         │      │
+# ╰──────┴──────┴─────┴─────────┴────────┴─────────┴──────╯
+```
+
+**Supports**:
+- Point-to-point wireless links
+- Shared bridge (MANET) topologies (generates full mesh)
+- Adaptive MCS selection scenarios
+- Fixed modulation/coding configurations
 
 ## Example Topologies
 

@@ -66,9 +66,8 @@ topology:
             rf_power_dbm: 20             # 100 mW (typical WiFi 6)
 
             # Antenna configuration
-            antenna_pattern: iso         # Isotropic (omnidirectional)
+            antenna_pattern: iso         # Isotropic (omnidirectional, 0.0 dBi)
             polarization: V              # Vertical polarization
-            antenna_gain_dbi: 0.0        # 0 dBi (omnidirectional)
 
             # Adaptive MCS selection (key test feature)
             mcs_table: examples/common_data/wifi6_mcs.csv
@@ -95,9 +94,8 @@ topology:
             frequency_ghz: 5.18
             bandwidth_mhz: 80
             rf_power_dbm: 20
-            antenna_pattern: iso
+            antenna_pattern: iso  # Isotropic (0.0 dBi)
             polarization: V
-            antenna_gain_dbi: 0.0
             mcs_table: examples/common_data/wifi6_mcs.csv
             mcs_hysteresis_db: 2.0
 
@@ -122,9 +120,8 @@ topology:
             frequency_ghz: 5.18
             bandwidth_mhz: 80
             rf_power_dbm: 20
-            antenna_pattern: iso
+            antenna_pattern: iso  # Isotropic (0.0 dBi)
             polarization: V
-            antenna_gain_dbi: 0.0
             mcs_table: examples/common_data/wifi6_mcs.csv
             mcs_hysteresis_db: 2.0
 
