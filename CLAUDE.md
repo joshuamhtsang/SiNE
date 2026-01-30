@@ -1218,3 +1218,85 @@ This allows modeling:
 - Node failures or power-saving modes
 - Dynamic network topologies
 - Duty-cycled sensor networks
+
+## Testing Strategy
+
+### Test Categories
+- **Unit tests** (`tests/channel/`, `tests/config/`): No external dependencies, fast
+- **API tests** (`tests/channel/test_server_*.py`): FastAPI TestClient, no deployment
+- **Integration tests** (`tests/integration/`): Full deployment, requires sudo
+- **Comparison tests** (`tests/channel/test_*_vs_*.py`): Cross-engine validation, GPU-dependent
+
+### When to Write Each Type
+- **Unit test**: Testing a single function/class in isolation
+- **API test**: Testing FastAPI endpoints without full deployment
+- **Integration test**: Testing full deployment with containerlab + netem
+- **Skip GPU tests**: Use `@pytest.mark.skipif(not is_sionna_available(), reason="...")`
+
+### Test Fixture Best Practices
+- Use `project_root`, `examples_dir`, `scenes_dir` fixtures from `conftest.py`
+- For integration tests, import fixtures from `tests/integration/fixtures.py`
+- Always cleanup in `finally` blocks for integration tests (containers, deployments)
+
+### API Testing with FastAPI TestClient
+```python
+from fastapi.testclient import TestClient
+from sine.channel.server import app
+
+client = TestClient(app)
+response = client.post("/compute/single", json={...})
+assert response.status_code == 200
+```
+
+**Batch endpoint requirements:**
+- Must include `scene` config (even if empty: `{"scene_file": ""}`)
+- Each link can have different positions/params
+- All links should use same `engine_type`
+
+## Common Debugging Patterns
+
+### Channel Server Not Responding
+1. Check if server is running: `curl http://localhost:8000/health`
+2. Check logs for Sionna import errors (GPU/CUDA issues)
+3. Verify port not in use: `lsof -i :8000`
+
+### Integration Test Failures
+1. Check containers are cleaned up: `sudo docker ps -a | grep clab`
+2. Manually destroy if needed: `sudo containerlab destroy -t <yaml> --cleanup`
+3. Verify sudo permissions work: `sudo tc qdisc show`
+4. Check UV_PATH is set correctly when using sudo
+
+### Path Loss / SNR Unexpected Values
+1. Verify frequency and distance are correct
+2. Check antenna gains are not double-counted (Sionna: embedded, Fallback: added)
+3. Confirm `from_sionna` flag matches engine type
+4. For FSPL: Expected ~72 dB at 20m, 5.18 GHz (+ indoor loss if configured)
+
+### Engine Selection Issues
+- `engine_type="auto"`: Uses Sionna if available, else fallback
+- `engine_type="sionna"`: Returns 503 if GPU unavailable
+- `engine_type="fallback"`: Always works, no GPU needed
+- `--force-fallback`: Server-wide mode, rejects explicit Sionna requests
+
+## File Structure Quick Reference
+
+### Channel Computation
+- `src/sine/channel/sionna_engine.py`: SionnaEngine + FallbackEngine classes
+- `src/sine/channel/server.py`: FastAPI endpoints, engine selection logic
+- `src/sine/channel/snr.py`: SNR calculation, FSPL formulas
+- `src/sine/channel/modulation.py`: BER/BLER calculation
+- `src/sine/channel/per_calculator.py`: Packet error rate computation
+
+### Configuration & Schema
+- `src/sine/config/schema.py`: Network topology YAML schema validation
+- `src/sine/config/loader.py`: YAML loading and parsing
+
+### Deployment
+- `src/sine/emulation/controller.py`: Main deployment orchestrator
+- `src/sine/topology/containerlab.py`: Containerlab integration
+- `src/sine/topology/netem.py`: Network emulation configuration
+
+### Tests
+- `tests/channel/`: Unit tests for channel computation
+- `tests/integration/`: Full deployment tests (require sudo)
+- `tests/conftest.py`: Shared fixtures (project_root, examples_dir, etc.)

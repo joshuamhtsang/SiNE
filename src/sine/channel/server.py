@@ -17,6 +17,7 @@ Endpoints:
 import logging
 import time
 from contextlib import asynccontextmanager
+from enum import Enum
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
@@ -38,8 +39,10 @@ logger = logging.getLogger(__name__)
 # Global MCS table cache
 _mcs_tables: dict[str, MCSTable] = {}
 
-# Global engine instance
-_engine = None
+# Global engine instances
+_engine = None  # Auto-selected engine (Sionna if available)
+_fallback_engine = None  # Explicit fallback engine
+_force_fallback_mode = False  # CLI flag: force fallback-only mode (disable Sionna)
 
 # Global interference engine (for SINR computation)
 _interference_engine: InterferenceEngine | None = None
@@ -55,8 +58,7 @@ _device_positions: dict[str, tuple[float, float, float]] = {}  # {device_name: (
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
-    global _engine
-    _engine = get_engine()
+    # Engine will be lazy-loaded on first request based on engine_type
     logger.info("Channel computation server started")
     yield
     logger.info("Channel computation server shutting down")
@@ -73,6 +75,22 @@ app = FastAPI(
 # ============================================================================
 # Request/Response Models
 # ============================================================================
+
+
+class EngineType(str, Enum):
+    """Channel computation engine selection."""
+    AUTO = "auto"        # Default: use Sionna if available, else fallback
+    SIONNA = "sionna"    # Force Sionna RT (error if unavailable)
+    FALLBACK = "fallback"  # Force FSPL fallback (no GPU needed)
+
+
+class SionnaUnavailableError(HTTPException):
+    """Raised when Sionna engine requested but unavailable."""
+    def __init__(self):
+        super().__init__(
+            status_code=503,
+            detail="Sionna engine requested but unavailable (GPU/CUDA required)"
+        )
 
 
 class Position(BaseModel):
@@ -127,6 +145,7 @@ class WirelessLinkRequest(BaseModel):
     polarization: str = Field(default="V", description="Antenna polarization: V, H, VH, cross")
     frequency_hz: float = Field(default=5.18e9)
     bandwidth_hz: float = Field(default=80e6)
+    engine_type: EngineType = Field(default=EngineType.AUTO, description="Channel engine: auto, sionna, or fallback")
     # Fixed modulation parameters (used when mcs_table_path is not set)
     modulation: str | None = Field(default=None, description="Fixed modulation scheme")
     fec_type: str | None = Field(default=None, description="Fixed FEC type")
@@ -144,6 +163,8 @@ class ChannelResponse(BaseModel):
 
     tx_node: str
     rx_node: str
+    # Engine metadata
+    engine_used: EngineType
     # Ray tracing results
     path_loss_db: float
     num_paths: int
@@ -258,6 +279,7 @@ class SINRLinkRequest(BaseModel):
     bandwidth_hz: float = Field(default=80e6)
     antenna_pattern: str = Field(default="iso")
     polarization: str = Field(default="V")
+    engine_type: EngineType = Field(default=EngineType.AUTO, description="Channel engine: auto, sionna, or fallback")
 
     # Interferers
     interferers: list["InterfererInfo"]
@@ -286,6 +308,8 @@ class SINRResponse(BaseModel):
 
     tx_node: str
     rx_node: str
+    # Engine metadata
+    engine_used: EngineType
 
     # Power levels (dBm)
     signal_power_dbm: float
@@ -309,6 +333,64 @@ class SINRResponse(BaseModel):
 # ============================================================================
 # Helper Functions
 # ============================================================================
+
+
+def get_engine_for_request(engine_type: EngineType = EngineType.AUTO):
+    """
+    Get channel engine based on requested type.
+
+    Args:
+        engine_type: Engine selection (AUTO, SIONNA, or FALLBACK)
+
+    Returns:
+        Appropriate ChannelEngine instance
+
+    Raises:
+        SionnaUnavailableError: If SIONNA requested but unavailable
+        HTTPException: If SIONNA requested but server in force-fallback mode
+    """
+    from sine.channel.sionna_engine import SionnaEngine, FallbackEngine
+
+    global _engine, _fallback_engine, _force_fallback_mode
+
+    # Check force-fallback mode first (strict: reject Sionna requests)
+    if _force_fallback_mode:
+        if engine_type == EngineType.SIONNA:
+            raise HTTPException(
+                status_code=400,
+                detail="Server in fallback-only mode (started with --force-fallback). Sionna engine not available."
+            )
+        # Force all AUTO requests to use fallback
+        if _fallback_engine is None:
+            _fallback_engine = FallbackEngine()
+        return _fallback_engine
+
+    if engine_type == EngineType.AUTO:
+        # Current behavior: auto-select with graceful fallback
+        if _engine is None:
+            if is_sionna_available():
+                _engine = SionnaEngine()
+            else:
+                logger.warning("Sionna unavailable, using fallback FSPL engine")
+                _engine = FallbackEngine()
+        return _engine
+
+    elif engine_type == EngineType.SIONNA:
+        # Explicit Sionna request
+        if not is_sionna_available():
+            raise SionnaUnavailableError()
+        if _engine is None or isinstance(_engine, FallbackEngine):
+            _engine = SionnaEngine()
+        return _engine
+
+    elif engine_type == EngineType.FALLBACK:
+        # Explicit fallback request
+        if _fallback_engine is None:
+            _fallback_engine = FallbackEngine()
+        return _fallback_engine
+
+    else:
+        raise ValueError(f"Unknown engine_type: {engine_type}")
 
 
 def calculate_k_factor(path_details: PathDetails) -> float | None:
@@ -544,6 +626,7 @@ async def _compute_batch_with_mac_model(
     links: list[WirelessLinkRequest],
     mac_model_config: MACModel,
     scene_config: SceneConfig,
+    engine_used: EngineType,
 ) -> list[ChannelResponse]:
     """
     Compute channels for multiple links with MAC model (CSMA or TDMA).
@@ -768,6 +851,7 @@ async def _compute_batch_with_mac_model(
             result = compute_channel_for_link(
                 link,
                 path_result,
+                engine_used=engine_used,
                 effective_metric_db=effective_snr  # Pass SINR for accurate MCS selection
             )
 
@@ -819,6 +903,7 @@ async def _compute_batch_with_mac_model(
 def compute_channel_for_link(
     link: WirelessLinkRequest,
     path_result: PathResult,
+    engine_used: EngineType,
     effective_metric_db: float | None = None
 ) -> ChannelResponse:
     """
@@ -861,16 +946,21 @@ def compute_channel_for_link(
         - SNRCalculator.calculate_link_snr() for antenna gain handling
         - CHANNEL_CODE_REVIEW.md Issue #1 for fix details
     """
+    # Determine if path loss includes antenna gains (depends on engine type)
+    # Sionna RT: path loss includes antenna pattern gains (from_sionna=True, do NOT add again)
+    # FallbackEngine: FSPL only, antenna gains NOT included (from_sionna=False, add them)
+    from_sionna = (engine_used == EngineType.SIONNA)
+
     # Calculate SNR first (needed for MCS selection)
     snr_calc = SNRCalculator(
         bandwidth_hz=link.bandwidth_hz, noise_figure_db=7.0  # Typical WiFi NF
     )
     rx_power, snr_db = snr_calc.calculate_link_snr(
         tx_power_dbm=link.tx_power_dbm,
-        tx_gain_dbi=link.tx_gain_dbi,  # Passed for API consistency
-        rx_gain_dbi=link.rx_gain_dbi,  # Passed for API consistency
+        tx_gain_dbi=link.tx_gain_dbi,  # Sionna: ignored, Fallback: added
+        rx_gain_dbi=link.rx_gain_dbi,  # Sionna: ignored, Fallback: added
         path_loss_db=path_result.path_loss_db,
-        from_sionna=True,  # Path loss from RT includes antenna gains (do NOT add again)
+        from_sionna=from_sionna,  # False for FallbackEngine, True for SionnaEngine
     )
 
     # Use SINR if provided (MAC model case), otherwise SNR
@@ -974,6 +1064,7 @@ def compute_channel_for_link(
     return ChannelResponse(
         tx_node=link.tx_node,
         rx_node=link.rx_node,
+        engine_used=engine_used,
         path_loss_db=path_result.path_loss_db,
         num_paths=path_result.num_paths,
         dominant_path_type=path_result.dominant_path_type,
@@ -1057,28 +1148,38 @@ async def load_scene(config: SceneConfig) -> SceneLoadResponse:
 @app.post("/compute/single", response_model=ChannelResponse)
 async def compute_single_link(request: WirelessLinkRequest):
     """Compute channel parameters for a single wireless link."""
-    global _engine, _path_cache, _device_positions
+    from sine.channel.sionna_engine import SionnaEngine, FallbackEngine
 
-    if _engine is None:
-        _engine = get_engine()
+    global _path_cache, _device_positions
+
+    # Get engine based on request type
+    engine = get_engine_for_request(request.engine_type)
+
+    # Determine which engine type was actually used
+    if isinstance(engine, SionnaEngine):
+        engine_used = EngineType.SIONNA
+    elif isinstance(engine, FallbackEngine):
+        engine_used = EngineType.FALLBACK
+    else:
+        engine_used = EngineType.AUTO  # Fallback for unknown types
 
     # Ensure scene is loaded
-    if not getattr(_engine, "_scene_loaded", False):
-        _engine.load_scene(frequency_hz=request.frequency_hz, bandwidth_hz=request.bandwidth_hz)
+    if not getattr(engine, "_scene_loaded", False):
+        engine.load_scene(frequency_hz=request.frequency_hz, bandwidth_hz=request.bandwidth_hz)
 
     try:
         # Clear previous devices and add new ones
-        _engine.clear_devices()
+        engine.clear_devices()
         tx_pos = request.tx_position.as_tuple()
         rx_pos = request.rx_position.as_tuple()
 
-        _engine.add_transmitter(
+        engine.add_transmitter(
             name=request.tx_node,
             position=tx_pos,
             antenna_pattern=request.antenna_pattern,
             polarization=request.polarization,
         )
-        _engine.add_receiver(
+        engine.add_receiver(
             name=request.rx_node,
             position=rx_pos,
             antenna_pattern=request.antenna_pattern,
@@ -1086,10 +1187,10 @@ async def compute_single_link(request: WirelessLinkRequest):
         )
 
         # Compute paths
-        path_result = _engine.compute_paths()
+        path_result = engine.compute_paths()
 
         # Cache path details for visualization
-        path_details = _engine.get_path_details()
+        path_details = engine.get_path_details()
         cache_path_for_visualization(
             tx_node=request.tx_node,
             rx_node=request.rx_node,
@@ -1101,7 +1202,7 @@ async def compute_single_link(request: WirelessLinkRequest):
         )
 
         # Compute complete channel parameters
-        return compute_channel_for_link(request, path_result)
+        return compute_channel_for_link(request, path_result, engine_used)
 
     except Exception as e:
         logger.error(f"Channel computation failed: {e}")
@@ -1118,15 +1219,26 @@ async def compute_batch_links(request: BatchChannelRequest):
 
     Supports MAC models (CSMA or TDMA) for interference-aware channel computation.
     """
-    global _engine, _interference_engine, _sinr_calculator
+    from sine.channel.sionna_engine import SionnaEngine, FallbackEngine
 
-    if _engine is None:
-        _engine = get_engine()
+    global _interference_engine, _sinr_calculator
+
+    # Get engine type from first link (all links in batch use same engine)
+    engine_type = request.links[0].engine_type if request.links else EngineType.AUTO
+    engine = get_engine_for_request(engine_type)
+
+    # Determine which engine type was actually used
+    if isinstance(engine, SionnaEngine):
+        engine_used = EngineType.SIONNA
+    elif isinstance(engine, FallbackEngine):
+        engine_used = EngineType.FALLBACK
+    else:
+        engine_used = EngineType.AUTO
 
     start_time = time.time()
 
     # Load scene
-    _engine.load_scene(
+    engine.load_scene(
         scene_path=request.scene.scene_file,
         frequency_hz=request.scene.frequency_hz,
         bandwidth_hz=request.scene.bandwidth_hz,
@@ -1145,24 +1257,24 @@ async def compute_batch_links(request: BatchChannelRequest):
     if mac_model_config is not None:
         # MAC model mode: Use SINR computation with interference
         results = await _compute_batch_with_mac_model(
-            request.links, mac_model_config, request.scene
+            request.links, mac_model_config, request.scene, engine_used
         )
     else:
         # Simple SNR mode: Compute each link independently (original behavior)
         for link in request.links:
             try:
                 # Clear and set up devices for this link
-                _engine.clear_devices()
+                engine.clear_devices()
                 tx_pos = link.tx_position.as_tuple()
                 rx_pos = link.rx_position.as_tuple()
 
-                _engine.add_transmitter(
+                engine.add_transmitter(
                     name=link.tx_node,
                     position=tx_pos,
                     antenna_pattern=link.antenna_pattern,
                     polarization=link.polarization,
                 )
-                _engine.add_receiver(
+                engine.add_receiver(
                     name=link.rx_node,
                     position=rx_pos,
                     antenna_pattern=link.antenna_pattern,
@@ -1170,10 +1282,10 @@ async def compute_batch_links(request: BatchChannelRequest):
                 )
 
                 # Compute paths
-                path_result = _engine.compute_paths()
+                path_result = engine.compute_paths()
 
                 # Cache path details for visualization
-                path_details = _engine.get_path_details()
+                path_details = engine.get_path_details()
                 cache_path_for_visualization(
                     tx_node=link.tx_node,
                     rx_node=link.rx_node,
@@ -1185,7 +1297,7 @@ async def compute_batch_links(request: BatchChannelRequest):
                 )
 
                 # Compute complete channel
-                result = compute_channel_for_link(link, path_result)
+                result = compute_channel_for_link(link, path_result, engine_used)
                 results.append(result)
 
             except Exception as e:
@@ -1195,6 +1307,7 @@ async def compute_batch_links(request: BatchChannelRequest):
                     ChannelResponse(
                         tx_node=link.tx_node,
                         rx_node=link.rx_node,
+                        engine_used=engine_used,
                         path_loss_db=200.0,
                         num_paths=0,
                         dominant_path_type="error",
@@ -1332,7 +1445,20 @@ async def compute_sinr(request: SINRLinkRequest):
 
     Phase 1: Same-frequency (co-channel) interference only.
     """
+    from sine.channel.sionna_engine import SionnaEngine, FallbackEngine
+
     global _interference_engine, _sinr_calculator
+
+    # Get engine based on request type
+    engine = get_engine_for_request(request.engine_type)
+
+    # Determine which engine type was actually used
+    if isinstance(engine, SionnaEngine):
+        engine_used = EngineType.SIONNA
+    elif isinstance(engine, FallbackEngine):
+        engine_used = EngineType.FALLBACK
+    else:
+        engine_used = EngineType.AUTO
 
     # Initialize interference engine if needed
     if _interference_engine is None:
@@ -1357,15 +1483,15 @@ async def compute_sinr(request: SINRLinkRequest):
         )
 
     try:
-        # Compute signal power using PathSolver
-        _interference_engine._engine.clear_devices()
-        _interference_engine._engine.add_transmitter(
+        # Compute signal power using the selected engine
+        engine.clear_devices()
+        engine.add_transmitter(
             name=request.tx_node,
             position=request.tx_position.as_tuple(),
             antenna_pattern=request.antenna_pattern,
             polarization=request.polarization,
         )
-        _interference_engine._engine.add_receiver(
+        engine.add_receiver(
             name=request.rx_node,
             position=request.rx_position.as_tuple(),
             antenna_pattern=request.antenna_pattern,
@@ -1373,7 +1499,7 @@ async def compute_sinr(request: SINRLinkRequest):
         )
 
         # Get path loss for signal
-        path_result = _interference_engine._engine.compute_paths()
+        path_result = engine.compute_paths()
 
         # Compute signal power: P_tx + G_tx + G_rx - PL
         signal_power_dbm = (
@@ -1437,6 +1563,7 @@ async def compute_sinr(request: SINRLinkRequest):
         return SINRResponse(
             tx_node=sinr_result.tx_node,
             rx_node=sinr_result.rx_node,
+            engine_used=engine_used,
             signal_power_dbm=sinr_result.signal_power_dbm,
             noise_power_dbm=sinr_result.noise_power_dbm,
             total_interference_dbm=sinr_result.total_interference_dbm,
