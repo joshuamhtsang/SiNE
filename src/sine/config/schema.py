@@ -180,6 +180,13 @@ class WirelessParams(BaseModel):
         le=0.0,
         ge=-150.0,
     )
+    noise_figure_db: float = Field(
+        default=7.0,
+        description="Receiver noise figure in dB (overrides node-level default). "
+                    "WiFi 6: 6-8 dB, 5G BS: 3-5 dB, High-end SDR: 2-4 dB, Cheap IoT: 8-12 dB",
+        ge=0.0,
+        le=20.0,
+    )
     antenna_pattern: AntennaPattern | None = Field(
         default=None,
         description=(
@@ -399,6 +406,13 @@ class NodeConfig(BaseModel):
     exec: list[str] | None = Field(
         default=None,
         description="Commands to execute in container after startup (containerlab exec)",
+    )
+    noise_figure_db: float = Field(
+        default=7.0,
+        description="Default receiver noise figure for all interfaces (dB). "
+                    "Can be overridden per-interface in wireless config.",
+        ge=0.0,
+        le=20.0,
     )
     interfaces: dict[str, InterfaceConfig] | None = Field(
         default=None, description="Interface configurations (eth1, eth2, etc.)"

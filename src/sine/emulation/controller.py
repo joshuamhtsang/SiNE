@@ -322,6 +322,7 @@ class EmulationController:
                 "polarization": tx_params.polarization,
                 "frequency_hz": tx_params.frequency_hz,
                 "bandwidth_hz": tx_params.bandwidth_hz,
+                "noise_figure_db": rx_params.noise_figure_db,
                 "modulation": (
                     tx_params.modulation if not tx_params.uses_adaptive_mcs else None
                 ),
@@ -527,8 +528,11 @@ class EmulationController:
             wireless1 = node1.interfaces[iface1].wireless
             wireless2 = node2.interfaces[iface2].wireless
 
-            # Use node1 as TX, node2 as RX (will apply to both directions)
-            request = {
+            # BIDIRECTIONAL COMPUTATION for P2P links
+            # Compute both directions independently with correct receiver NF
+
+            # Direction 1: node1 → node2 (uses node2's RX noise figure)
+            request_12 = {
                 "tx_node": node1_name,
                 "rx_node": node2_name,
                 "tx_position": {
@@ -548,18 +552,19 @@ class EmulationController:
                 "polarization": wireless1.polarization.value,
                 "frequency_hz": wireless1.frequency_hz,
                 "bandwidth_hz": wireless1.bandwidth_hz,
+                "noise_figure_db": wireless2.noise_figure_db,  # Receiver's NF
             }
 
-            # Add MCS table or fixed modulation parameters
+            # Add MCS table or fixed modulation parameters (from node1/wireless1)
             if wireless1.uses_adaptive_mcs:
-                request["mcs_table_path"] = wireless1.mcs_table
-                request["mcs_hysteresis_db"] = wireless1.mcs_hysteresis_db
+                request_12["mcs_table_path"] = wireless1.mcs_table
+                request_12["mcs_hysteresis_db"] = wireless1.mcs_hysteresis_db
             else:
-                request["modulation"] = wireless1.modulation.value if wireless1.modulation else None
-                request["fec_type"] = wireless1.fec_type.value if wireless1.fec_type else None
-                request["fec_code_rate"] = wireless1.fec_code_rate
+                request_12["modulation"] = wireless1.modulation.value if wireless1.modulation else None
+                request_12["fec_type"] = wireless1.fec_type.value if wireless1.fec_type else None
+                request_12["fec_code_rate"] = wireless1.fec_code_rate
 
-            # Add MAC model configuration (CSMA or TDMA)
+            # Add MAC model configuration (CSMA or TDMA) from wireless1
             mac_model = None
             if wireless1.csma and wireless1.csma.enabled:
                 mac_model = {
@@ -579,9 +584,66 @@ class EmulationController:
                 }
 
             if mac_model:
-                request["mac_model"] = mac_model
+                request_12["mac_model"] = mac_model
 
-            link_requests.append(request)
+            link_requests.append(request_12)
+
+            # Direction 2: node2 → node1 (uses node1's RX noise figure)
+            request_21 = {
+                "tx_node": node2_name,
+                "rx_node": node1_name,
+                "tx_position": {
+                    "x": wireless2.position.x,
+                    "y": wireless2.position.y,
+                    "z": wireless2.position.z,
+                },
+                "rx_position": {
+                    "x": wireless1.position.x,
+                    "y": wireless1.position.y,
+                    "z": wireless1.position.z,
+                },
+                "tx_power_dbm": wireless2.rf_power_dbm,
+                "tx_gain_dbi": wireless2.antenna_gain_dbi if wireless2.antenna_gain_dbi is not None else 0.0,
+                "rx_gain_dbi": wireless1.antenna_gain_dbi if wireless1.antenna_gain_dbi is not None else 0.0,
+                "antenna_pattern": wireless2.antenna_pattern.value,
+                "polarization": wireless2.polarization.value,
+                "frequency_hz": wireless2.frequency_hz,
+                "bandwidth_hz": wireless2.bandwidth_hz,
+                "noise_figure_db": wireless1.noise_figure_db,  # Receiver's NF
+            }
+
+            # Add MCS table or fixed modulation parameters (from node2/wireless2)
+            if wireless2.uses_adaptive_mcs:
+                request_21["mcs_table_path"] = wireless2.mcs_table
+                request_21["mcs_hysteresis_db"] = wireless2.mcs_hysteresis_db
+            else:
+                request_21["modulation"] = wireless2.modulation.value if wireless2.modulation else None
+                request_21["fec_type"] = wireless2.fec_type.value if wireless2.fec_type else None
+                request_21["fec_code_rate"] = wireless2.fec_code_rate
+
+            # Add MAC model configuration from wireless2
+            mac_model_21 = None
+            if wireless2.csma and wireless2.csma.enabled:
+                mac_model_21 = {
+                    "type": "csma",
+                    "carrier_sense_range_multiplier": wireless2.csma.carrier_sense_range_multiplier,
+                    "traffic_load": wireless2.csma.traffic_load,
+                    "communication_range_snr_threshold_db": wireless2.csma.communication_range_snr_threshold_db,
+                }
+            elif wireless2.tdma and wireless2.tdma.enabled:
+                mac_model_21 = {
+                    "type": "tdma",
+                    "frame_duration_ms": wireless2.tdma.frame_duration_ms,
+                    "num_slots": wireless2.tdma.num_slots,
+                    "slot_assignment_mode": wireless2.tdma.slot_assignment_mode,
+                    "fixed_slot_map": wireless2.tdma.fixed_slot_map,
+                    "slot_probability": wireless2.tdma.slot_probability,
+                }
+
+            if mac_model_21:
+                request_21["mac_model"] = mac_model_21
+
+            link_requests.append(request_21)
 
         if not link_requests:
             return
@@ -796,15 +858,15 @@ class EmulationController:
             logger.warning(f"Container info not found for {tx_node} or {rx_node}")
             return
 
-        # Find the interfaces for this link
+        # Find the interface for the TX node (egress direction)
         # In containerlab, interfaces are named eth1, eth2, etc.
         # We use the interface mapping to find the correct interface for each peer
         tx_interface = self._find_link_interface(tx_container, tx_node, rx_node)
-        rx_interface = self._find_link_interface(rx_container, rx_node, tx_node)
 
-        # Apply netem on both sides (wireless is bidirectional)
+        # BIDIRECTIONAL: Apply netem ONLY to TX side (egress)
+        # The reverse direction will be handled by a separate channel computation
+        # with tx_node and rx_node swapped
         tx_success = False
-        rx_success = False
 
         if tx_interface:
             tx_success = self.netem_config.apply_config(
@@ -819,24 +881,13 @@ class EmulationController:
                     f"(likely missing sudo privileges)"
                 )
                 self._netem_failures.append((tx_node, rx_node))
-
-        if rx_interface:
-            rx_success = self.netem_config.apply_config(
-                container_name=rx_container["name"],
-                interface=rx_interface,
-                params=params,
-                pid=rx_container["pid"],
+        else:
+            logger.warning(
+                f"No interface found for {tx_node} → {rx_node} link"
             )
-            if not rx_success:
-                logger.error(
-                    f"Failed to apply netem to {rx_node}:{rx_interface} "
-                    f"(likely missing sudo privileges)"
-                )
-                if (tx_node, rx_node) not in self._netem_failures:
-                    self._netem_failures.append((tx_node, rx_node))
 
-        # Store state for change detection only if at least one side succeeded
-        if tx_success or rx_success:
+        # Store state for change detection if netem succeeded
+        if tx_success:
             # Store both netem and RF metrics
             self._link_states[(tx_node, rx_node)] = {
                 "netem": params,
@@ -984,7 +1035,7 @@ class EmulationController:
         """
         status = {}
         for (tx, rx), link_state in self._link_states.items():
-            link_name = f"{tx}<->{rx}"
+            link_name = f"{tx}→{rx}"  # Directional for bidirectional computation
             status[link_name] = {
                 "netem": link_state["netem"].to_dict(),
                 "rf": link_state["rf"],
@@ -1088,12 +1139,12 @@ class EmulationController:
                 if tx_iface in tx_node.interfaces:
                     link_type = "wireless" if tx_node.interfaces[tx_iface].is_wireless else "fixed"
 
-            # Format link with interfaces: "node1 (eth1) <-> node2 (eth1)"
+            # Format link with interfaces: "node1 (eth1) → node2 (eth1)" (directional)
             tx_str = f"{tx} ({tx_iface})" if tx_iface else tx
             rx_str = f"{rx} ({rx_iface})" if rx_iface else rx
 
             link_info = {
-                "link": f"{tx_str} <-> {rx_str}",
+                "link": f"{tx_str} → {rx_str}",  # Directional arrow for bidirectional computation
                 "type": link_type,
                 "tx_node": tx,
                 "rx_node": rx,
