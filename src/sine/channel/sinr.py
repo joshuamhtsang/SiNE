@@ -57,6 +57,7 @@ class SINRCalculator:
         rx_sensitivity_dbm: float = -80.0,
         apply_capture_effect: bool = False,
         capture_threshold_db: float = 6.0,
+        noise_figure_db: float = 7.0,
     ):
         """
         Initialize SINR calculator.
@@ -65,10 +66,12 @@ class SINRCalculator:
             rx_sensitivity_dbm: Receiver sensitivity floor (default: -80 dBm for WiFi 6)
             apply_capture_effect: Enable capture effect (strong signal suppresses weak interference)
             capture_threshold_db: Capture threshold in dB (default: 6 dB for WiFi)
+            noise_figure_db: Receiver noise figure in dB (default: 7.0 dB for WiFi 6)
         """
         self.rx_sensitivity_dbm = rx_sensitivity_dbm
         self.apply_capture_effect = apply_capture_effect
         self.capture_threshold_db = capture_threshold_db
+        self.noise_figure_db = noise_figure_db
 
     def calculate_sinr(
         self,

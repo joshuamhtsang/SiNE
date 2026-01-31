@@ -145,6 +145,12 @@ class WirelessLinkRequest(BaseModel):
     polarization: str = Field(default="V", description="Antenna polarization: V, H, VH, cross")
     frequency_hz: float = Field(default=5.18e9)
     bandwidth_hz: float = Field(default=80e6)
+    noise_figure_db: float = Field(
+        default=7.0,
+        ge=0.0,
+        le=20.0,
+        description="Receiver noise figure in dB (WiFi 6: 6-8 dB)"
+    )
     engine_type: EngineType = Field(default=EngineType.AUTO, description="Channel engine: auto, sionna, or fallback")
     # Fixed modulation parameters (used when mcs_table_path is not set)
     modulation: str | None = Field(default=None, description="Fixed modulation scheme")
@@ -286,6 +292,12 @@ class SINRLinkRequest(BaseModel):
 
     # SINR calculator settings
     rx_sensitivity_dbm: float = Field(default=-80.0, description="Receiver sensitivity floor")
+    noise_figure_db: float = Field(
+        default=7.0,
+        ge=0.0,
+        le=20.0,
+        description="Receiver noise figure in dB (WiFi 6: 6-8 dB)"
+    )
     apply_capture_effect: bool = Field(default=False, description="Enable capture effect")
     capture_threshold_db: float = Field(default=6.0, description="Capture threshold in dB")
 
@@ -733,7 +745,7 @@ async def _compute_batch_with_mac_model(
             # Compute signal power using SNR calculator
             snr_calc = SNRCalculator(
                 bandwidth_hz=link.bandwidth_hz,
-                noise_figure_db=7.0,
+                noise_figure_db=link.noise_figure_db,
             )
             signal_power_dbm, snr_db = snr_calc.calculate_link_snr(
                 tx_power_dbm=link.tx_power_dbm,
@@ -746,7 +758,7 @@ async def _compute_batch_with_mac_model(
             # Compute noise power
             noise_power_dbm = calculate_thermal_noise(
                 bandwidth_hz=link.bandwidth_hz,
-                noise_figure_db=7.0,
+                noise_figure_db=link.noise_figure_db,
             )
 
             # Compute interference probabilities using MAC model
@@ -953,7 +965,7 @@ def compute_channel_for_link(
 
     # Calculate SNR first (needed for MCS selection)
     snr_calc = SNRCalculator(
-        bandwidth_hz=link.bandwidth_hz, noise_figure_db=7.0  # Typical WiFi NF
+        bandwidth_hz=link.bandwidth_hz, noise_figure_db=link.noise_figure_db
     )
     rx_power, snr_db = snr_calc.calculate_link_snr(
         tx_power_dbm=link.tx_power_dbm,
@@ -1470,6 +1482,7 @@ async def compute_sinr(request: SINRLinkRequest):
     if _sinr_calculator is None:
         _sinr_calculator = SINRCalculator(
             rx_sensitivity_dbm=request.rx_sensitivity_dbm,
+            noise_figure_db=request.noise_figure_db,
             apply_capture_effect=request.apply_capture_effect,
             capture_threshold_db=request.capture_threshold_db,
         )
@@ -1512,7 +1525,7 @@ async def compute_sinr(request: SINRLinkRequest):
         # Calculate thermal noise
         noise_power_dbm = calculate_thermal_noise(
             bandwidth_hz=request.bandwidth_hz,
-            noise_figure_db=7.0,  # WiFi 6 typical
+            noise_figure_db=request.noise_figure_db,
         )
 
         # Convert interferer infos to TransmitterInfo list

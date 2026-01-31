@@ -403,7 +403,12 @@ Where:
 - TX_power: Transmit power in dBm (e.g., 20 dBm)
 - TX_gain, RX_gain: Antenna gains in dBi
 - Path_loss: From ray tracing (sum of path powers)
-- Noise_floor: Thermal noise = -174 dBm/Hz + 10*log10(bandwidth)
+- Noise_floor: -174 dBm/Hz + 10*log10(bandwidth) + noise_figure_db
+- noise_figure_db: Configurable per interface (default: 7.0 dB for WiFi 6)
+  - WiFi 6: 6-8 dB
+  - 5G base station: 3-5 dB
+  - High-end SDR: 2-4 dB
+  - Cheap IoT radio: 8-12 dB
 ```
 
 ### 3. BER Calculation
@@ -861,17 +866,21 @@ A: Netem is configured **per-interface**. In SiNE, we apply netem to the `eth1` 
 
 **Q: Does netem affect both directions of traffic?**
 
-A: Netem only affects **outbound** traffic on the interface where it's configured. For bidirectional wireless links, SiNE applies netem to `eth1` on **both** nodes:
+A: Netem only affects **outbound** traffic on the interface where it's configured. For **point-to-point (P2P) wireless links**, SiNE computes channel conditions independently for each direction using the **receiver's noise figure**:
 
 ```
-Node1 → Node2: Affected by netem on Node1's eth1 (egress)
-Node2 → Node1: Affected by netem on Node2's eth1 (egress)
+Node1 → Node2: Netem on Node1's eth1 (computed using Node2's RX noise figure)
+Node2 → Node1: Netem on Node2's eth1 (computed using Node1's RX noise figure)
 ```
 
 This means:
-- Packets leaving Node1 experience Node1's netem (delay, jitter, loss, rate)
-- Packets leaving Node2 experience Node2's netem (delay, jitter, loss, rate)
+- Packets leaving Node1 experience Node1's netem (computed with Node2's NF)
+- Packets leaving Node2 experience Node2's netem (computed with Node1's NF)
+- For nodes with different noise figures, each direction will have different SNR, loss%, and rate
+- Delay is symmetric (same geometric path), but loss and rate can be asymmetric
 - Incoming packets are NOT affected by the receiving node's netem
+
+**For shared bridge mode**, per-destination tc flower filters apply different netem parameters to packets based on destination IP address, which already implements bidirectional computation correctly.
 
 **Q: If both interfaces have rate limits, what's the effective throughput?**
 
@@ -891,7 +900,11 @@ A: Containerlab uses a **Linux bridge** to connect containers (not direct veth p
 
 **Q: When link conditions change, does SiNE update netem on both nodes?**
 
-A: Yes. When channel conditions are recomputed (due to mobility, initial deployment, etc.), SiNE updates netem on **both** endpoints of each link. Both interfaces receive the same parameters (symmetric link). The update happens atomically for each interface but sequentially between interfaces.
+A: Yes. When channel conditions are recomputed (due to mobility, initial deployment, etc.), SiNE updates netem on **both** endpoints of each link.
+
+**For P2P links**: Each direction is computed independently with the correct receiver's noise figure, so the two interfaces may receive different parameters (asymmetric for heterogeneous receivers). The update happens atomically for each interface but sequentially between interfaces.
+
+**For shared bridge mode**: All directional links are recomputed, and per-destination tc filters are updated with the new parameters for each destination.
 
 ## MANET Support
 
@@ -960,6 +973,72 @@ Benefits:
 - **Readable**: IP configuration matches interface names in the YAML
 - **Conflict detection**: Schema validates that no interface is used twice
 - **Type safety**: Each interface must have exactly one of `wireless` or `fixed_netem`
+
+### Noise Figure Configuration
+
+The receiver noise figure can be configured at both node and interface levels:
+
+**Node-level default (optional)**:
+```yaml
+nodes:
+  node1:
+    noise_figure_db: 6.0  # Default for all interfaces on this node
+    interfaces:
+      eth1:
+        wireless:
+          # Uses node-level default (6.0 dB)
+          position: {x: 0, y: 0, z: 1}
+          # ... other params
+```
+
+**Interface-level override (recommended)**:
+```yaml
+nodes:
+  node1:
+    interfaces:
+      eth1:
+        wireless:
+          noise_figure_db: 7.0  # Per-interface value
+          position: {x: 0, y: 0, z: 1}
+          # ... other params
+```
+
+**Typical values**:
+- **WiFi 6 (consumer)**: 6-8 dB (default: 7.0 dB)
+- **5G base station**: 3-5 dB
+- **High-performance SDR**: 2-4 dB
+- **Low-cost IoT radio**: 8-12 dB
+
+**Validation**: Range [0.0, 20.0] dB
+
+**Impact on channel**:
+- Noise figure increases the thermal noise floor
+- Higher NF → lower SNR → higher packet loss
+- 3 dB increase in NF = 3 dB decrease in SNR
+
+**Important: Bidirectional computation for P2P links**:
+- Each direction uses its **receiver's** noise figure
+- Link from node1→node2 uses node2's NF (receiver)
+- Link from node2→node1 uses node1's NF (receiver)
+- This results in **asymmetric SNR and loss rates** for heterogeneous receivers
+- Example: WiFi node (7 dB NF) ↔ IoT node (10 dB NF) will have ~3 dB SNR difference between directions
+
+**Example: Heterogeneous network**:
+```yaml
+nodes:
+  wifi_node:
+    interfaces:
+      eth1:
+        wireless:
+          noise_figure_db: 7.0  # WiFi 6 typical
+          # ... other params
+  iot_node:
+    interfaces:
+      eth1:
+        wireless:
+          noise_figure_db: 10.0  # Cheap IoT radio
+          # ... other params
+```
 
 ### Interface Mapping for MANET
 
