@@ -30,7 +30,7 @@ from pathlib import Path
 import pytest
 
 # Import shared fixtures and helpers
-from .fixtures import (
+from tests.integration.fixtures import (
     channel_server,
     configure_ips,
     deploy_topology,
@@ -53,7 +53,7 @@ __all__ = ["channel_server"]
 
 
 @pytest.fixture
-def mobility_deployment(examples_dir: Path, channel_server):
+def mobility_deployment(examples_for_tests: Path, channel_server):
     """
     Deploy topology with mobility API enabled.
 
@@ -66,7 +66,7 @@ def mobility_deployment(examples_dir: Path, channel_server):
     Yields:
         Tuple of (deploy_process, yaml_path)
     """
-    yaml_path = examples_dir / "csma_mcs_test" / "network.yaml"
+    yaml_path = examples_for_tests / "shared_sionna_snr_csma-mcs" / "network.yaml"
 
     if not yaml_path.exists():
         pytest.skip(f"Example not found: {yaml_path}")
@@ -125,13 +125,13 @@ def mobility_deployment(examples_dir: Path, channel_server):
 
 @pytest.mark.integration
 @pytest.mark.slow
-def test_csma_throughput_spatial_reuse(channel_server, examples_dir: Path):
+def test_csma_throughput_spatial_reuse(channel_server, examples_for_tests: Path):
     """
     Test CSMA achieves 90-100% throughput of configured rate limit.
 
     Expected: ~230-256 Mbps (90-100% of 256 Mbps per-destination rate)
     """
-    yaml_path = examples_dir / "sinr_csma" / "network.yaml"
+    yaml_path = examples_for_tests / "shared_sionna_sinr_csma" / "network.yaml"
 
     if not yaml_path.exists():
         pytest.skip(f"Example not found: {yaml_path}")
@@ -170,13 +170,13 @@ def test_csma_throughput_spatial_reuse(channel_server, examples_dir: Path):
 
 @pytest.mark.integration
 @pytest.mark.slow
-def test_tdma_fixed_throughput_matches_slot_ownership(channel_server, examples_dir: Path):
+def test_tdma_fixed_throughput_matches_slot_ownership(channel_server, examples_for_tests: Path):
     """
     Test TDMA fixed slots achieve expected throughput.
 
     Expected: ~90-96 Mbps (95-99% of 96 Mbps, 20% slot ownership × 480 Mbps PHY)
     """
-    yaml_path = examples_dir / "sinr_tdma_fixed" / "network.yaml"
+    yaml_path = examples_for_tests / "shared_sionna_sinr_tdma-fixed" / "network.yaml"
 
     if not yaml_path.exists():
         pytest.skip(f"Example not found: {yaml_path}")
@@ -217,7 +217,7 @@ def test_tdma_fixed_throughput_matches_slot_ownership(channel_server, examples_d
 
 @pytest.mark.integration
 @pytest.mark.slow
-def test_tdma_roundrobin_throughput(channel_server, examples_dir: Path):
+def test_tdma_roundrobin_throughput(channel_server, examples_for_tests: Path):
     """
     Test TDMA round-robin gives equal throughput per node.
 
@@ -225,7 +225,7 @@ def test_tdma_roundrobin_throughput(channel_server, examples_dir: Path):
     PHY rate calculation: 80 MHz × 6 bits/symbol (64-QAM) × 0.667 code_rate × 0.8 efficiency = 256 Mbps
     TDMA rate: 256 Mbps × (1/3) = 85.3 Mbps
     """
-    yaml_path = examples_dir / "sinr_tdma_roundrobin" / "network.yaml"
+    yaml_path = examples_for_tests / "shared_sionna_sinr_tdma-rr" / "network.yaml"
 
     if not yaml_path.exists():
         pytest.skip(f"Example not found: {yaml_path}")
@@ -410,7 +410,7 @@ def test_csma_mcs_uses_sinr(mobility_deployment):
 
 @pytest.mark.integration
 @pytest.mark.slow
-def test_csma_vs_tdma_ratio(channel_server, examples_dir: Path):
+def test_csma_vs_tdma_ratio(channel_server, examples_for_tests: Path):
     """
     Test CSMA is 4-5× faster than TDMA for same PHY.
 
@@ -419,8 +419,8 @@ def test_csma_vs_tdma_ratio(channel_server, examples_dir: Path):
 
     Expected ratio: 4.0-5.1× (tolerance added for measurement variability)
     """
-    csma_yaml = examples_dir / "sinr_csma" / "network.yaml"
-    tdma_yaml = examples_dir / "sinr_tdma_fixed" / "network.yaml"
+    csma_yaml = examples_for_tests / "shared_sionna_sinr_csma" / "network.yaml"
+    tdma_yaml = examples_for_tests / "shared_sionna_sinr_tdma-fixed" / "network.yaml"
 
     if not csma_yaml.exists() or not tdma_yaml.exists():
         pytest.skip("Required examples not found")

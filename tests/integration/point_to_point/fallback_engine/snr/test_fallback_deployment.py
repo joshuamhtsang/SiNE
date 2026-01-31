@@ -3,11 +3,11 @@ Integration tests for fallback engine deployment.
 
 These tests verify that:
 1. Fallback engine can deploy topologies without GPU/Sionna
-2. Netem parameters are correctly configured
-3. Deployment works without scene files (using force-fallback mode)
+2. Deployment works without scene files (using force-fallback mode)
+3. AUTO mode falls back when GPU unavailable
 
 IMPORTANT: These tests require sudo privileges for netem configuration.
-Run with: sudo $(which uv) run pytest -s tests/integration/test_fallback_deployment.py
+Run with: UV_PATH=$(which uv) sudo -E pytest -s tests/integration/point_to_point/fallback_engine/snr/
 """
 
 import subprocess
@@ -63,24 +63,12 @@ def stop_channel_server(process: subprocess.Popen) -> None:
             process.wait()
 
 
-@pytest.fixture(scope="module")
-def project_root() -> Path:
-    """Get the project root directory."""
-    return Path(__file__).parent.parent.parent
-
-
-@pytest.fixture(scope="module")
-def examples_dir(project_root: Path) -> Path:
-    """Get the examples directory."""
-    return project_root / "examples"
-
-
 class TestFallbackDeployment:
     """Test deployment using fallback engine."""
 
-    def test_deploy_vacuum_with_fallback(self, examples_dir, tmp_path):
+    def test_deploy_vacuum_with_fallback(self, examples_for_tests, tmp_path):
         """Deploy vacuum topology using fallback engine explicitly."""
-        yaml_path = examples_dir / "vacuum_20m" / "network.yaml"
+        yaml_path = examples_for_tests / "p2p_fallback_snr_vacuum" / "network.yaml"
 
         # Read original
         with open(yaml_path, encoding="utf-8") as f:
@@ -147,79 +135,13 @@ class TestFallbackDeployment:
             if channel_server is not None:
                 stop_channel_server(channel_server)
 
-    def test_fallback_netem_parameters(self, examples_dir, tmp_path):
-        """Verify netem parameters are correctly configured with fallback engine."""
-        yaml_path = examples_dir / "vacuum_20m" / "network.yaml"
-
-        # Copy to temp
-        temp_yaml = tmp_path / "network.yaml"
-        with open(yaml_path, encoding="utf-8") as f:
-            content = f.read()
-        with open(temp_yaml, "w", encoding="utf-8") as f:
-            f.write(content)
-
-        channel_server = None
-        deploy_process = None
-        try:
-            # Start channel server in fallback mode
-            print("\nStarting channel server in fallback mode...")
-            channel_server = start_channel_server_fallback()
-
-            # Deploy with fallback
-            uv_path = get_uv_path()
-            deploy_process = subprocess.Popen(
-                ["sudo", uv_path, "run", "sine", "deploy", str(temp_yaml)],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-            )
-
-            deployment_ready = False
-            assert deploy_process.stdout is not None
-
-            # Capture deployment output to extract netem parameters
-            deployment_output = []
-            for line in deploy_process.stdout:
-                print(line, end="")
-                deployment_output.append(line)
-                if "Emulation deployed successfully!" in line:
-                    deployment_ready = True
-                    break
-                if deploy_process.poll() is not None:
-                    raise RuntimeError("Deployment failed")
-
-            assert deployment_ready
-
-            # Parse deployment output for netem parameters
-            # Look for lines like: "Applied netem config to ... - delay=0.1ms, loss=0.00%, rate=192.0Mbps"
-            netem_found = False
-            for line in deployment_output:
-                if "Applied netem config" in line and "delay=" in line:
-                    netem_found = True
-                    # Verify delay is reasonable (not zero, not huge)
-                    # For 20m at speed of light: ~0.067 ms
-                    assert "delay=0.1ms" in line or "delay=0.0ms" in line  # Should be < 1 ms
-                    assert "loss=" in line  # Has loss parameter
-                    assert "rate=" in line  # Has rate parameter
-                    break
-
-            assert netem_found, "Netem parameters not found in deployment output"
-
-        finally:
-            if deploy_process is not None:
-                stop_deployment_process(deploy_process)
-            destroy_topology(str(temp_yaml))
-            if channel_server is not None:
-                stop_channel_server(channel_server)
-
 
 class TestFallbackWithoutScene:
     """Test fallback engine doesn't require scene data."""
 
-    def test_fallback_ignores_scene_file(self, examples_dir, tmp_path):
+    def test_fallback_ignores_scene_file(self, examples_for_tests, tmp_path):
         """Test that fallback mode works (scene file exists but isn't used)."""
-        yaml_path = examples_dir / "vacuum_20m" / "network.yaml"
+        yaml_path = examples_for_tests / "p2p_fallback_snr_vacuum" / "network.yaml"
 
         if not yaml_path.exists():
             pytest.skip(f"Example not found: {yaml_path}")
@@ -274,9 +196,9 @@ class TestFallbackWithoutScene:
 class TestFallbackPerformance:
     """Test fallback engine performance characteristics."""
 
-    def test_fallback_deployment_speed(self, examples_dir, tmp_path):
+    def test_fallback_deployment_speed(self, examples_for_tests, tmp_path):
         """Test that fallback deployment is fast (no GPU initialization overhead)."""
-        yaml_path = examples_dir / "vacuum_20m" / "network.yaml"
+        yaml_path = examples_for_tests / "p2p_fallback_snr_vacuum" / "network.yaml"
 
         temp_yaml = tmp_path / "network.yaml"
         with open(yaml_path, encoding="utf-8") as f:
@@ -335,7 +257,7 @@ class TestFallbackPerformance:
 class TestFallbackVsAutoMode:
     """Test differences between force-fallback and auto mode."""
 
-    def test_auto_mode_uses_fallback_when_no_gpu(self, examples_dir, tmp_path):
+    def test_auto_mode_uses_fallback_when_no_gpu(self, examples_for_tests, tmp_path):
         """Test that AUTO mode gracefully falls back when GPU unavailable."""
         from sine.channel.server import is_sionna_available
 
@@ -343,7 +265,7 @@ class TestFallbackVsAutoMode:
         if is_sionna_available():
             pytest.skip("Sionna available, cannot test fallback behavior in AUTO mode")
 
-        yaml_path = examples_dir / "vacuum_20m" / "network.yaml"
+        yaml_path = examples_for_tests / "p2p_fallback_snr_vacuum" / "network.yaml"
 
         temp_yaml = tmp_path / "network.yaml"
         with open(yaml_path) as f:

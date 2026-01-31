@@ -41,16 +41,23 @@ UV_PATH=$(which uv) sudo -E $(which uv) run sine destroy examples/vacuum_20m/net
 
 ## Testing with pytest
 
-When running pytest commands:
-- Always add the `-s` flag for verbose output (captures stdout/stderr)
-- Example: `uv run pytest -s tests/protocols/test_interference_engine.py`
-- This helps with debugging test failures by showing print statements and logging
-- Integration tests under `tests/integration/` always require sudo (use pattern above)
+**Unit tests (no sudo):**
+```bash
+uv run pytest -s tests/channel/test_snr.py
+```
+
+**Integration tests (require sudo):**
+```bash
+# CRITICAL: Use $(which uv), not just "uv"
+UV_PATH=$(which uv) sudo -E $(which uv) run pytest -s tests/integration/point_to_point/fallback_engine/snr/ -v
+```
+
+Always add `-s` flag for verbose output (captures stdout/stderr)
 
 ## Working with SiNE
 
 - The project uses `uv` as the package manager (not pip/poetry)
 - Sionna RT requires GPU for optimal performance but has CPU fallback
 - Containerlab is a REQUIRED dependency (not optional)
-- All wireless channel computations go through the FastAPI channel server
-- MANET topologies can use point-to-point or shared bridge models
+- All wireless channel computations go through the SiNE channel server
+- MANET topologies can use shared bridge models

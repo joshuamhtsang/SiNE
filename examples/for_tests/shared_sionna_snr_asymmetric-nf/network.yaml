@@ -1,0 +1,61 @@
+name: manet-triangle-shared-asymmetric-nf
+topology:
+  nodes:
+    node1:
+      kind: linux
+      image: alpine:latest
+      interfaces:
+        eth1:
+          ip_address: 192.168.100.1/24
+          wireless:
+            position: {x: 0, y: 0, z: 1}
+            rf_power_dbm: 20.0
+            frequency_ghz: 5.18
+            bandwidth_mhz: 80
+            noise_figure_db: 7.0  # WiFi 6
+            antenna_pattern: hw_dipole
+            polarization: V
+            modulation: 64qam
+            fec_type: ldpc
+            fec_code_rate: 0.5
+    node2:
+      kind: linux
+      image: alpine:latest
+      interfaces:
+        eth1:
+          ip_address: 192.168.100.2/24
+          wireless:
+            position: {x: 20, y: 0, z: 1}
+            rf_power_dbm: 20.0
+            frequency_ghz: 5.18
+            bandwidth_mhz: 80
+            noise_figure_db: 10.0  # Cheap IoT radio
+            antenna_pattern: hw_dipole
+            polarization: V
+            modulation: 64qam
+            fec_type: ldpc
+            fec_code_rate: 0.5
+    node3:
+      kind: linux
+      image: alpine:latest
+      interfaces:
+        eth1:
+          ip_address: 192.168.100.3/24
+          wireless:
+            position: {x: 10, y: 17.3, z: 1}
+            rf_power_dbm: 20.0
+            frequency_ghz: 5.18
+            bandwidth_mhz: 80
+            noise_figure_db: 5.0  # High-end base station
+            antenna_pattern: hw_dipole
+            polarization: V
+            modulation: 64qam
+            fec_type: ldpc
+            fec_code_rate: 0.5
+  shared_bridge:
+    enabled: true
+    name: manet-br0
+    nodes: [node1, node2, node3]
+    interface_name: eth1
+  scene:
+    file: scenes/vacuum.xml

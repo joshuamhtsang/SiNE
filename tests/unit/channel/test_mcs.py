@@ -12,7 +12,7 @@ from sine.channel.mcs import MCSTable, MCSEntry, MODULATION_BITS
 @pytest.fixture
 def test_mcs_table_path() -> Path:
     """Return path to test MCS table."""
-    return Path(__file__).parent.parent / "fixtures" / "mcs_tables" / "test_mcs.csv"
+    return Path(__file__).parent.parent.parent / "fixtures" / "mcs_tables" / "test_mcs.csv"
 
 
 @pytest.fixture

@@ -56,3 +56,28 @@ def fixtures_dir() -> Path:
             mcs_table = fixtures_dir / "mcs_tables" / "wifi6.csv"
     """
     return Path(__file__).parent / "fixtures"
+
+
+def pytest_configure(config):
+    """Register custom markers."""
+    config.addinivalue_line(
+        "markers", "integration: Full deployment tests (require sudo)"
+    )
+    config.addinivalue_line(
+        "markers", "slow: Slow-running tests (>5 seconds)"
+    )
+    config.addinivalue_line(
+        "markers", "very_slow: Very slow tests (>60 seconds)"
+    )
+    config.addinivalue_line(
+        "markers", "sionna: Tests requiring Sionna/GPU"
+    )
+    config.addinivalue_line(
+        "markers", "fallback: Tests using fallback engine"
+    )
+    config.addinivalue_line(
+        "markers", "gpu_memory_8gb: Tests requiring 8GB+ GPU memory"
+    )
+    config.addinivalue_line(
+        "markers", "gpu_memory_16gb: Tests requiring 16GB+ GPU memory"
+    )
