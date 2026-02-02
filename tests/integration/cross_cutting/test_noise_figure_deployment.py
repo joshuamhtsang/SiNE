@@ -19,12 +19,6 @@ from sine.emulation.controller import EmulationController
 from tests.integration.fixtures import channel_server  # noqa: F401
 
 
-@pytest.fixture(scope="module")
-def project_root():
-    """Get the project root directory."""
-    return Path(__file__).parent.parent.parent
-
-
 @pytest.fixture
 def temp_topology_dir():
     """Create a temporary directory for test topology files."""
@@ -111,7 +105,7 @@ def create_vacuum_topology(
     os.geteuid() != 0,
     reason="Integration tests require sudo for netem configuration"
 )
-def test_vacuum_20m_default_noise_figure(channel_server, temp_topology_dir, project_root):
+def test_vacuum_20m_default_noise_figure(channel_server, temp_topology_dir):
     """
     Test deployment with default noise figure (7.0 dB).
 
@@ -157,7 +151,7 @@ def test_vacuum_20m_default_noise_figure(channel_server, temp_topology_dir, proj
     os.geteuid() != 0,
     reason="Integration tests require sudo for netem configuration"
 )
-def test_vacuum_20m_custom_noise_figure(channel_server, temp_topology_dir, project_root):
+def test_vacuum_20m_custom_noise_figure(channel_server, temp_topology_dir):
     """
     Test deployment with custom noise figure (4.0 dB for 5G base station).
 
@@ -210,7 +204,7 @@ def test_vacuum_20m_custom_noise_figure(channel_server, temp_topology_dir, proje
     os.geteuid() != 0,
     reason="Integration tests require sudo for netem configuration"
 )
-def test_heterogeneous_noise_figures(channel_server, temp_topology_dir, project_root):
+def test_heterogeneous_noise_figures(channel_server, temp_topology_dir):
     """
     Test deployment with different noise figures per node.
 
@@ -347,7 +341,7 @@ def test_bidirectional_asymmetric_netem(channel_server, temp_topology_dir):
     os.geteuid() != 0,
     reason="Integration tests require sudo for netem configuration"
 )
-def test_node_level_noise_figure_fallback(channel_server, temp_topology_dir, project_root):
+def test_node_level_noise_figure_fallback(channel_server, temp_topology_dir):
     """
     Test node-level noise_figure_db as fallback for interfaces.
 

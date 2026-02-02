@@ -1298,26 +1298,374 @@ This allows modeling:
 - Dynamic network topologies
 - Duty-cycled sensor networks
 
-## Testing Strategy
+## Node Mobility
+
+SiNE supports real-time position updates with automatic channel recomputation, enabling dynamic wireless network scenarios.
+
+### Mobility Architecture
+
+**Polling-based updates:**
+- Mobility API runs on port 8001 (separate from channel server on port 8000)
+- Position updates trigger channel recomputation via channel server
+- Netem parameters updated on both endpoints of affected links
+- Default poll interval: 100ms (configurable via `mobility_poll_ms` in topology YAML)
+
+**Channel recomputation:**
+- Uses same pipeline as initial deployment (ray tracing → SNR → BER/BLER → PER → netem)
+- Only affected links are recomputed (not entire topology)
+- Bidirectional: both TX and RX netem updated for each link
+
+### Enabling Mobility
+
+**Deploy with mobility API:**
+```bash
+# Start channel server
+uv run sine channel-server
+
+# Deploy with mobility enabled
+sudo $(which uv) run sine deploy --enable-mobility examples/for_tests/p2p_sionna_snr_two-rooms/network.yaml
+
+# Mobility API now running on http://localhost:8001
+```
+
+### Mobility API Endpoints
+
+**Update node position:**
+```bash
+curl -X POST http://localhost:8001/api/mobility/update \
+     -H "Content-Type: application/json" \
+     -d '{
+       "node": "node2",
+       "x": 10.0,
+       "y": 5.0,
+       "z": 1.5
+     }'
+```
+
+**Get current positions:**
+```bash
+curl http://localhost:8001/api/mobility/positions
+```
+
+**Response:**
+```json
+{
+  "node1": {"x": 0.0, "y": 0.0, "z": 1.0},
+  "node2": {"x": 10.0, "y": 5.0, "z": 1.5}
+}
+```
+
+### Mobility Scripts
+
+SiNE includes movement scripts in `examples/for_user/mobility/`:
+
+**Linear movement:**
+```bash
+# Move node2 from (30,1,1) to (30,40,1) over 10 seconds
+uv run python examples/for_user/mobility/linear_movement.py \
+    node2 30.0 1.0 1.0 30.0 40.0 1.0 10.0
+```
+
+**Circular path:**
+```bash
+# Move node2 in a circle around origin
+uv run python examples/for_user/mobility/circular_movement.py \
+    node2 5.0 1.0 10.0
+# Arguments: <node> <radius> <height> <duration_sec>
+```
+
+**Random walk:**
+```bash
+# Random walk within bounds
+uv run python examples/for_user/mobility/random_walk.py \
+    node2 0.0 0.0 20.0 20.0 30.0
+# Arguments: <node> <min_x> <min_y> <max_x> <max_y> <duration_sec>
+```
+
+### Mobility Configuration
+
+**Topology YAML:**
+```yaml
+topology:
+  mobility_poll_ms: 100  # Position check interval (default: 100ms)
+  channel_server: "http://localhost:8000"
+```
+
+**Poll interval considerations:**
+- **100ms (default)**: Good balance for walking/vehicle speeds
+- **50ms**: High-speed scenarios (UAVs, fast vehicles)
+- **200-500ms**: Slow-moving nodes, reduced overhead
+
+### Use Cases
+
+**Walking pedestrians:**
+- Speed: 1-2 m/s
+- Poll interval: 100-200ms (moves 10-40cm between updates)
+- Example: Indoor navigation, crowd mobility
+
+**Vehicular networks:**
+- Speed: 10-30 m/s (36-108 km/h)
+- Poll interval: 50-100ms (moves 0.5-3m between updates)
+- Example: V2V communication, convoy scenarios
+
+**UAV/drone networks:**
+- Speed: 5-20 m/s
+- Poll interval: 50ms (moves 0.25-1m between updates)
+- Example: Aerial mesh networks, search patterns
+
+**Robotic swarms:**
+- Speed: 0.5-5 m/s
+- Poll interval: 100-200ms
+- Example: Warehouse automation, formation control
+
+### Visualization with Mobility
+
+Use the live viewer to monitor moving nodes in real-time:
+
+```bash
+# 1. Deploy with mobility
+sudo $(which uv) run sine deploy --enable-mobility examples/for_tests/p2p_sionna_snr_two-rooms/network.yaml
+
+# 2. Start mobility script
+uv run python examples/for_user/mobility/linear_movement.py node2 0.0 0.0 1.0 20.0 0.0 1.0 30.0 &
+
+# 3. Open live viewer
+uv run --with jupyter jupyter notebook scenes/viewer_live.ipynb
+
+# 4. In notebook, run continuous monitoring (Cell 7)
+await continuous_monitoring(update_interval_sec=1.0, max_iterations=60)
+```
+
+The viewer shows:
+- Updated node positions in 3D scene
+- Real-time channel metrics (SNR, delay spread, K-factor)
+- Propagation paths (recomputed as nodes move)
+
+### Performance Considerations
+
+**Channel computation overhead:**
+- Ray tracing: ~10-100ms per link (GPU: ~10-30ms, CPU: ~50-100ms)
+- For N-node mesh: O(N²) link updates per position change
+- Recommend: Use shared bridge mode for large topologies (single interface per node)
+
+**Netem update latency:**
+- Netem reconfiguration: ~1-5ms per interface
+- Negligible compared to channel computation time
+- Applied immediately after computation
+
+**Example timing (3-node mesh, GPU):**
+- Single node moves → 2 links affected
+- Ray tracing: 2 × 15ms = 30ms
+- Netem updates: 2 × 2ms = 4ms
+- Total: ~34ms (well within 100ms poll interval)
+
+### Limitations
+
+- **No interpolation:** Channel updated only at poll intervals (discrete updates)
+- **No prediction:** No extrapolation of movement trajectories
+- **Synchronous updates:** All affected links recomputed before next poll
+- **No handover modeling:** Link-layer handover protocols not modeled
+
+For continuous channel variation, reduce poll interval or implement custom interpolation in mobility scripts.
+
+### Example: Walking Through Doorway
+
+```python
+# examples/for_user/mobility/doorway_crossing.py
+import requests
+import time
+
+API_URL = "http://localhost:8001/api/mobility/update"
+
+# Start in room 1 (LOS blocked)
+positions = [
+    (0.0, 0.0, 1.0),    # Room 1
+    (2.5, 1.5, 1.0),    # Approaching doorway
+    (5.0, 2.5, 1.0),    # In doorway (LOS established)
+    (7.5, 2.5, 1.0),    # Through doorway
+    (10.0, 2.5, 1.0),   # Room 2 (LOS maintained)
+]
+
+for x, y, z in positions:
+    requests.post(API_URL, json={"node": "node2", "x": x, "y": y, "z": z})
+    print(f"Moved to ({x}, {y}, {z})")
+    time.sleep(2.0)  # Wait for channel update
+```
+
+Expected behavior:
+- Rooms 1 and 2: NLOS, higher path loss, lower SNR
+- Doorway: LOS path appears, path loss drops, SNR increases
+- Throughput increases as node crosses doorway (MCS adapts to higher SNR)
+
+## Test Organization
+
+SiNE's test suite is organized by test type and functionality. See [tests/README.md](tests/README.md) for comprehensive documentation.
+
+### Directory Structure
+
+```
+tests/
+├── unit/                          # Unit tests (fast, no external dependencies)
+│   ├── channel/                   # Channel computation tests
+│   ├── engine/                    # Engine comparison tests
+│   ├── protocols/                 # Protocol logic tests
+│   ├── config/                    # Configuration validation tests
+│   └── server/                    # Server logic tests
+├── integration/                   # Integration tests (require sudo)
+│   ├── point_to_point/            # P2P topology tests
+│   │   ├── sionna_engine/snr/     # Sionna P2P SNR tests
+│   │   ├── sionna_engine/sinr/    # Sionna P2P SINR tests
+│   │   └── fallback_engine/snr/   # Fallback P2P tests
+│   ├── shared_bridge/             # MANET tests
+│   │   └── sionna_engine/snr/     # MANET SNR tests
+│   ├── cross_cutting/             # Tests affecting multiple modes
+│   ├── fixtures.py                # Shared integration test fixtures
+│   └── conftest.py                # Integration-specific pytest config
+└── conftest.py                    # Root pytest configuration
+```
 
 ### Test Categories
-- **Unit tests** (`tests/channel/`, `tests/config/`): No external dependencies, fast
-- **API tests** (`tests/channel/test_server_*.py`): FastAPI TestClient, no deployment
-- **Integration tests** (`tests/integration/`): Full deployment, requires sudo
-- **Comparison tests** (`tests/channel/test_*_vs_*.py`): Cross-engine validation, GPU-dependent
+
+**Unit Tests** (`tests/unit/`):
+- Channel computation (SNR, BER, BLER, PER, MCS)
+- Engine comparison (Sionna vs Fallback)
+- Protocol logic (SINR, interference, CSMA, TDMA)
+- Configuration validation
+- Fast execution, no external dependencies
+
+**Integration Tests** (`tests/integration/`):
+- Full deployment with containerlab + netem
+- Organized by topology/engine/interference mode
+- Requires sudo for netem and container namespace access
+- Uses examples from `examples/for_tests/`
+
+### Running Tests
+
+```bash
+# Unit tests (no sudo)
+uv run pytest tests/unit/ -v
+
+# Integration tests (requires sudo)
+UV_PATH=$(which uv) sudo -E uv run pytest tests/integration/ -v -s
+
+# Specific category
+uv run pytest tests/unit/channel/ -v
+UV_PATH=$(which uv) sudo -E uv run pytest tests/integration/point_to_point/ -v -s
+```
+
+### Pytest Markers
+
+Use markers to selectively run tests:
+
+| Marker | Description |
+|--------|-------------|
+| `integration` | Full deployment tests (require sudo) |
+| `slow` | Tests taking 5-60 seconds |
+| `very_slow` | Tests taking >60 seconds |
+| `sionna` | Tests requiring Sionna/GPU |
+| `fallback` | Tests using fallback engine |
+| `gpu_memory_8gb` | Tests requiring 8GB+ GPU memory |
+| `gpu_memory_16gb` | Tests requiring 16GB+ GPU memory |
+
+**Examples:**
+```bash
+# Fast tests only
+uv run pytest -m "not slow and not very_slow" -v
+
+# Sionna tests only
+uv run pytest -m sionna -v
+
+# Skip GPU tests
+uv run pytest -m "not sionna" -v
+```
+
+### Test Fixtures
+
+**Root fixtures** ([tests/conftest.py](tests/conftest.py)):
+- `project_root` - Path to project root
+- `examples_dir` - Path to examples/ (deprecated, use specific fixtures)
+- `scenes_dir` - Path to scenes/
+
+**Integration fixtures** ([tests/integration/conftest.py](tests/integration/conftest.py)):
+- `examples_for_user` - Path to examples/for_user/
+- `examples_for_tests` - Path to examples/for_tests/
+- `examples_common` - Path to examples/common_data/
+
+**Integration helpers** ([tests/integration/fixtures.py](tests/integration/fixtures.py)):
+- `channel_server` - Session-scoped fixture (starts/stops server)
+- `deploy_topology()` - Deploy topology helper
+- `destroy_topology()` - Cleanup helper
+- `run_iperf3_test()` - Throughput testing helper
+
+### Test Examples Organization
+
+Integration tests use `examples/for_tests/` with flat naming:
+
+**Naming pattern:** `<topology>_<engine>_<interference>_<name>`
+
+Examples:
+- `p2p_fallback_snr_vacuum/` - Point-to-point, fallback, SNR, free space
+- `p2p_sionna_snr_two-rooms/` - Point-to-point, Sionna, SNR, indoor
+- `shared_sionna_snr_triangle/` - Shared bridge, Sionna, SNR, 3-node
+- `shared_sionna_sinr_triangle/` - Shared bridge, Sionna, SINR, interference
+
+**Benefits:**
+- Grep-friendly: `grep -r "p2p_sionna" tests/`
+- Self-documenting names
+- No nested directory navigation
 
 ### When to Write Each Type
-- **Unit test**: Testing a single function/class in isolation
-- **API test**: Testing FastAPI endpoints without full deployment
-- **Integration test**: Testing full deployment with containerlab + netem
-- **Skip GPU tests**: Use `@pytest.mark.skipif(not is_sionna_available(), reason="...")`
 
-### Test Fixture Best Practices
-- Use `project_root`, `examples_dir`, `scenes_dir` fixtures from `conftest.py`
-- For integration tests, import fixtures from `tests/integration/fixtures.py`
-- Always cleanup in `finally` blocks for integration tests (containers, deployments)
+- **Unit test**: Testing a single function/class in isolation
+- **Integration test**: Testing full deployment with containerlab + netem
+- **Marked test**: Add appropriate pytest markers for CI/CD filtering
+
+### Test Development Guidelines
+
+1. **Choose the right location:**
+   - Channel computation? → `tests/unit/channel/`
+   - Protocol behavior? → `tests/unit/protocols/`
+   - Full deployment? → `tests/integration/<topology>/<engine>/<interference>/`
+
+2. **Import and use fixtures:**
+   ```python
+   from tests.integration.fixtures import (
+       channel_server,
+       deploy_topology,
+       destroy_topology,
+   )
+
+   @pytest.mark.integration
+   def test_deployment(channel_server, examples_for_tests: Path):
+       """The channel_server fixture ensures the server is running."""
+       yaml_path = examples_for_tests / "p2p_fallback_snr_vacuum" / "network.yaml"
+       ...
+   ```
+
+   **Important:** Include `channel_server` as a test parameter to ensure the channel server is started before your test runs. This is a session-scoped fixture that starts once and is shared across all integration tests.
+
+3. **Mark appropriately:**
+   ```python
+   @pytest.mark.integration
+   @pytest.mark.slow
+   def test_my_deployment(channel_server, examples_for_tests: Path):
+       ...
+   ```
+
+4. **Clean up in integration tests:**
+   ```python
+   @pytest.mark.integration
+   def test_deployment(channel_server, examples_for_tests: Path):
+       yaml_path = examples_for_tests / "p2p_fallback_snr_vacuum" / "network.yaml"
+       try:
+           deploy_topology(yaml_path)
+           # ... test logic
+       finally:
+           destroy_topology(yaml_path)
+   ```
 
 ### API Testing with FastAPI TestClient
+
 ```python
 from fastapi.testclient import TestClient
 from sine.channel.server import app
