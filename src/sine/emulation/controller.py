@@ -375,6 +375,8 @@ class EmulationController:
                         "bandwidth_hz": link_requests[0]["bandwidth_hz"],
                     },
                     "links": link_requests,
+                    "enable_sinr": self.config.topology.enable_sinr,
+                    "active_states": self._build_active_states_dict(),
                 },
             )
             if response.status_code != 200:
@@ -661,6 +663,8 @@ class EmulationController:
                         "bandwidth_hz": link_requests[0]["bandwidth_hz"],
                     },
                     "links": link_requests,
+                    "enable_sinr": self.config.topology.enable_sinr,
+                    "active_states": self._build_active_states_dict(),
                 },
             )
             response.raise_for_status()
@@ -675,6 +679,22 @@ class EmulationController:
             f"Updated {len(results.get('results', []))} wireless link(s) in "
             f"{results.get('computation_time_ms', 0):.1f}ms"
         )
+
+    def _build_active_states_dict(self) -> dict[str, bool]:
+        """Build active states dictionary from interface configurations.
+
+        Returns:
+            Dictionary mapping "node:interface" to is_active boolean.
+            Example: {"node1:eth1": True, "node1:eth2": False, "node2:eth1": True}
+        """
+        active_states = {}
+        for node_name, node_config in self.config.topology.nodes.items():
+            if node_config.interfaces:
+                for iface_name, iface_config in node_config.interfaces.items():
+                    if iface_config.wireless:
+                        key = f"{node_name}:{iface_name}"
+                        active_states[key] = iface_config.wireless.is_active
+        return active_states
 
     async def _apply_fixed_link(self, link) -> None:
         """Apply fixed netem parameters for a link."""
@@ -1075,6 +1095,7 @@ class EmulationController:
         summary = {
             "topology_name": self.config.name if self.config else "Unknown",
             "mode": "shared_bridge" if is_shared_bridge else "point_to_point",
+            "sinr_enabled": self.config.topology.enable_sinr if self.config else False,
             "containers": [],
             "links": [],
         }

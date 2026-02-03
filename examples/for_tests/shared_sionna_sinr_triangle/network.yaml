@@ -22,9 +22,9 @@
 name: manet-triangle-shared-sinr
 
 topology:
-  # NOTE: This example assumes Phase 2 of PLAN_SINR.md is implemented
-  # Once implemented, uncomment the following line:
-  # enable_sinr: true
+  enable_sinr: true  # Enable SINR computation with interference from all nodes
+  # SINR is computed via shared bridge all-to-all links
+  # MAC model (csma/tdma) optional - provides tx_probability weighting
 
   scene:
     file: scenes/vacuum.xml

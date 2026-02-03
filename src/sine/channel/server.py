@@ -207,6 +207,14 @@ class BatchChannelRequest(BaseModel):
 
     scene: SceneConfig = Field(default_factory=SceneConfig)
     links: list[WirelessLinkRequest]
+    enable_sinr: bool = Field(
+        default=False,
+        description="Enable SINR computation with interference"
+    )
+    active_states: dict[str, bool] = Field(
+        default_factory=dict,
+        description="Interface active states ('node:interface' -> is_active, e.g. 'node1:eth1' -> True)"
+    )
 
 
 class BatchChannelResponse(BaseModel):
@@ -634,29 +642,35 @@ def estimate_communication_range(
     return communication_range_m
 
 
-async def _compute_batch_with_mac_model(
+async def _compute_batch_with_sinr(
     links: list[WirelessLinkRequest],
-    mac_model_config: MACModel,
+    mac_model_config: MACModel | None,
     scene_config: SceneConfig,
     engine_used: EngineType,
+    active_states: dict[str, bool],
 ) -> list[ChannelResponse]:
     """
-    Compute channels for multiple links with MAC model (CSMA or TDMA).
+    Compute channels for multiple links with SINR (interference-aware).
 
-    This function handles interference-aware SINR computation using either
-    CSMA or TDMA statistical models.
+    This function handles interference-aware SINR computation, optionally using
+    CSMA or TDMA statistical models for transmission probability weighting.
 
     Args:
         links: List of link requests
-        mac_model_config: MAC model configuration (CSMA or TDMA)
+        mac_model_config: MAC model configuration (CSMA or TDMA), or None for worst-case (tx_prob=1.0)
         scene_config: Scene configuration
+        engine_used: Engine type used
+        active_states: Dictionary of interface active states ('node:interface' -> is_active)
 
     Returns:
         List of channel responses with SINR and MAC metadata
     """
     global _engine, _interference_engine, _sinr_calculator
 
-    logger.info(f"Computing {len(links)} links with {mac_model_config.type.upper()} MAC model")
+    if mac_model_config is not None:
+        logger.info(f"Computing {len(links)} links with {mac_model_config.type.upper()} MAC model")
+    else:
+        logger.info(f"Computing {len(links)} links with SINR (no MAC model, worst-case tx_probability=1.0)")
 
     # Initialize interference engine if needed
     if _interference_engine is None:
@@ -686,24 +700,25 @@ async def _compute_batch_with_mac_model(
         all_nodes.add(link.tx_node)
         all_nodes.add(link.rx_node)
 
-    # Instantiate MAC model
+    # Instantiate MAC model (if configured)
     mac_model = None
-    if mac_model_config.type == "csma":
-        mac_model = CSMAModel(
-            carrier_sense_range_multiplier=mac_model_config.carrier_sense_range_multiplier or 2.5,
-            default_traffic_load=mac_model_config.traffic_load or 0.3,
-        )
-    elif mac_model_config.type == "tdma":
-        tdma_config = TDMASlotConfig(
-            frame_duration_ms=mac_model_config.frame_duration_ms or 10.0,
-            num_slots=mac_model_config.num_slots or 10,
-            slot_assignment_mode=SlotAssignmentMode(mac_model_config.slot_assignment_mode or "round_robin"),
-            fixed_slot_map=mac_model_config.fixed_slot_map,
-            slot_probability=mac_model_config.slot_probability or 0.1,
-        )
-        mac_model = TDMAModel(tdma_config)
-    else:
-        raise ValueError(f"Unknown MAC model type: {mac_model_config.type}")
+    if mac_model_config is not None:
+        if mac_model_config.type == "csma":
+            mac_model = CSMAModel(
+                carrier_sense_range_multiplier=mac_model_config.carrier_sense_range_multiplier or 2.5,
+                default_traffic_load=mac_model_config.traffic_load or 0.3,
+            )
+        elif mac_model_config.type == "tdma":
+            tdma_config = TDMASlotConfig(
+                frame_duration_ms=mac_model_config.frame_duration_ms or 10.0,
+                num_slots=mac_model_config.num_slots or 10,
+                slot_assignment_mode=SlotAssignmentMode(mac_model_config.slot_assignment_mode or "round_robin"),
+                fixed_slot_map=mac_model_config.fixed_slot_map,
+                slot_probability=mac_model_config.slot_probability or 0.1,
+            )
+            mac_model = TDMAModel(tdma_config)
+        else:
+            raise ValueError(f"Unknown MAC model type: {mac_model_config.type}")
 
     # Compute channels for each link
     results = []
@@ -761,44 +776,68 @@ async def _compute_batch_with_mac_model(
                 noise_figure_db=link.noise_figure_db,
             )
 
-            # Compute interference probabilities using MAC model
+            # Compute interference probabilities using MAC model (if configured)
             interferer_nodes = [n for n in all_nodes if n not in (link.tx_node, link.rx_node)]
 
-            if mac_model_config.type == "csma":
-                # CSMA: Estimate communication range from link budget
-                # Use configured SNR threshold from network.yaml
-                communication_range = estimate_communication_range(
-                    tx_power_dbm=link.tx_power_dbm,
-                    frequency_hz=link.frequency_hz,
-                    bandwidth_hz=link.bandwidth_hz,
-                    tx_gain_dbi=link.tx_gain_dbi,
-                    rx_gain_dbi=link.rx_gain_dbi,
-                    min_snr_db=mac_model_config.communication_range_snr_threshold_db,
-                    noise_figure_db=7.0,
-                )
+            # Filter inactive nodes from interferers
+            # Check if ANY interface on the node is active
+            def is_node_active(node_name: str, active_states: dict[str, bool]) -> bool:
+                """Check if any interface on the node is active."""
+                # If no active_states provided, assume active
+                if not active_states:
+                    return True
+                # Check if any interface on this node is active
+                node_interfaces = [k for k in active_states.keys() if k.startswith(f"{node_name}:")]
+                if not node_interfaces:
+                    return True  # No info, assume active
+                return any(active_states.get(iface, True) for iface in node_interfaces)
 
-                interference_probs = mac_model.compute_interference_probabilities(
-                    tx_node=link.tx_node,
-                    rx_node=link.rx_node,
-                    interferer_nodes=interferer_nodes,
-                    positions=node_positions,
-                    communication_range=communication_range,
-                    traffic_load=mac_model_config.traffic_load,
-                )
-            elif mac_model_config.type == "tdma":
-                interference_probs = mac_model.compute_interference_probabilities(
-                    tx_node=link.tx_node,
-                    rx_node=link.rx_node,
-                    interferer_nodes=interferer_nodes,
-                    all_nodes=list(all_nodes),
-                )
+            active_interferer_nodes = [n for n in interferer_nodes if is_node_active(n, active_states)]
+
+            if mac_model_config is not None:
+                # Use MAC model to compute tx_probability
+                if mac_model_config.type == "csma":
+                    # CSMA: Estimate communication range from link budget
+                    # Use configured SNR threshold from network.yaml
+                    communication_range = estimate_communication_range(
+                        tx_power_dbm=link.tx_power_dbm,
+                        frequency_hz=link.frequency_hz,
+                        bandwidth_hz=link.bandwidth_hz,
+                        tx_gain_dbi=link.tx_gain_dbi,
+                        rx_gain_dbi=link.rx_gain_dbi,
+                        min_snr_db=mac_model_config.communication_range_snr_threshold_db,
+                        noise_figure_db=7.0,
+                    )
+
+                    interference_probs = mac_model.compute_interference_probabilities(
+                        tx_node=link.tx_node,
+                        rx_node=link.rx_node,
+                        interferer_nodes=active_interferer_nodes,
+                        positions=node_positions,
+                        communication_range=communication_range,
+                        traffic_load=mac_model_config.traffic_load,
+                    )
+                elif mac_model_config.type == "tdma":
+                    interference_probs = mac_model.compute_interference_probabilities(
+                        tx_node=link.tx_node,
+                        rx_node=link.rx_node,
+                        interferer_nodes=active_interferer_nodes,
+                        all_nodes=list(all_nodes),
+                    )
+                else:
+                    interference_probs = {}
             else:
-                interference_probs = {}
+                # No MAC model: worst-case scenario (all interferers transmit continuously)
+                interference_probs = {node: 1.0 for node in active_interferer_nodes}
+                logger.debug(
+                    f"No MAC model configured. Using worst-case tx_probability=1.0 "
+                    f"for {len(active_interferer_nodes)} active interferers."
+                )
 
             # Build interference terms for SINR calculator
-            # Compute actual interference power from each interferer using InterferenceEngine
+            # Compute actual interference power from each active interferer using InterferenceEngine
             interferer_infos = []
-            for interferer_name in interferer_nodes:
+            for interferer_name in active_interferer_nodes:
                 if interferer_name in node_positions and interferer_name in node_powers:
                     interferer_infos.append(
                         TransmitterInfo(
@@ -811,42 +850,57 @@ async def _compute_batch_with_mac_model(
                     )
 
             # Compute interference at RX using InterferenceEngine
+            # Build node-level active states from interface-level active_states
+            node_active_states = {
+                name: is_node_active(name, active_states) for name in active_interferer_nodes
+            }
             interference_result = _interference_engine.compute_interference_at_receiver(
                 rx_position=rx_pos,
                 rx_antenna_gain_dbi=link.rx_gain_dbi,
                 rx_node=link.rx_node,
                 interferers=interferer_infos,
-                active_states={name: True for name in interferer_nodes},  # Assume all active for now
+                active_states=node_active_states,
             )
 
             # Pass all interference terms to SINR calculator
             # The MAC-specific methods will apply probability scaling internally
             interference_terms_list = list(interference_result.interference_terms)
 
-            # Compute SINR using MAC-specific methods
-            if mac_model_config.type == "csma":
-                # CSMA model: Use probabilistic interference
-                sinr_result, mac_metadata = _sinr_calculator.calculate_sinr_with_csma(
-                    tx_node=link.tx_node,
-                    rx_node=link.rx_node,
-                    signal_power_dbm=signal_power_dbm,
-                    noise_power_dbm=noise_power_dbm,
-                    interference_terms=interference_terms_list,
-                    interference_probs=interference_probs,
-                )
-            elif mac_model_config.type == "tdma":
-                # TDMA model: Use slot-based interference
-                sinr_result, mac_metadata = _sinr_calculator.calculate_sinr_with_tdma(
-                    tx_node=link.tx_node,
-                    rx_node=link.rx_node,
-                    signal_power_dbm=signal_power_dbm,
-                    noise_power_dbm=noise_power_dbm,
-                    interference_terms=interference_terms_list,
-                    interference_probs=interference_probs,
-                )
+            # Compute SINR using MAC-specific methods (or basic SINR if no MAC model)
+            if mac_model_config is not None:
+                if mac_model_config.type == "csma":
+                    # CSMA model: Use probabilistic interference
+                    sinr_result, mac_metadata = _sinr_calculator.calculate_sinr_with_csma(
+                        tx_node=link.tx_node,
+                        rx_node=link.rx_node,
+                        signal_power_dbm=signal_power_dbm,
+                        noise_power_dbm=noise_power_dbm,
+                        interference_terms=interference_terms_list,
+                        interference_probs=interference_probs,
+                    )
+                elif mac_model_config.type == "tdma":
+                    # TDMA model: Use slot-based interference
+                    sinr_result, mac_metadata = _sinr_calculator.calculate_sinr_with_tdma(
+                        tx_node=link.tx_node,
+                        rx_node=link.rx_node,
+                        signal_power_dbm=signal_power_dbm,
+                        noise_power_dbm=noise_power_dbm,
+                        interference_terms=interference_terms_list,
+                        interference_probs=interference_probs,
+                    )
+                else:
+                    # Unknown MAC model type
+                    logger.warning(f"Unknown MAC model type: {mac_model_config.type}")
+                    sinr_result = _sinr_calculator.calculate_sinr(
+                        tx_node=link.tx_node,
+                        rx_node=link.rx_node,
+                        signal_power_dbm=signal_power_dbm,
+                        noise_power_dbm=noise_power_dbm,
+                        interference_terms=interference_terms_list,
+                    )
+                    mac_metadata = {}
             else:
-                # Fallback: Phase 1 all-transmitting (should not happen with MAC models)
-                logger.warning(f"Unknown MAC model type: {mac_model_config.type}")
+                # No MAC model: Use basic SINR with worst-case tx_probability=1.0
                 sinr_result = _sinr_calculator.calculate_sinr(
                     tx_node=link.tx_node,
                     rx_node=link.rx_node,
@@ -870,18 +924,23 @@ async def _compute_batch_with_mac_model(
             # Override SNR with SINR and add MAC metadata
             result.snr_db = snr_db  # Keep original SNR (without interference)
             result.sinr_db = effective_snr  # Add SINR (with interference)
-            result.mac_model_type = mac_model_config.type
 
-            # Extract MAC-specific metadata from SINR calculation
-            if mac_model_config.type == "csma":
-                result.hidden_nodes = mac_metadata.get("num_hidden_nodes", 0)
-                result.expected_interference_dbm = mac_metadata.get("expected_interference_dbm")
-            elif mac_model_config.type == "tdma":
-                result.throughput_multiplier = mac_model.get_throughput_multiplier(
-                    link.tx_node, all_nodes=list(all_nodes)
-                )
-                # Apply TDMA slot ownership to rate limit
-                result.netem_rate_mbps = result.netem_rate_mbps * result.throughput_multiplier
+            if mac_model_config is not None:
+                result.mac_model_type = mac_model_config.type
+
+                # Extract MAC-specific metadata from SINR calculation
+                if mac_model_config.type == "csma":
+                    result.hidden_nodes = mac_metadata.get("num_hidden_nodes", 0)
+                    result.expected_interference_dbm = mac_metadata.get("expected_interference_dbm")
+                elif mac_model_config.type == "tdma":
+                    result.throughput_multiplier = mac_model.get_throughput_multiplier(
+                        link.tx_node, all_nodes=list(all_nodes)
+                    )
+                    # Apply TDMA slot ownership to rate limit
+                    result.netem_rate_mbps = result.netem_rate_mbps * result.throughput_multiplier
+            else:
+                # No MAC model: SINR computed with worst-case tx_probability=1.0
+                result.mac_model_type = None
 
             results.append(result)
 
@@ -1256,7 +1315,7 @@ async def compute_batch_links(request: BatchChannelRequest):
         bandwidth_hz=request.scene.bandwidth_hz,
     )
 
-    # Check if any links use MAC models
+    # Extract MAC model config (may be None)
     mac_model_config = None
     for link in request.links:
         if link.mac_model is not None:
@@ -1265,11 +1324,15 @@ async def compute_batch_links(request: BatchChannelRequest):
 
     results = []
 
-    # Branch: MAC model mode vs. simple SNR mode
-    if mac_model_config is not None:
-        # MAC model mode: Use SINR computation with interference
-        results = await _compute_batch_with_mac_model(
-            request.links, mac_model_config, request.scene, engine_used
+    # Decision based on enable_sinr flag (NOT MAC model presence)
+    if request.enable_sinr:
+        # SINR mode: Compute interference from all active transmitters
+        results = await _compute_batch_with_sinr(
+            request.links,
+            mac_model_config,  # May be None (worst-case tx_prob=1.0)
+            request.scene,
+            engine_used,
+            request.active_states  # Filter inactive nodes
         )
     else:
         # Simple SNR mode: Compute each link independently (original behavior)

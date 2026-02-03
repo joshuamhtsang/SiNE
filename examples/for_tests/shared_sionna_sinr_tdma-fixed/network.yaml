@@ -10,6 +10,8 @@
 name: sinr-tdma-fixed
 
 topology:
+  enable_sinr: true  # Explicit SINR computation with interference
+
   # Scene configuration (required for wireless links)
   scene:
     file: scenes/vacuum.xml

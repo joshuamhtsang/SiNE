@@ -591,6 +591,46 @@ To model phenomena beyond SiNE's current scope:
 | **CSMA/CA contention** | Carrier sense and exponential backoff logic |
 | **Frame aggregation** | A-MPDU/A-MSDU with variable frame sizes |
 
+### Multi-Radio Node Assumptions
+
+**Co-located radios** (multiple interfaces on same node):
+- All interfaces share the same position (node position)
+- Antenna spatial separation (5-50 cm typical) NOT modeled
+- Impact: Negligible for link distances >1m (spatial separation << link distance)
+- Antenna coupling (20-40 dB isolation) NOT modeled
+  - Real hardware: TX from one radio couples into RX of co-located radio
+  - SiNE: Only path loss + ACLR filtering separate co-located radios
+  - Conservative: May slightly overestimate interference for adjacent-band radios
+
+**Per-interface control** enables:
+- Band-specific power management (disable 2.4 GHz, keep 5 GHz)
+- Cognitive radio dynamic spectrum access
+- Radio-specific failure modeling
+- Listen-only monitoring nodes (RX active, TX disabled via `is_active: false`)
+
+**Example multi-radio scenarios:**
+```yaml
+nodes:
+  dual_band_ap:
+    interfaces:
+      eth1:
+        wireless:
+          is_active: true
+          frequency_ghz: 5.18
+          position: {x: 0, y: 0, z: 2.5}  # Same position as eth2
+      eth2:
+        wireless:
+          is_active: false  # 2.4 GHz disabled for power saving
+          frequency_ghz: 2.4
+          position: {x: 0, y: 0, z: 2.5}  # Same position as eth1
+```
+
+**Physical assumptions:**
+- Both interfaces at same node position → path loss identical
+- Frequency separation (2.4 GHz vs 5.18 GHz = 2.78 GHz) → ACLR ≈ 45 dB
+- No antenna coupling modeled → actual hardware would have 20-40 dB isolation
+- Net effect: Conservative (may overestimate cross-band interference by 5-25 dB)
+
 ### Relationship Between Channel Metrics and Netem Parameters
 
 **Important:** SiNE operates as **network emulation** (application-layer testing), not **PHY simulation** (waveform-level). Enhanced channel metrics like RMS delay spread (τ_rms), coherence bandwidth (Bc), and Rician K-factor are **diagnostic only** for visualization and debugging.
@@ -855,6 +895,75 @@ wireless:
   antenna_gain_dbi: 3.0  # Explicit 3.0 dBi custom antenna
   polarization: V
 ```
+
+### SINR Flag Migration (v2.0)
+
+**BREAKING CHANGE**: SINR computation now requires explicit `enable_sinr: true` flag.
+
+#### Why This Change?
+
+Previously, SINR (interference modeling) was implicitly enabled when MAC models (CSMA/TDMA) were configured. This coupling was not intuitive and limited flexibility. The new approach separates concerns: SINR computation is an explicit choice via `enable_sinr`, while MAC models only provide interference probability weights (`tx_probability`).
+
+#### BEFORE (v1.x - implicit SINR via MAC model)
+
+```yaml
+nodes:
+  node1:
+    interfaces:
+      eth1:
+        wireless:
+          csma:
+            enabled: true  # Implicitly enabled SINR
+```
+
+SINR was automatically computed when CSMA or TDMA was configured.
+
+#### AFTER (v2.0 - explicit flag)
+
+```yaml
+topology:
+  enable_sinr: true  # Explicit SINR computation
+
+nodes:
+  node1:
+    interfaces:
+      eth1:
+        wireless:
+          csma:
+            enabled: true  # Provides tx_probability only
+```
+
+**Key changes**:
+- Add `topology.enable_sinr: true` to enable interference modeling
+- MAC models (CSMA/TDMA) now only provide `tx_probability` weights
+- TDMA slot multiplier affects throughput regardless of `enable_sinr` value
+
+#### Migration Steps
+
+1. Add `topology.enable_sinr: true` to all topologies using SINR/interference
+2. Run `uv run sine validate <topology.yaml>` to verify
+3. Test deployment to confirm SINR is computed
+
+#### Examples Affected
+
+All SINR examples have been updated:
+- `shared_sionna_sinr_triangle/`
+- `shared_sionna_sinr_csma/`
+- `shared_sionna_sinr_tdma-rr/`
+- `shared_sionna_sinr_tdma-fixed/`
+
+#### Warning Message
+
+If you configure a MAC model without `enable_sinr: true`, you'll see:
+
+```
+WARNING: MAC model (CSMA/TDMA) configured with enable_sinr=false.
+Interference modeling: DISABLED (SNR computed, not SINR).
+Throughput effects: ENABLED (TDMA slot multiplier, CSMA metadata).
+Set 'topology.enable_sinr: true' to enable interference modeling.
+```
+
+This is valid - it allows testing TDMA capacity sharing without interference complexity.
 
 ## FAQ - Frequently Asked Questions
 
@@ -1298,6 +1407,78 @@ This allows modeling:
 - Dynamic network topologies
 - Duty-cycled sensor networks
 
+## SINR Configuration
+
+SiNE supports explicit SINR (Signal-to-Interference-plus-Noise Ratio) computation via the `enable_sinr` flag.
+
+**Configuration**:
+```yaml
+topology:
+  enable_sinr: true  # Enable interference modeling
+  scene:
+    file: scenes/vacuum.xml
+```
+
+**Behavior**:
+| enable_sinr | MAC model | Interference (SINR) | MAC Throughput Effects |
+|-------------|-----------|---------------------|------------------------|
+| false | None | ❌ No | ❌ No (full PHY rate) |
+| false | CSMA | ❌ No | ✅ Metadata available |
+| false | TDMA | ❌ No | ✅ **Slot multiplier applied** |
+| true | None | ✅ Yes (tx_prob=1.0) | ❌ No (full PHY rate) |
+| true | CSMA | ✅ Yes (carrier sense) | ✅ Metadata available |
+| true | TDMA | ✅ Yes (slot-weighted) | ✅ **Slot multiplier applied** |
+
+**MAC Model Independence**: MAC models affect throughput regardless of `enable_sinr`:
+- **TDMA**: Slot ownership multiplier always applied (e.g., 3/10 slots → 0.3× PHY rate)
+- **CSMA**: Contention metadata available (for future capacity modeling)
+- **enable_sinr**: Only controls whether interference affects SNR calculation
+
+**Worst-case scenario** (`enable_sinr: true`, no MAC model):
+- All interferers assumed to transmit continuously (`tx_probability = 1.0`)
+- Conservative assumption for interference analysis
+- Use case: Beacon-heavy networks, continuous transmitters
+
+**TDMA without SINR** (`enable_sinr: false`, TDMA configured):
+- SNR computed (no interference modeling)
+- Throughput scaled by slot ownership (e.g., 20% of slots → 0.2× PHY rate)
+- Use case: Testing TDMA capacity sharing without interference complexity
+
+**Active states** (per-interface control):
+```yaml
+nodes:
+  node1:
+    interfaces:
+      eth1:
+        wireless:
+          is_active: true   # Default: participates in interference
+          frequency_ghz: 5.18
+  node2:
+    interfaces:
+      eth1:
+        wireless:
+          is_active: false  # Excluded from interference calculations
+          frequency_ghz: 5.18
+  dual_band_node:
+    interfaces:
+      eth1:
+        wireless:
+          is_active: true   # 5 GHz active
+          frequency_ghz: 5.18
+      eth2:
+        wireless:
+          is_active: false  # 2.4 GHz disabled
+          frequency_ghz: 2.4
+```
+
+Use `is_active: false` to simulate:
+- Powered-off radios
+- Sleep modes (radio-specific)
+- Hardware failures
+- Disabled frequency bands
+- Selective multi-radio operation
+- Listen-only monitoring nodes (RX active, TX disabled)
+
 ## Node Mobility
 
 SiNE supports real-time position updates with automatic channel recomputation, enabling dynamic wireless network scenarios.
@@ -1704,6 +1885,25 @@ assert response.status_code == 200
 - `engine_type="sionna"`: Returns 503 if GPU unavailable
 - `engine_type="fallback"`: Always works, no GPU needed
 - `--force-fallback`: Server-wide mode, rejects explicit Sionna requests
+
+### SINR Not Being Computed
+1. Verify `topology.enable_sinr: true` is set
+2. Check deployment logs for "SINR mode" confirmation
+3. Verify at least 3+ nodes (need interferers)
+4. Check logs for `tx_probability` values
+5. For worst-case (no MAC model): expect `tx_probability=1.0`
+
+### SINR vs SNR Values
+- **SINR < SNR**: Interference present (expected)
+- **SINR ≈ SNR**: No/low interference (check `is_active` states)
+- **SINR = SNR**: `enable_sinr=false` (SNR-only mode)
+
+### TDMA Throughput Not Applied
+1. Verify TDMA configured with `enabled: true`
+2. Check `fixed_slot_map` or `slot_probability` is set correctly
+3. Verify slot ownership fraction (e.g., 3/10 slots = 0.3)
+4. Check logs for rate multiplier application
+5. Note: Throughput scaling applies regardless of `enable_sinr` value
 
 ## File Structure Quick Reference
 
