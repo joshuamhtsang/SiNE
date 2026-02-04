@@ -320,8 +320,10 @@ class EmulationController:
                 "rx_gain_dbi": rx_params.antenna_gain_dbi if rx_params.antenna_gain_dbi is not None else 0.0,
                 "antenna_pattern": tx_params.antenna_pattern,
                 "polarization": tx_params.polarization,
-                "frequency_hz": tx_params.frequency_hz,
+                "frequency_hz": tx_params.frequency_hz,  # TX frequency
                 "bandwidth_hz": tx_params.bandwidth_hz,
+                "rx_frequency_hz": rx_params.frequency_hz,  # RX frequency (for ACLR)
+                "rx_bandwidth_hz": rx_params.bandwidth_hz,  # RX bandwidth (for ACLR)
                 "noise_figure_db": rx_params.noise_figure_db,
                 "modulation": (
                     tx_params.modulation if not tx_params.uses_adaptive_mcs else None
@@ -552,8 +554,10 @@ class EmulationController:
                 "rx_gain_dbi": wireless2.antenna_gain_dbi if wireless2.antenna_gain_dbi is not None else 0.0,
                 "antenna_pattern": wireless1.antenna_pattern.value,
                 "polarization": wireless1.polarization.value,
-                "frequency_hz": wireless1.frequency_hz,
+                "frequency_hz": wireless1.frequency_hz,  # TX frequency
                 "bandwidth_hz": wireless1.bandwidth_hz,
+                "rx_frequency_hz": wireless2.frequency_hz,  # RX frequency (for ACLR)
+                "rx_bandwidth_hz": wireless2.bandwidth_hz,  # RX bandwidth (for ACLR)
                 "noise_figure_db": wireless2.noise_figure_db,  # Receiver's NF
             }
 
@@ -609,8 +613,10 @@ class EmulationController:
                 "rx_gain_dbi": wireless1.antenna_gain_dbi if wireless1.antenna_gain_dbi is not None else 0.0,
                 "antenna_pattern": wireless2.antenna_pattern.value,
                 "polarization": wireless2.polarization.value,
-                "frequency_hz": wireless2.frequency_hz,
+                "frequency_hz": wireless2.frequency_hz,  # TX frequency
                 "bandwidth_hz": wireless2.bandwidth_hz,
+                "rx_frequency_hz": wireless1.frequency_hz,  # RX frequency (for ACLR)
+                "rx_bandwidth_hz": wireless1.bandwidth_hz,  # RX bandwidth (for ACLR)
                 "noise_figure_db": wireless1.noise_figure_db,  # Receiver's NF
             }
 

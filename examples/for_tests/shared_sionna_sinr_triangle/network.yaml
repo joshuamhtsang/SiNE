@@ -1,23 +1,25 @@
-# MANET Shared Bridge with SINR/Interference (Phase 2)
+# MANET Shared Bridge with SINR/Interference (Co-channel)
 #
 # This example demonstrates:
 # - 3-node MANET with shared broadcast domain (Linux bridge)
-# - SINR computation with adjacent-channel interference (ACLR)
-# - Mixed frequency assignment for testing ACLR rejection
+# - SINR computation with co-channel interference
+# - All nodes on same frequency (5.18 GHz) for actual communication
 #
 # Assumptions:
-# - Phase 2 of PLAN_SINR.md is implemented (adjacent-channel interference)
-# - IEEE 802.11ax ACLR model (0, 28, 40, 45 dB)
+# - SINR computation is implemented with co-channel interference
 # - Per-destination netem via tc filters
 #
 # Topology:
-#   node1 (5.18 GHz) --- node2 (5.20 GHz) --- node3 (5.26 GHz)
+#   node1 (5.18 GHz) --- node2 (5.18 GHz) --- node3 (5.18 GHz)
 #   30m equilateral triangle in free space
 #
 # Expected SINR:
-# - node1↔node2: Adjacent channel (20 MHz separation) → 28 dB ACLR rejection
-# - node1↔node3: 2nd adjacent (80 MHz separation) → 40 dB ACLR rejection
-# - node2↔node3: 2nd adjacent (60 MHz separation) → 40 dB ACLR rejection
+# - Co-channel interference (0 dB ACLR)
+# - Equilateral triangle → signal = interference
+# - SINR ≈ 0 dB (worst-case scenario)
+# - Not suitable for connectivity testing with any modulation
+# - Use for validating SINR computation correctness only
+# - For connectivity tests, see: shared_sionna_sinr_asymmetric/
 
 name: manet-triangle-shared-sinr
 
@@ -64,7 +66,7 @@ topology:
             fec_type: ldpc
             fec_code_rate: 0.5
 
-    # Node 2: WiFi 6 at 5.20 GHz (adjacent channel, +20 MHz)
+    # Node 2: WiFi 6 at 5.18 GHz (co-channel with node1)
     node2:
       kind: linux
       image: alpine:latest
@@ -78,7 +80,7 @@ topology:
               x: 30
               y: 0
               z: 1
-            frequency_ghz: 5.20          # Channel 40 (adjacent to node1)
+            frequency_ghz: 5.18          # Co-channel with node1
             bandwidth_mhz: 80
             rf_power_dbm: 20.0
             rx_sensitivity_dbm: -80.0
@@ -90,7 +92,7 @@ topology:
             fec_type: ldpc
             fec_code_rate: 0.5
 
-    # Node 3: WiFi 6 at 5.26 GHz (2nd adjacent channel, +80 MHz from node1)
+    # Node 3: WiFi 6 at 5.18 GHz (co-channel with node1/node2)
     node3:
       kind: linux
       image: alpine:latest
@@ -104,7 +106,7 @@ topology:
               x: 15
               y: 25.98
               z: 1
-            frequency_ghz: 5.26          # Channel 52 (2nd adjacent from node1)
+            frequency_ghz: 5.18          # Co-channel with node1/node2
             bandwidth_mhz: 80
             rf_power_dbm: 20.0
             rx_sensitivity_dbm: -80.0
@@ -118,47 +120,51 @@ topology:
 
 # Expected Behavior:
 #
-# SINR Calculation (Phase 2):
-# - Each link computes SINR accounting for adjacent-channel interference
-# - ACLR rejection per IEEE 802.11ax-2021:
-#   - 0-10 MHz: 0 dB (co-channel)
-#   - 10-30 MHz: 28 dB (1st adjacent)
-#   - 30-50 MHz: 40 dB (2nd adjacent)
-#   - >50 MHz: 45 dB (orthogonal)
+# SINR Calculation (Co-channel):
+# - All nodes on same frequency (5.18 GHz)
+# - Each link computes SINR accounting for co-channel interference
+# - No ACLR rejection (0 dB ACLR for co-channel)
+# - Worst-case scenario: all interferers transmit continuously (tx_probability=1.0)
 #
-# Link node1↔node2 (20 MHz separation):
-#   - Signal: Strong (30m free space, ~35 dB SNR)
-#   - Interference from node3: Reduced by 28 dB (1st adjacent ACLR)
-#   - Expected SINR: ~32-33 dB (slightly below SNR due to weak interference)
+# Link node1→node2:
+#   - Signal: 30m, path loss ~72 dB, power = -52 dBm
+#   - Interference from node3: 30m, path loss ~72 dB, power = -52 dBm
+#   - SNR: 36.0 dB
+#   - SINR: 0 dB (signal = interference, equilateral triangle)
+#   - Packet loss: 100% (any modulation fails at SINR = 0 dB)
 #
-# Link node1↔node3 (80 MHz separation):
-#   - Signal: Strong (30m free space, ~35 dB SNR)
-#   - Interference from node2: Reduced by 40 dB (2nd adjacent ACLR)
-#   - Expected SINR: ~34.5 dB (nearly equal to SNR, interference negligible)
+# Link node1→node3:
+#   - Signal: 30m, path loss ~72 dB, power = -52 dBm
+#   - Interference from node2: 30m, path loss ~72 dB, power = -52 dBm
+#   - SINR: 0 dB
+#   - Packet loss: 100%
 #
-# Link node2↔node3 (60 MHz separation):
-#   - Signal: Strong (30m free space, ~35 dB SNR)
-#   - Interference from node1: Reduced by 40 dB (2nd adjacent ACLR)
-#   - Expected SINR: ~34.5 dB
+# Link node2→node3:
+#   - Signal: 30m, path loss ~72 dB, power = -52 dBm
+#   - Interference from node1: 30m, path loss ~72 dB, power = -52 dBm
+#   - SINR: 0 dB
+#   - Packet loss: 100%
 #
 # Deployment:
-#   sudo $(which uv) run sine deploy examples/manet_triangle_shared_sinr/network.yaml
+#   sudo $(which uv) run sine deploy examples/for_tests/shared_sionna_sinr_triangle/network.yaml
 #
 # Expected output:
 #   Link: node1→node2 [wireless, SINR enabled]
-#     SNR: 35.2 dB | SINR: 32.8 dB | Interferers: 1 (node3, -28 dB ACLR)
-#     Delay: 0.10 ms | Jitter: 0.00 ms | Loss: 0.00% | Rate: 192 Mbps
+#     SNR: 36.0 dB | SINR: 0.0 dB | Interferers: 1 (node3, co-channel)
+#     Delay: 0.10 ms | Jitter: 0.00 ms | Loss: 100.0% | Rate: 0-10 Mbps
 #
 #   Link: node2→node1 [wireless, SINR enabled]
-#     SNR: 35.2 dB | SINR: 32.8 dB | Interferers: 1 (node3, -28 dB ACLR)
-#     Delay: 0.10 ms | Jitter: 0.00 ms | Loss: 0.00% | Rate: 192 Mbps
+#     SNR: 36.0 dB | SINR: 0.0 dB | Interferers: 1 (node3, co-channel)
+#     Delay: 0.10 ms | Jitter: 0.00 ms | Loss: 100.0% | Rate: 0-10 Mbps
 #
 #   Link: node1→node3 [wireless, SINR enabled]
-#     SNR: 35.2 dB | SINR: 34.5 dB | Interferers: 1 (node2, -40 dB ACLR)
-#     Delay: 0.10 ms | Jitter: 0.00 ms | Loss: 0.00% | Rate: 192 Mbps
+#     SNR: 36.0 dB | SINR: 0.0 dB | Interferers: 1 (node2, co-channel)
+#     Delay: 0.10 ms | Jitter: 0.00 ms | Loss: 100.0% | Rate: 0-10 Mbps
 #
 # Validation:
-#   - SINR < SNR (interference present)
-#   - Adjacent channel SINR degradation: ~2-3 dB (28 dB ACLR)
-#   - 2nd adjacent SINR degradation: <1 dB (40 dB ACLR)
-#   - Throughput: ~182-192 Mbps per link (similar to no-SINR case due to high SINR)
+#   - SINR << SNR (SINR = 0 dB vs SNR = 36 dB, extreme degradation)
+#   - All links have identical SINR = 0 dB (symmetric equilateral geometry)
+#   - Connectivity: NO PACKETS DELIVERED (100% loss)
+#   - Throughput: Near zero (SINR too low for any modulation)
+#   - This topology demonstrates worst-case co-channel interference
+#   - For working connectivity, use: shared_sionna_sinr_asymmetric/

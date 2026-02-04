@@ -143,8 +143,10 @@ class WirelessLinkRequest(BaseModel):
     rx_gain_dbi: float = Field(default=0.0, description="RX antenna gain in dBi")
     antenna_pattern: str = Field(default="iso", description="Antenna pattern: iso, dipole, hw_dipole, tr38901")
     polarization: str = Field(default="V", description="Antenna polarization: V, H, VH, cross")
-    frequency_hz: float = Field(default=5.18e9)
-    bandwidth_hz: float = Field(default=80e6)
+    frequency_hz: float = Field(default=5.18e9, description="TX frequency in Hz")
+    bandwidth_hz: float = Field(default=80e6, description="TX bandwidth in Hz")
+    rx_frequency_hz: float | None = Field(default=None, description="RX frequency in Hz (for ACLR, defaults to frequency_hz)")
+    rx_bandwidth_hz: float | None = Field(default=None, description="RX bandwidth in Hz (for ACLR, defaults to bandwidth_hz)")
     noise_figure_db: float = Field(
         default=7.0,
         ge=0.0,
@@ -560,23 +562,34 @@ def _validate_channel_result(
     path_loss_db: float,
     frequency_hz: float,
     distance_m: float,
+    sinr_db: float | None = None,
 ) -> None:
     """Validate channel computation results for physics sanity."""
-    # Check SNR range
-    if snr_db > 50.0:
+    # Use SINR if available (interference mode), otherwise SNR
+    effective_metric = sinr_db if sinr_db is not None else snr_db
+    metric_name = "SINR" if sinr_db is not None else "SNR"
+
+    # Check SNR/SINR range
+    if effective_metric > 50.0:
         logger.warning(
-            f"SNR={snr_db:.1f} dB exceeds typical range (< 50 dB) - "
+            f"{metric_name}={effective_metric:.1f} dB exceeds typical range (< 50 dB) - "
             f"possible antenna gain double-counting"
         )
 
-    if snr_db < -20.0:
-        logger.warning(f"SNR={snr_db:.1f} dB very low - link likely unusable")
+    if effective_metric < -20.0:
+        logger.warning(f"{metric_name}={effective_metric:.1f} dB very low - link likely unusable")
 
-    # Check PER vs SNR correlation
-    if snr_db > 25.0 and per > 0.1:
+    # Check PER vs SNR/SINR correlation
+    if effective_metric > 25.0 and per > 0.1:
         logger.warning(
-            f"High SNR ({snr_db:.1f} dB) but high PER ({per:.2%}) - "
+            f"High {metric_name} ({effective_metric:.1f} dB) but high PER ({per:.2%}) - "
             f"possible BER calculation error"
+        )
+    elif sinr_db is not None and sinr_db < 10.0 and per > 0.5:
+        # Expected behavior: low SINR causes high PER (co-channel interference)
+        logger.debug(
+            f"Low SINR ({sinr_db:.1f} dB, SNR={snr_db:.1f} dB) causing high PER ({per:.2%}) - "
+            f"expected with strong co-channel interference"
         )
 
     # Check path loss vs FSPL (path loss should be >= FSPL)
@@ -689,6 +702,14 @@ async def _compute_batch_with_sinr(
     node_positions: dict[str, tuple[float, float, float]] = {}
     node_powers: dict[str, float] = {}
     node_gains: dict[str, float] = {}
+    # Track TX frequency per node (from links where node is transmitter)
+    # LIMITATION: Assumes one frequency per node. Multi-interface nodes with different
+    # frequencies would require tracking (node, interface) tuples, which requires
+    # extending the batch API to include interface information.
+    node_tx_frequencies: dict[str, float] = {}
+    node_tx_bandwidths: dict[str, float] = {}
+    node_antenna_patterns: dict[str, str] = {}  # Track antenna patterns per node
+    node_polarizations: dict[str, str] = {}     # Track polarizations per node
     all_nodes: set[str] = set()
 
     for link in links:
@@ -697,6 +718,12 @@ async def _compute_batch_with_sinr(
         node_powers[link.tx_node] = link.tx_power_dbm
         node_gains[link.tx_node] = link.tx_gain_dbi
         node_gains[link.rx_node] = link.rx_gain_dbi
+        # Track TX frequency when this node is a transmitter
+        node_tx_frequencies[link.tx_node] = link.frequency_hz
+        node_tx_bandwidths[link.tx_node] = link.bandwidth_hz
+        # Track antenna patterns and polarizations (for SINR computation)
+        node_antenna_patterns[link.tx_node] = link.antenna_pattern
+        node_polarizations[link.tx_node] = link.polarization
         all_nodes.add(link.tx_node)
         all_nodes.add(link.rx_node)
 
@@ -839,13 +866,22 @@ async def _compute_batch_with_sinr(
             interferer_infos = []
             for interferer_name in active_interferer_nodes:
                 if interferer_name in node_positions and interferer_name in node_powers:
+                    # Use interferer's own TX frequency (not receiver's frequency)
+                    interferer_freq = node_tx_frequencies.get(interferer_name, link.frequency_hz)
+                    interferer_bw = node_tx_bandwidths.get(interferer_name, link.bandwidth_hz)
+                    # Use interferer's antenna pattern and polarization
+                    interferer_pattern = node_antenna_patterns.get(interferer_name, "iso")
+                    interferer_polar = node_polarizations.get(interferer_name, "V")
+
                     interferer_infos.append(
                         TransmitterInfo(
                             node_name=interferer_name,
                             position=node_positions[interferer_name],
                             tx_power_dbm=node_powers[interferer_name],
-                            antenna_gain_dbi=node_gains.get(interferer_name, 0.0),
-                            frequency_hz=link.frequency_hz,
+                            antenna_pattern=interferer_pattern,  # FIX: Pass antenna pattern
+                            polarization=interferer_polar,       # FIX: Pass polarization
+                            frequency_hz=interferer_freq,
+                            bandwidth_hz=interferer_bw,
                         )
                     )
 
@@ -854,12 +890,21 @@ async def _compute_batch_with_sinr(
             node_active_states = {
                 name: is_node_active(name, active_states) for name in active_interferer_nodes
             }
+
+            # Use RX frequency for ACLR calculation (defaults to TX frequency if not specified)
+            rx_freq_hz = link.rx_frequency_hz if link.rx_frequency_hz is not None else link.frequency_hz
+            rx_bw_hz = link.rx_bandwidth_hz if link.rx_bandwidth_hz is not None else link.bandwidth_hz
+
             interference_result = _interference_engine.compute_interference_at_receiver(
                 rx_position=rx_pos,
                 rx_antenna_gain_dbi=link.rx_gain_dbi,
                 rx_node=link.rx_node,
                 interferers=interferer_infos,
                 active_states=node_active_states,
+                rx_frequency_hz=rx_freq_hz,
+                rx_bandwidth_hz=rx_bw_hz,
+                rx_antenna_pattern=link.antenna_pattern,  # FIX: Pass RX antenna pattern
+                rx_polarization=link.polarization,        # FIX: Pass RX polarization
             )
 
             # Pass all interference terms to SINR calculator
@@ -912,6 +957,16 @@ async def _compute_batch_with_sinr(
 
             # Use SINR instead of SNR for MCS selection and BER/BLER/PER calculation
             effective_snr = sinr_result.sinr_db
+
+            # DEBUG: Log SINR computation details
+            logger.warning(
+                f"SINR DEBUG: {link.tx_node}→{link.rx_node} | "
+                f"SNR={snr_db:.1f} dB, SINR={effective_snr:.1f} dB, "
+                f"Signal={sinr_result.signal_power_dbm:.1f} dBm, "
+                f"Noise={sinr_result.noise_power_dbm:.1f} dBm, "
+                f"Interference={sinr_result.total_interference_dbm:.1f} dBm, "
+                f"Interferers={sinr_result.num_interferers}"
+            )
 
             # Compute channel parameters using SINR for MAC-aware MCS selection
             result = compute_channel_for_link(
@@ -1130,6 +1185,7 @@ def compute_channel_for_link(
         path_loss_db=path_result.path_loss_db,
         frequency_hz=link.frequency_hz,
         distance_m=distance_m,
+        sinr_db=effective_metric_db if effective_metric_db != snr_db else None,
     )
 
     return ChannelResponse(

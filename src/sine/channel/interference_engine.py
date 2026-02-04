@@ -262,6 +262,14 @@ class InterferenceEngine:
                 rx_bandwidth_hz=rx_bandwidth_hz,
             )
 
+            # DEBUG: Log frequency separation and ACLR for co-channel diagnosis
+            logger.warning(
+                f"ACLR DEBUG: {interferer.node_name}→{rx_node} | "
+                f"TX_freq={interferer.frequency_hz/1e9:.4f} GHz, RX_freq={rx_frequency_hz/1e9:.4f} GHz, "
+                f"Separation={freq_separation/1e6:.2f} MHz, TX_BW={interferer.bandwidth_hz/1e6:.0f} MHz, "
+                f"RX_BW={rx_bandwidth_hz/1e6:.0f} MHz → ACLR={aclr_db:.2f} dB"
+            )
+
             # Check cache for this TX→RX path
             cache_key = (interferer.position, rx_position)
 
@@ -288,24 +296,38 @@ class InterferenceEngine:
                 # Cache for static topologies
                 self._path_cache[cache_key] = path_result
 
-            # Compute interference power: P_tx + G_tx + G_rx - PL - ACLR
-            # All in dBm/dBi/dB, so addition/subtraction is correct
-            interference_dbm = (
-                interferer.tx_power_dbm
-                + interferer.antenna_gain_dbi  # TX gain towards RX
-                + rx_antenna_gain_dbi          # RX gain towards interferer
-                - path_result.path_loss_db     # Path loss (subtract because it's a loss)
-                - aclr_db                      # ACLR rejection (subtract)
-            )
+            # Compute interference power
+            # Sionna RT: P_tx - PL - ACLR (antenna gains embedded in path_loss_db)
+            # Fallback: P_tx + G_tx + G_rx - PL - ACLR (explicit gains)
+            if interferer.antenna_pattern is not None:
+                # Sionna RT mode: antenna patterns used, gains embedded in path loss
+                interference_dbm = (
+                    interferer.tx_power_dbm
+                    - path_result.path_loss_db  # Path loss (includes antenna gains)
+                    - aclr_db                   # ACLR rejection
+                )
+                tx_gain_display = 0.0  # For logging (gains embedded in PL)
+                rx_gain_display = 0.0
+            else:
+                # Fallback mode: explicit antenna gains
+                interference_dbm = (
+                    interferer.tx_power_dbm
+                    + interferer.antenna_gain_dbi  # TX gain towards RX
+                    + rx_antenna_gain_dbi          # RX gain towards interferer
+                    - path_result.path_loss_db     # Path loss (pure propagation)
+                    - aclr_db                      # ACLR rejection
+                )
+                tx_gain_display = interferer.antenna_gain_dbi or 0.0
+                rx_gain_display = rx_antenna_gain_dbi
 
-            logger.debug(
+            logger.warning(
                 "Interference %s→%s: P_tx=%.1f dBm, G_tx=%.1f dBi, G_rx=%.1f dBi, "
                 "PL=%.1f dB, ACLR=%.1f dB (%.1f MHz sep) → I=%.1f dBm",
                 interferer.node_name,
                 rx_node,
                 interferer.tx_power_dbm,
-                interferer.antenna_gain_dbi,
-                rx_antenna_gain_dbi,
+                tx_gain_display,
+                rx_gain_display,
                 path_result.path_loss_db,
                 aclr_db,
                 freq_separation / 1e6,

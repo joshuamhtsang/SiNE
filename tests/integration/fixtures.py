@@ -631,3 +631,71 @@ def channel_server():
     except subprocess.TimeoutExpired:
         process.kill()
         process.wait()
+
+
+# =============================================================================
+# YAML Config Modification Helpers
+# =============================================================================
+
+
+def modify_topology_mcs(
+    source_yaml: Path,
+    modulation: str | None = None,
+    fec_type: str | None = None,
+    fec_code_rate: float | None = None,
+    tx_power_dbm: float | None = None,
+) -> dict:
+    """Create a modified copy of a topology with different MCS settings.
+
+    Returns the modified config as a dict. Tests can write this to a temporary
+    file if needed. Modifies all wireless interfaces in the topology.
+
+    Args:
+        source_yaml: Path to source network.yaml
+        modulation: Optional modulation to set (e.g., "bpsk", "qpsk", "64qam")
+        fec_type: Optional FEC type to set (e.g., "ldpc", "polar", "turbo")
+        fec_code_rate: Optional FEC code rate to set (e.g., 0.5, 0.75)
+        tx_power_dbm: Optional TX power to set (e.g., 20.0, 30.0)
+
+    Returns:
+        Modified topology config as dict
+
+    Example:
+        >>> # Test with BPSK for low-SINR scenarios
+        >>> config = modify_topology_mcs(
+        ...     source_yaml=Path("examples/for_tests/shared_sionna_sinr_triangle/network.yaml"),
+        ...     modulation="bpsk",
+        ...     fec_type="ldpc",
+        ...     fec_code_rate=0.5,
+        ... )
+        >>> # Write to temp file and deploy
+        >>> with open("/tmp/test_bpsk.yaml", "w") as f:
+        ...     yaml.dump(config, f)
+    """
+    import yaml
+
+    # Load source YAML
+    with open(source_yaml, "r") as f:
+        config = yaml.safe_load(f)
+
+    # Modify all wireless interfaces
+    if "topology" in config and "nodes" in config["topology"]:
+        for node_name, node_config in config["topology"]["nodes"].items():
+            if "interfaces" in node_config:
+                for iface_name, iface_config in node_config["interfaces"].items():
+                    if "wireless" in iface_config:
+                        wireless = iface_config["wireless"]
+
+                        # Update MCS parameters
+                        if modulation is not None:
+                            wireless["modulation"] = modulation
+                        if fec_type is not None:
+                            wireless["fec_type"] = fec_type
+                        if fec_code_rate is not None:
+                            wireless["fec_code_rate"] = fec_code_rate
+                        if tx_power_dbm is not None:
+                            wireless["rf_power_dbm"] = tx_power_dbm
+
+    logger.info(f"Modified topology MCS settings: modulation={modulation}, fec={fec_type}, rate={fec_code_rate}, tx_power={tx_power_dbm} dBm")
+
+    return config
