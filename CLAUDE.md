@@ -116,7 +116,7 @@ network.yaml -> EmulationController -> Containerlab (Docker containers + veth li
 | Interface Config | Per-interface on node | Each interface has either `wireless` or `fixed_netem` params |
 | netem Access | sudo nsenter | Required for container network namespace access |
 | Container Naming | `clab-<lab>-<node>` | Follows containerlab convention for consistency |
-| SINR Computation | ACLR-filtered | IEEE 802.11ax-2021 spectral mask for frequency-selective interference |
+| SINR Computation | Co-channel + multi-frequency | Interference modeling with MAC protocol integration; ACLR filtering for adjacent channels |
 | Interference Model | Linear power summation | Sum interference powers in linear domain (watts) before SINR calculation |
 | TDMA Support | Probability-weighted | Interference scaled by transmission probability (slot duty cycle) |
 | Antenna Config | antenna_pattern XOR antenna_gain_dbi | Mutual exclusion prevents double-counting Sionna RT pattern gains |
@@ -303,9 +303,9 @@ The channel server (`uv run sine channel-server`) exposes REST endpoints:
 
 ### SINR Endpoint: `POST /compute/sinr`
 
-Computes Signal-to-Interference-plus-Noise Ratio for multi-node scenarios with ACLR filtering:
+Computes Signal-to-Interference-plus-Noise Ratio for multi-node scenarios with co-channel interference and MAC protocol integration.
 
-**Request**:
+**Request** (co-channel scenario):
 ```json
 {
   "receiver": {
@@ -329,7 +329,7 @@ Computes Signal-to-Interference-plus-Noise Ratio for multi-node scenarios with A
       "position": [10, 17.3, 1],
       "tx_power_dbm": 20.0,
       "antenna_gain_dbi": 2.15,
-      "frequency_hz": 5.28e9,
+      "frequency_hz": 5.18e9,
       "bandwidth_hz": 80e6,
       "is_active": true,
       "tx_probability": 0.2
@@ -341,24 +341,27 @@ Computes Signal-to-Interference-plus-Noise Ratio for multi-node scenarios with A
 **Response**:
 ```json
 {
-  "sinr_db": 24.5,
+  "sinr_db": 22.3,
   "snr_db": 28.3,
   "signal_power_dbm": -65.2,
   "noise_power_dbm": -93.5,
-  "interference_power_dbm": -89.8,
+  "interference_power_dbm": -87.5,
   "interference_terms": [
     {
       "node_name": "node3",
-      "power_dbm": -89.8,
-      "path_loss_db": 72.0,
-      "frequency_separation_hz": 100e6,
-      "aclr_db": 40.0
+      "power_dbm": -87.5,
+      "path_loss_db": 68.0,
+      "frequency_separation_hz": 0,
+      "aclr_db": 0.0
     }
   ]
 }
 ```
 
-**ACLR Filtering**: Automatically applies IEEE 802.11ax spectral mask based on frequency separation and bandwidth.
+**Key features**:
+- **Co-channel interference**: Same frequency (5.18 GHz) for all nodes
+- **MAC protocol integration**: `tx_probability` weights interference (20% transmission duty cycle)
+- **ACLR filtering**: Automatically applied for multi-frequency scenarios (adjacent-channel interference)
 
 ### Debug Endpoint: `POST /debug/paths`
 
@@ -525,7 +528,7 @@ Ray Tracing → CIR (paths) → Path Loss → SNR
                          Single-Link           Multi-Node
                               │                     │
                               ↓                     ↓
-                    BER (from modulation)    SINR (with ACLR)
+                    BER (from modulation)    SINR (interference)
                               │                     │
                               ↓                     ↓
                     BLER (with FEC gain)   BER (from SINR)
@@ -705,8 +708,9 @@ SiNE uses **theoretical AWGN (frequency-flat) BER formulas** based purely on SNR
 
 ### SINR/Interference
 - **Requires `topology.enable_sinr: true`** in network.yaml (explicit opt-in, see [SINR Configuration](#sinr-configuration))
-- When enabled, multi-node scenarios compute SINR with IEEE 802.11ax-2021 ACLR filtering
-- Orthogonal channels (>120 MHz separation for 80 MHz BW) are automatically filtered
+- When enabled, models co-channel interference from active nodes on the same frequency
+- MAC protocols (TDMA, CSMA/CA) control interference probability via transmission scheduling
+- ACLR filtering automatically applied for multi-frequency scenarios (adjacent-channel interference)
 
 ## Scene Visualization
 
