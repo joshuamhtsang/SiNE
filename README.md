@@ -112,13 +112,14 @@ Define the physical environment for ray tracing using Mitsuba XML format:
 
 ### 2. Create Network Topology (`network.yaml`)
 
-Define nodes, interfaces, and links (from [network.yaml](./examples/adaptive_mcs_wifi6/network.yaml)):
+Define nodes, interfaces, and links:
 
 ```yaml
 name: my-network
-prefix: clab
 
 topology:
+  enable_sinr: false
+
   scene:
     file: scenes/vacuum.xml
 
@@ -132,14 +133,17 @@ topology:
         eth1:
           ip_address: 192.168.1.1/24
           wireless:
-            position: {x: 0, y: 0, z: 1}
+            position:
+              x: 0
+              y: 0
+              z: 1
             frequency_ghz: 5.18
             bandwidth_mhz: 80
             rf_power_dbm: 20.0
-            rx_sensitivity_dbm: -82.0
-            antenna_pattern: iso  # Or use antenna_gain_dbi: 2.15 for custom gain
+            rx_sensitivity_dbm: -80.0
+            antenna_pattern: hw_dipole
             polarization: V
-            mcs_table: examples/common_data/wifi6_mcs.csv  # Or use fixed modulation/fec
+            mcs_table: examples/common_data/wifi6_mcs.csv
             mcs_hysteresis_db: 2.0
 
     node2:
@@ -151,28 +155,30 @@ topology:
         eth1:
           ip_address: 192.168.1.2/24
           wireless:
-            position: {x: 20, y: 0, z: 1}
+            position:
+              x: 20
+              y: 0
+              z: 1
             frequency_ghz: 5.18
             bandwidth_mhz: 80
             rf_power_dbm: 20.0
-            rx_sensitivity_dbm: -82.0
-            antenna_pattern: iso
+            rx_sensitivity_dbm: -80.0
+            antenna_pattern: hw_dipole
             polarization: V
             mcs_table: examples/common_data/wifi6_mcs.csv
             mcs_hysteresis_db: 2.0
 
   links:
     - endpoints: [node1:eth1, node2:eth1]
-
-  channel_server: "http://localhost:8000"
-  mobility_poll_ms: 100
 ```
 
 **Key points:**
+- Set `enable_sinr: true` for multi-node interference modeling (SINR), or `false` for SNR-only mode
 - Each interface must have either `wireless` or `fixed_netem` parameters
 - Both endpoints of a link must be the same type
 - Scene file required for wireless links only
 - Antenna config: Specify **either** `antenna_pattern` (for Sionna RT patterns like `iso`/`hw_dipole`) **or** `antenna_gain_dbi` (for custom gain values), never both. When using `antenna_gain_dbi`, Sionna automatically uses the `iso` pattern (0 dBi) and adds your explicit gain during SNR calculation to prevent double-counting.
+- MCS config: Specify **either** `mcs_table` (for adaptive MCS) **or** fixed `modulation`/`fec_type`/`fec_code_rate` parameters
 
 See `examples/for_user/` for reference topologies.
 
@@ -219,31 +225,91 @@ See [examples/for_user/adaptive_mcs_wifi6/](examples/for_user/adaptive_mcs_wifi6
 
 ### SINR and Interference Modeling
 
-SiNE computes Signal-to-Interference-plus-Noise Ratio (SINR) for multi-node scenarios with:
+SiNE computes Signal-to-Interference-plus-Noise Ratio (SINR) for multi-node scenarios. When `enable_sinr: true` is set, SiNE automatically models interference from all other nodes in the topology.
 
-- **Co-channel interference**: Same frequency, full interference
+**How it works:**
+1. Set `enable_sinr: true` at the topology level
+2. SiNE identifies all other nodes as potential interferers for each link
+3. Interference is computed based on frequency separation and node activity
+4. ACLR filtering applied for adjacent-channel scenarios
+
+**Interference features:**
+- **Co-channel interference**: Same frequency, full interference power
 - **Adjacent-channel interference**: ACLR filtering based on IEEE 802.11ax-2021 spectral mask
 - **MAC protocol support**: TDMA and CSMA/CA with configurable transmission probabilities
+- **Per-interface control**: Use `is_active: false` to disable specific radios
+
+**Basic SINR configuration:**
 
 ```yaml
-# Example: TDMA with interference
-interferers:
-  - node_name: node3
-    tx_probability: 0.2  # Transmits 20% of time (1/5 slots)
-    is_active: true
-    frequency_ghz: 5.28  # Adjacent channel
+topology:
+  enable_sinr: true
+
+  nodes:
+    node1:
+      interfaces:
+        eth1:
+          wireless:
+            frequency_ghz: 5.18
+            bandwidth_mhz: 80
+            rf_power_dbm: 20.0
+            antenna_pattern: hw_dipole
+
+    node2:
+      interfaces:
+        eth1:
+          wireless:
+            frequency_ghz: 5.18
+            bandwidth_mhz: 80
+            rf_power_dbm: 20.0
+            antenna_pattern: hw_dipole
+
+    node3:
+      interfaces:
+        eth1:
+          wireless:
+            frequency_ghz: 5.28
+            bandwidth_mhz: 80
+            rf_power_dbm: 20.0
+            antenna_pattern: hw_dipole
+            is_active: true
 ```
 
-**ACLR filtering:**
+SiNE automatically determines that:
+- For link node1↔node2: node3 is an interferer (adjacent channel, ACLR filtered)
+- For link node1↔node3: node2 is an interferer (adjacent channel, ACLR filtered)
+- For link node2↔node3: node1 is an interferer (adjacent channel, ACLR filtered)
+
+**ACLR filtering** (for 80 MHz bandwidth):
 - 0-40 MHz separation (< BW/2): 0 dB (co-channel)
-- 40-80 MHz: 20-28 dB (transition band)
-- 80-120 MHz: 40 dB (1st adjacent)
-- >120 MHz: 45 dB (orthogonal)
+- 40-80 MHz: 20-28 dB (transition band, linear interpolation)
+- 80-120 MHz: 40 dB (1st adjacent channel)
+- >120 MHz: 45 dB (orthogonal, filtered out)
+
+**MAC protocol integration:**
+
+For TDMA scenarios, interference is weighted by transmission probability:
+
+```yaml
+nodes:
+  node1:
+    interfaces:
+      eth1:
+        wireless:
+          frequency_ghz: 5.18
+          tdma:
+            enabled: true
+            slot_probability: 0.2
+```
+
+SiNE uses `slot_probability` (TDMA) to weight interference power. Without MAC configuration, worst-case interference (100% transmission) is assumed.
 
 **SINR Examples** (see `examples/for_tests/`):
-- MANET with interference: `shared_sionna_sinr_triangle/` and `shared_sionna_sinr_asymmetric/`
-- TDMA scheduling: `shared_sionna_sinr_tdma-rr/` and `shared_sionna_sinr_tdma-fixed/`
-- CSMA/CA with interference: `shared_sionna_sinr_csma/`
+- Basic MANET: `shared_sionna_sinr_triangle/` (equilateral, co-channel)
+- Asymmetric MANET: `shared_sionna_sinr_asymmetric/` (variable link quality)
+- Round-robin TDMA: `shared_sionna_sinr_tdma-rr/` (equal slot allocation)
+- Fixed TDMA: `shared_sionna_sinr_tdma-fixed/` (custom scheduling)
+- CSMA/CA: `shared_sionna_sinr_csma/` (carrier sensing with interference)
 
 **Note**: SINR examples are in `examples/for_tests/` for integration testing. User-friendly versions for `examples/for_user/` are planned for future releases.
 

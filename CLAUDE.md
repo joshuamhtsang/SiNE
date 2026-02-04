@@ -1355,24 +1355,49 @@ Where:
 
 ## MAC Protocol Support
 
-SiNE supports modeling interference for different Medium Access Control (MAC) protocols through transmission probability parameters.
+SiNE supports modeling interference for different Medium Access Control (MAC) protocols. MAC configuration is specified per-interface in the wireless parameters and affects both throughput (slot ownership) and interference probability when SINR is enabled.
 
 ### TDMA (Time Division Multiple Access)
 
-For TDMA networks, each node transmits during assigned time slots. Interference is weighted by the probability that each interferer is transmitting when the receiver is listening.
+For TDMA networks, each node transmits during assigned time slots. When `enable_sinr: true`, interference is weighted by the probability that each interferer is transmitting when the receiver is listening.
 
-**Configuration**:
+**Configuration** (per-interface):
 ```yaml
-# In topology YAML or via API
-interferers:
-  - node_name: node2
-    tx_probability: 0.2  # Transmits 20% of the time (1 out of 5 slots)
-    is_active: true
+topology:
+  enable_sinr: true  # Enable interference modeling
+
+nodes:
+  node1:
+    interfaces:
+      eth1:
+        wireless:
+          frequency_ghz: 5.18
+          bandwidth_mhz: 80
+          rf_power_dbm: 20.0
+          antenna_pattern: hw_dipole
+          modulation: 64qam
+          fec_type: ldpc
+          fec_code_rate: 0.667
+
+          tdma:
+            enabled: true
+            frame_duration_ms: 10.0
+            num_slots: 10
+            slot_assignment_mode: fixed
+            fixed_slot_map:
+              node1: [0, 1, 2]  # Owns 30% of slots
+              node2: [3, 4, 5]
+              node3: [6, 7, 8, 9]
 ```
 
+**How it works**:
+- SiNE automatically calculates `tx_probability` from slot ownership (e.g., 3/10 slots = 0.3)
+- Throughput is scaled by slot ownership regardless of `enable_sinr` setting
+- When SINR enabled: Interference weighted by `tx_probability`
+
 **Examples**:
-- `sinr_tdma_roundrobin/`: 5-node round-robin TDMA (each node gets 20% of slots)
-- `sinr_tdma_fixed/`: Custom TDMA schedule with different slot allocations
+- `shared_sionna_sinr_tdma-rr/`: Round-robin TDMA (equal slot allocation)
+- `shared_sionna_sinr_tdma-fixed/`: Custom TDMA schedule with different slot allocations
 
 **SINR Formula**:
 ```
@@ -1381,19 +1406,39 @@ SINR = Signal / (Noise + Σ(Interference_i × tx_probability_i))
 
 ### CSMA/CA (Carrier Sense Multiple Access with Collision Avoidance)
 
-For CSMA/CA networks (e.g., WiFi), nodes sense the channel before transmitting. Transmission probability depends on network load and contention.
+For CSMA/CA networks (e.g., WiFi), nodes sense the channel before transmitting. Transmission probability depends on network load, contention, and carrier sensing.
 
-**Configuration**:
+**Configuration** (per-interface):
 ```yaml
-interferers:
-  - node_name: node2
-    tx_probability: 0.3  # Estimated channel occupancy
-    is_active: true
+topology:
+  enable_sinr: true
+
+nodes:
+  node1:
+    interfaces:
+      eth1:
+        wireless:
+          frequency_ghz: 5.18
+          bandwidth_mhz: 80
+          rf_power_dbm: 20.0
+          antenna_pattern: iso
+          mcs_table: examples/common_data/wifi6_mcs.csv
+
+          csma:
+            enabled: true
+            carrier_sense_range_multiplier: 2.5  # CS range = 2.5× comm range
+            traffic_load: 0.3                    # 30% duty cycle
+            communication_range_snr_threshold_db: 40.4
 ```
 
+**How it works**:
+- SiNE calculates `tx_probability` based on traffic load and carrier sensing
+- Hidden node problem modeled: Nodes outside CS range contribute full interference
+- Carrier sense range computed from communication range and multiplier
+
 **Examples**:
-- `csma_mcs_test/`: CSMA/CA with adaptive MCS
-- `sinr_csma/`: Multi-node CSMA with interference-aware MCS
+- `shared_sionna_snr_csma-mcs/`: CSMA/CA with adaptive MCS (SNR mode)
+- `shared_sionna_sinr_csma/`: CSMA with interference-aware MCS (SINR mode)
 
 **Considerations**:
 - Hidden node problem: Adjacent-channel interferers may not be detected by carrier sensing
@@ -1402,18 +1447,43 @@ interferers:
 
 ### Active/Inactive Nodes
 
-Nodes can be dynamically enabled/disabled in interference calculations:
+Individual wireless interfaces can be enabled/disabled for interference calculations:
 
+**Configuration** (per-interface):
 ```yaml
-interferers:
-  - node_name: node3
-    is_active: false  # Powered off or out of range
+nodes:
+  node1:
+    interfaces:
+      eth1:
+        wireless:
+          is_active: true   # Participates in interference (default)
+          frequency_ghz: 5.18
+
+  node2:
+    interfaces:
+      eth1:
+        wireless:
+          is_active: false  # Excluded from interference calculations
+          frequency_ghz: 5.18
+
+  dual_band_node:
+    interfaces:
+      eth1:
+        wireless:
+          is_active: true   # 5 GHz active
+          frequency_ghz: 5.18
+      eth2:
+        wireless:
+          is_active: false  # 2.4 GHz disabled
+          frequency_ghz: 2.4
 ```
 
-This allows modeling:
+**Use cases**:
 - Node failures or power-saving modes
 - Dynamic network topologies
 - Duty-cycled sensor networks
+- Band-specific power management
+- Listen-only monitoring nodes (RX active, TX disabled)
 
 ## SINR Configuration
 
