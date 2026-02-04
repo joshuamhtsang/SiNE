@@ -225,19 +225,19 @@ See [examples/for_user/adaptive_mcs_wifi6/](examples/for_user/adaptive_mcs_wifi6
 
 ### SINR and Interference Modeling
 
-SiNE computes Signal-to-Interference-plus-Noise Ratio (SINR) for multi-node scenarios. When `enable_sinr: true` is set, SiNE automatically models interference from all other nodes in the topology.
+SiNE computes Signal-to-Interference-plus-Noise Ratio (SINR) for multi-node scenarios. When `enable_sinr: true` is set, SiNE automatically models co-channel interference from all other active nodes in the topology.
 
 **How it works:**
 1. Set `enable_sinr: true` at the topology level
-2. SiNE identifies all other nodes as potential interferers for each link
-3. Interference is computed based on frequency separation and node activity
-4. ACLR filtering applied for adjacent-channel scenarios
+2. SiNE identifies all other active nodes as potential interferers for each link
+3. Interference power is computed based on path loss and node activity
+4. MAC protocols (TDMA, CSMA/CA) control interference probability via transmission scheduling
 
 **Interference features:**
-- **Co-channel interference**: Same frequency, full interference power
-- **Adjacent-channel interference**: ACLR filtering based on IEEE 802.11ax-2021 spectral mask
-- **MAC protocol support**: TDMA and CSMA/CA with configurable transmission probabilities
+- **Co-channel interference modeling**: Nodes on the same frequency interfere with each other
+- **MAC protocol support**: TDMA and CSMA/CA control when nodes transmit, reducing interference impact
 - **Per-interface control**: Use `is_active: false` to disable specific radios
+- **Throughput modeling**: MAC protocols affect both interference probability and achievable throughput
 
 **Basic SINR configuration:**
 
@@ -268,27 +268,25 @@ topology:
       interfaces:
         eth1:
           wireless:
-            frequency_ghz: 5.28
+            frequency_ghz: 5.18
             bandwidth_mhz: 80
             rf_power_dbm: 20.0
             antenna_pattern: hw_dipole
             is_active: true
 ```
 
-SiNE automatically determines that:
-- For link node1↔node2: node3 is an interferer (adjacent channel, ACLR filtered)
-- For link node1↔node3: node2 is an interferer (adjacent channel, ACLR filtered)
-- For link node2↔node3: node1 is an interferer (adjacent channel, ACLR filtered)
-
-**ACLR filtering** (for 80 MHz bandwidth):
-- 0-40 MHz separation (< BW/2): 0 dB (co-channel)
-- 40-80 MHz: 20-28 dB (transition band, linear interpolation)
-- 80-120 MHz: 40 dB (1st adjacent channel)
-- >120 MHz: 45 dB (orthogonal, filtered out)
+In this co-channel scenario, SiNE automatically determines:
+- For link node1↔node2: node3 is an interferer (same frequency)
+- For link node1↔node3: node2 is an interferer (same frequency)
+- For link node2↔node3: node1 is an interferer (same frequency)
 
 **MAC protocol integration:**
 
-For TDMA scenarios, interference is weighted by transmission probability:
+MAC protocols control **when** nodes transmit, which affects both interference probability and network throughput.
+
+**TDMA (Time Division Multiple Access):**
+
+Nodes transmit in assigned time slots, reducing interference by avoiding simultaneous transmissions:
 
 ```yaml
 nodes:
@@ -299,10 +297,37 @@ nodes:
           frequency_ghz: 5.18
           tdma:
             enabled: true
-            slot_probability: 0.2
+            slot_probability: 0.2  # Transmits 20% of the time
 ```
 
-SiNE uses `slot_probability` (TDMA) to weight interference power. Without MAC configuration, worst-case interference (100% transmission) is assumed.
+- **Interference impact**: Interference weighted by `slot_probability` (20% transmission → 20% interference contribution)
+- **Throughput impact**: Node's achievable throughput is PHY rate × slot_probability
+- **Benefit**: Coordinated scheduling reduces collisions and interference
+
+**CSMA/CA (Carrier Sense Multiple Access with Collision Avoidance):**
+
+Nodes sense the channel before transmitting, avoiding simultaneous transmissions on busy channels:
+
+```yaml
+nodes:
+  node1:
+    interfaces:
+      eth1:
+        wireless:
+          frequency_ghz: 5.18
+          csma:
+            enabled: true
+            traffic_load: 0.3  # 30% duty cycle
+            carrier_sense_range_multiplier: 2.5
+```
+
+- **Interference impact**: Transmission probability based on carrier sensing and network load
+- **Throughput impact**: Contention and backoff reduce achievable throughput
+- **Benefit**: Distributed coordination, no centralized scheduling needed
+
+**No MAC protocol (worst-case):**
+
+Without TDMA or CSMA/CA configuration, SiNE assumes worst-case interference (100% transmission probability). This represents scenarios where nodes transmit continuously (e.g., beacon-heavy networks, saturated channels).
 
 **SINR Examples** (see `examples/for_tests/`):
 - Basic MANET: `shared_sionna_sinr_triangle/` (equilateral, co-channel)
