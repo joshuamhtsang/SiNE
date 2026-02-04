@@ -486,6 +486,13 @@ Where:
 SINR_TDMA = Signal / (Noise + Σ(Interference_i × slot_probability_i))
 ```
 
+**Antenna Gains in SINR**: Both signal and interference calculations include configured antenna gains. When using Sionna RT antenna patterns (iso, hw_dipole, etc.), the pattern gains are embedded in the path coefficients. When using explicit `antenna_gain_dbi`, the gain value is applied to both transmit and receive paths. This ensures SINR computations accurately reflect the antenna configuration.
+
+**Example Impact**: With `hw_dipole` antennas (2.16 dBi gain each):
+- Signal path gain: +2.16 dBi (TX) + 2.16 dBi (RX) = +4.32 dB
+- Interference path gain: +2.16 dBi (interferer TX) + 2.16 dBi (receiver RX) = +4.32 dB
+- Net effect: Antenna gains affect both signal and interference equally in symmetric scenarios
+
 ### 7. Netem Parameter Conversion
 
 The final PER (or SINR for multi-node scenarios) is converted to netem parameters:
@@ -697,7 +704,8 @@ SiNE uses **theoretical AWGN (frequency-flat) BER formulas** based purely on SNR
 - **Antenna Polarization**: `"V"`, `"H"`, `"VH"`, `"cross"`
 
 ### SINR/Interference
-- Multi-node scenarios automatically compute SINR with IEEE 802.11ax-2021 ACLR filtering
+- **Requires `topology.enable_sinr: true`** in network.yaml (explicit opt-in, see [SINR Configuration](#sinr-configuration))
+- When enabled, multi-node scenarios compute SINR with IEEE 802.11ax-2021 ACLR filtering
 - Orthogonal channels (>120 MHz separation for 80 MHz BW) are automatically filtered
 
 ## Scene Visualization
@@ -1794,6 +1802,31 @@ Examples:
 - Grep-friendly: `grep -r "p2p_sionna" tests/`
 - Self-documenting names
 - No nested directory navigation
+
+### Test Examples Organization (Phase 5 Refactoring - 2026-02-03)
+
+**Flat Naming Pattern**: `examples/for_tests/` uses self-documenting flat structure:
+
+```
+<topology>_<engine>_<interference>_<description>
+```
+
+**Examples**:
+- `p2p_fallback_snr_vacuum/` - Point-to-point, fallback engine, SNR, free space
+- `p2p_sionna_snr_two-rooms/` - Point-to-point, Sionna, SNR, indoor
+- `shared_sionna_snr_triangle/` - Shared bridge, Sionna, SNR, 3-node
+- `shared_sionna_sinr_triangle/` - Shared bridge, Sionna, SINR, equilateral triangle
+- `shared_sionna_sinr_asymmetric/` - Shared bridge, Sionna, SINR, asymmetric triangle
+
+**Benefits**:
+- Grep-friendly: `grep -r "p2p_sionna" examples/for_tests/`
+- Self-documenting: topology, engine, and interference mode in directory name
+- No nested navigation
+
+**Deleted Directories** (Phase 5):
+- `tests/e2e/` - Removed (unused placeholder)
+- `tests/performance/` - Removed (unused placeholder)
+- `tests/regression/` - Removed (unused placeholder)
 
 ### When to Write Each Type
 

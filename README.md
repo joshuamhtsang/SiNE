@@ -240,12 +240,12 @@ interferers:
 - 80-120 MHz: 40 dB (1st adjacent)
 - >120 MHz: 45 dB (orthogonal)
 
-**Examples coming soon:**
-- MANET with interference (to be added to `examples/for_user/`)
-- TDMA scheduling (to be added to `examples/for_user/`)
-- CSMA/CA with interference (to be added to `examples/for_user/`)
+**SINR Examples** (see `examples/for_tests/`):
+- MANET with interference: `shared_sionna_sinr_triangle/` and `shared_sionna_sinr_asymmetric/`
+- TDMA scheduling: `shared_sionna_sinr_tdma-rr/` and `shared_sionna_sinr_tdma-fixed/`
+- CSMA/CA with interference: `shared_sionna_sinr_csma/`
 
-For now, see test examples in `examples/for_tests/` for SINR demonstrations.
+**Note**: SINR examples are in `examples/for_tests/` for integration testing. User-friendly versions for `examples/for_user/` are planned for future releases.
 
 ### MANET Support
 
@@ -273,7 +273,9 @@ topology:
 
 **Example coming soon** (to be added to `examples/for_user/`).
 
-For now, see test examples in `examples/for_tests/shared_sionna_snr_triangle/` for a shared bridge MANET demonstration.
+See test examples in `examples/for_tests/`:
+- **SNR only**: `shared_sionna_snr_triangle/` (3-node MANET without interference)
+- **SINR enabled**: `shared_sionna_sinr_triangle/` and `shared_sionna_sinr_asymmetric/` (with interference modeling)
 
 ### Node Mobility
 
@@ -361,17 +363,26 @@ uv run python utilities/calc_spectralefficiency.py examples/vacuum_20m/network.y
 
 ## Example Topologies
 
+### User Examples (`examples/for_user/`)
+
 | Example | Description | Features |
 |---------|-------------|----------|
-| [vacuum_20m/](examples/vacuum_20m/) | Baseline free-space (2 nodes, 20m) | Basic wireless |
-| [fixed_link/](examples/fixed_link/) | Fixed netem parameters | No RF, direct params |
-| [two_rooms/](examples/two_rooms/) | Indoor multipath | 2 rooms with doorway |
-| [adaptive_mcs_wifi6/](examples/adaptive_mcs_wifi6/) | WiFi 6 MCS selection | SNR-based adaptive MCS |
-| [manet_triangle_shared/](examples/manet_triangle_shared/) | 3-node MANET | Shared bridge, broadcast |
-| [manet_triangle_shared_sinr/](examples/manet_triangle_shared_sinr/) | 3-node MANET with SINR | Interference modeling |
-| [sinr_tdma_roundrobin/](examples/sinr_tdma_roundrobin/) | Round-robin TDMA | Equal slot allocation |
-| [sinr_csma/](examples/sinr_csma/) | CSMA with SINR | Carrier sensing, MCS |
+| [adaptive_mcs_wifi6/](examples/for_user/adaptive_mcs_wifi6/) | WiFi 6 MCS selection | SNR-based adaptive MCS |
+| [fixed_link/](examples/for_user/fixed_link/) | Fixed netem parameters | No RF, direct params |
 | [mobility/](examples/for_user/mobility/) | Node mobility | Dynamic position updates, API examples |
+
+### Test Examples (`examples/for_tests/`)
+
+Key integration test examples (see directory for complete list):
+
+| Example | Description | Features |
+|---------|-------------|----------|
+| [p2p_fallback_snr_vacuum/](examples/for_tests/p2p_fallback_snr_vacuum/) | Baseline free-space (2 nodes, 20m) | Basic wireless, fallback engine |
+| [p2p_sionna_snr_two-rooms/](examples/for_tests/p2p_sionna_snr_two-rooms/) | Indoor multipath | 2 rooms with doorway, Sionna RT |
+| [shared_sionna_snr_triangle/](examples/for_tests/shared_sionna_snr_triangle/) | 3-node MANET | Shared bridge, broadcast, SNR-only |
+| [shared_sionna_sinr_asymmetric/](examples/for_tests/shared_sionna_sinr_asymmetric/) | 3-node MANET with SINR | Asymmetric geometry, positive SINR |
+| [shared_sionna_sinr_tdma-rr/](examples/for_tests/shared_sionna_sinr_tdma-rr/) | Round-robin TDMA | Equal slot allocation, SINR |
+| [shared_sionna_sinr_csma/](examples/for_tests/shared_sionna_sinr_csma/) | CSMA with SINR | Carrier sensing, MCS, interference |
 
 ## Channel Server API
 
