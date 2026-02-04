@@ -320,8 +320,10 @@ class EmulationController:
                 "rx_gain_dbi": rx_params.antenna_gain_dbi if rx_params.antenna_gain_dbi is not None else 0.0,
                 "antenna_pattern": tx_params.antenna_pattern,
                 "polarization": tx_params.polarization,
-                "frequency_hz": tx_params.frequency_hz,
+                "frequency_hz": tx_params.frequency_hz,  # TX frequency
                 "bandwidth_hz": tx_params.bandwidth_hz,
+                "rx_frequency_hz": rx_params.frequency_hz,  # RX frequency (for ACLR)
+                "rx_bandwidth_hz": rx_params.bandwidth_hz,  # RX bandwidth (for ACLR)
                 "noise_figure_db": rx_params.noise_figure_db,
                 "modulation": (
                     tx_params.modulation if not tx_params.uses_adaptive_mcs else None
@@ -375,6 +377,8 @@ class EmulationController:
                         "bandwidth_hz": link_requests[0]["bandwidth_hz"],
                     },
                     "links": link_requests,
+                    "enable_sinr": self.config.topology.enable_sinr,
+                    "active_states": self._build_active_states_dict(),
                 },
             )
             if response.status_code != 200:
@@ -550,8 +554,10 @@ class EmulationController:
                 "rx_gain_dbi": wireless2.antenna_gain_dbi if wireless2.antenna_gain_dbi is not None else 0.0,
                 "antenna_pattern": wireless1.antenna_pattern.value,
                 "polarization": wireless1.polarization.value,
-                "frequency_hz": wireless1.frequency_hz,
+                "frequency_hz": wireless1.frequency_hz,  # TX frequency
                 "bandwidth_hz": wireless1.bandwidth_hz,
+                "rx_frequency_hz": wireless2.frequency_hz,  # RX frequency (for ACLR)
+                "rx_bandwidth_hz": wireless2.bandwidth_hz,  # RX bandwidth (for ACLR)
                 "noise_figure_db": wireless2.noise_figure_db,  # Receiver's NF
             }
 
@@ -607,8 +613,10 @@ class EmulationController:
                 "rx_gain_dbi": wireless1.antenna_gain_dbi if wireless1.antenna_gain_dbi is not None else 0.0,
                 "antenna_pattern": wireless2.antenna_pattern.value,
                 "polarization": wireless2.polarization.value,
-                "frequency_hz": wireless2.frequency_hz,
+                "frequency_hz": wireless2.frequency_hz,  # TX frequency
                 "bandwidth_hz": wireless2.bandwidth_hz,
+                "rx_frequency_hz": wireless1.frequency_hz,  # RX frequency (for ACLR)
+                "rx_bandwidth_hz": wireless1.bandwidth_hz,  # RX bandwidth (for ACLR)
                 "noise_figure_db": wireless1.noise_figure_db,  # Receiver's NF
             }
 
@@ -661,6 +669,8 @@ class EmulationController:
                         "bandwidth_hz": link_requests[0]["bandwidth_hz"],
                     },
                     "links": link_requests,
+                    "enable_sinr": self.config.topology.enable_sinr,
+                    "active_states": self._build_active_states_dict(),
                 },
             )
             response.raise_for_status()
@@ -675,6 +685,22 @@ class EmulationController:
             f"Updated {len(results.get('results', []))} wireless link(s) in "
             f"{results.get('computation_time_ms', 0):.1f}ms"
         )
+
+    def _build_active_states_dict(self) -> dict[str, bool]:
+        """Build active states dictionary from interface configurations.
+
+        Returns:
+            Dictionary mapping "node:interface" to is_active boolean.
+            Example: {"node1:eth1": True, "node1:eth2": False, "node2:eth1": True}
+        """
+        active_states = {}
+        for node_name, node_config in self.config.topology.nodes.items():
+            if node_config.interfaces:
+                for iface_name, iface_config in node_config.interfaces.items():
+                    if iface_config.wireless:
+                        key = f"{node_name}:{iface_name}"
+                        active_states[key] = iface_config.wireless.is_active
+        return active_states
 
     async def _apply_fixed_link(self, link) -> None:
         """Apply fixed netem parameters for a link."""
@@ -1075,6 +1101,7 @@ class EmulationController:
         summary = {
             "topology_name": self.config.name if self.config else "Unknown",
             "mode": "shared_bridge" if is_shared_bridge else "point_to_point",
+            "sinr_enabled": self.config.topology.enable_sinr if self.config else False,
             "containers": [],
             "links": [],
         }

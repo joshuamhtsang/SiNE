@@ -1,0 +1,165 @@
+# TDMA Fixed Slots Example - Military MANET with Orthogonal Slots
+#
+# This example demonstrates the TDMA statistical model with pre-assigned slots.
+# Key features:
+# - Fixed slot assignment: Each node owns specific slots (deterministic)
+# - Orthogonal slots: No collisions between nodes
+# - Throughput reduction: Rate limited by slot ownership fraction
+# - Zero interference: SINR = SNR (orthogonal time slots)
+
+name: sinr-tdma-fixed
+
+topology:
+  enable_sinr: true  # Explicit SINR computation with interference
+
+  # Scene configuration (required for wireless links)
+  scene:
+    file: scenes/vacuum.xml
+
+  # Shared bridge for MANET broadcast domain
+  shared_bridge:
+    enabled: true
+    name: tdma-fixed-br0
+    nodes: [node1, node2, node3]
+    interface_name: eth1
+
+  nodes:
+    # Node 1: Military radio with TDMA (owns slots 0, 5)
+    node1:
+      kind: linux
+      image: alpine:latest
+      exec:
+        - apk add --no-cache iproute2 iputils iperf3
+      interfaces:
+        eth1:
+          ip_address: 192.168.100.1/24
+          wireless:
+            # Physical layer
+            position: {x: 0, y: 0, z: 1}
+            frequency_ghz: 5.18          # Same PHY as WiFi for comparison
+            bandwidth_mhz: 80            # 80 MHz channel
+            rf_power_dbm: 20             # 100 mW
+            rx_sensitivity_dbm: -80.0    # WiFi 6 receiver sensitivity
+
+            # Antenna configuration
+            antenna_pattern: iso  # Isotropic (0.0 dBi)
+            polarization: V
+
+            # Fixed modulation (64-QAM, same as CSMA example for comparison)
+            modulation: 64qam
+            fec_type: ldpc
+            fec_code_rate: 0.667
+
+            # MAC layer: TDMA model (fixed slots)
+            tdma:
+              enabled: true
+              frame_duration_ms: 10.0      # 10ms TDMA frame (military typical)
+              num_slots: 10                # 10 slots per frame
+              slot_assignment_mode: fixed
+              fixed_slot_map:
+                node1: [0, 5]              # Node1 owns slots 0 and 5 (20% of frame)
+                node2: [1, 6]              # Node2 owns slots 1 and 6 (20% of frame)
+                node3: [2, 7]              # Node3 owns slots 2 and 7 (20% of frame)
+
+    # Node 2: Military radio
+    node2:
+      kind: linux
+      image: alpine:latest
+      exec:
+        - apk add --no-cache iproute2 iputils iperf3
+      interfaces:
+        eth1:
+          ip_address: 192.168.100.2/24
+          wireless:
+            position: {x: 100, y: 0, z: 1}  # 100m from node1
+            frequency_ghz: 5.18
+            bandwidth_mhz: 80
+            rf_power_dbm: 20
+            rx_sensitivity_dbm: -80.0    # WiFi 6 receiver sensitivity
+            antenna_pattern: iso  # Isotropic (0.0 dBi)
+            polarization: V
+            modulation: 64qam
+            fec_type: ldpc
+            fec_code_rate: 0.667
+
+            # Same TDMA config
+            tdma:
+              enabled: true
+              frame_duration_ms: 10.0
+              num_slots: 10
+              slot_assignment_mode: fixed
+              fixed_slot_map:
+                node1: [0, 5]
+                node2: [1, 6]
+                node3: [2, 7]
+
+    # Node 3: Military radio
+    node3:
+      kind: linux
+      image: alpine:latest
+      exec:
+        - apk add --no-cache iproute2 iputils iperf3
+      interfaces:
+        eth1:
+          ip_address: 192.168.100.3/24
+          wireless:
+            position: {x: 50, y: 86.6, z: 1}  # Equilateral triangle, 100m sides
+            frequency_ghz: 5.18
+            bandwidth_mhz: 80
+            rf_power_dbm: 20
+            rx_sensitivity_dbm: -80.0    # WiFi 6 receiver sensitivity
+            antenna_pattern: iso  # Isotropic (0.0 dBi)
+            polarization: V
+            modulation: 64qam
+            fec_type: ldpc
+            fec_code_rate: 0.667
+
+            tdma:
+              enabled: true
+              frame_duration_ms: 10.0
+              num_slots: 10
+              slot_assignment_mode: fixed
+              fixed_slot_map:
+                node1: [0, 5]
+                node2: [1, 6]
+                node3: [2, 7]
+
+# Expected Behavior:
+#
+# TDMA fixed slots model:
+# 1. Deterministic interference: Zero (orthogonal slots)
+# 2. SINR = SNR (no concurrent transmissions)
+# 3. Throughput: 20% of PHY rate (2 slots out of 10)
+#
+# Throughput calculation:
+# - PHY rate: ~480 Mbps (80 MHz, 64-QAM, rate-2/3 LDPC, same as WiFi)
+# - Slot ownership: 2/10 = 20%
+# - Effective throughput: 480 × 0.2 = 96 Mbps
+#
+# Compare to CSMA:
+# - CSMA throughput: ~400-450 Mbps (80-90% spatial reuse)
+# - TDMA throughput: ~90-96 Mbps (20% slot ownership)
+# - CSMA is ~4-5× faster for same PHY
+#
+# But TDMA provides:
+# - Zero collisions (deterministic)
+# - Guaranteed QoS (fixed slots)
+# - Low latency variance (predictable slot timing)
+# - Anti-jam resilience (can use unjammed slots)
+#
+# Deployment:
+#   sudo $(which uv) run sine deploy examples/sinr_tdma_fixed/network.yaml
+#
+# Expected output:
+#   Link: node1→node2 [wireless, TDMA fixed]
+#     SNR: 35.2 dB | SINR: 35.2 dB | Interferers: 0/2 deterministic (orthogonal slots)
+#     Expected interference: -inf dBm (zero collision probability)
+#     Delay: 0.33 ms | Jitter: 0.00 ms | Loss: 0.00% | Rate: 96 Mbps
+#     Throughput: 19.2 Mbps (20% slot ownership)
+#
+# Test throughput:
+#   docker exec clab-sinr-tdma-fixed-node1 ip addr add 192.168.100.1/24 dev eth1
+#   docker exec clab-sinr-tdma-fixed-node2 ip addr add 192.168.100.2/24 dev eth1
+#   docker exec clab-sinr-tdma-fixed-node1 iperf3 -s &
+#   docker exec clab-sinr-tdma-fixed-node2 iperf3 -c 192.168.100.1 -t 30
+#   # Expected: ~90-95 Mbps (95-99% of 96 Mbps theoretical)

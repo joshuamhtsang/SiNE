@@ -81,8 +81,13 @@ disallow_untyped_defs = true
 asyncio_mode = "auto"
 testpaths = ["tests"]
 markers = [
-    "integration: marks tests as integration tests (require deployed containers)",
-    "slow: marks tests as slow running (>5 seconds)",
+    "integration: marks tests as integration tests (require deployed containers and sudo)",
+    "slow: marks tests as slow running (5-60 seconds)",
+    "very_slow: marks tests as very slow (>60 seconds)",
+    "sionna: marks tests requiring Sionna/GPU",
+    "fallback: marks tests using fallback engine",
+    "gpu_memory_8gb: marks tests requiring 8GB+ GPU memory",
+    "gpu_memory_16gb: marks tests requiring 16GB+ GPU memory",
 ]
 
 [dependency-groups]

@@ -182,7 +182,7 @@ This design iteration illustrates that **AI code assistants are powerful tools b
 
 
 
-# Lessons Learned 2 - Containerlab bridge modes
+## Lessons Learned 2 - Containerlab bridge modes
 
 Claude assumed that containerlab could create bridges, but it cannot. According to documentation here:
 
@@ -197,7 +197,7 @@ I suggested going for option 2, as this results in the network.yaml being a comp
 
 
 
-# Lesson Learned 3 - Creating good integration tests is key to shaping the development
+## Lesson Learned 3 - Creating good integration tests is key to shaping the development
 
 It was really hard getting SINR and MAC-level protocols (CSMA, TDMA) feature implemented, need lots of steering. But having integration tests codified the human requirements for SiNE. Claude Code goes around in circles due to catch-22's (around CSMA and carrier sensing range), Claude is not great at spatial reasoning.  Some trouble with getting MCS to work with SINR, but before ACLR is implemented etc. I suggested lienar topology to bring out hidden node problem better.
 
@@ -205,8 +205,38 @@ I discovered errors in how 'ip route add' was being used my SiNE (it was using h
 
 Claude Code is so smart, but occasionally make basic errors.  "So smart, but so stupid, like Jan in Love is Blind".
 
+**Update 2026-02-03**:  I suggested a complete overhaul of the examples/ and tests/ directories to help clearly expose areas that have test coverage and those that don't.  Suggested that the key emulation paramters are:
+
+- shared bridge or point-to-point
+- engine: sionna or fallback
+- SNR or SINR
+
+This actually helped identify that SINR was not computed unless a MAC protocol like csma or tdma was defined in the network.yaml. This led to the need to implemented SINR explicitly.
 
 
 ## Lesson Learned 4 - Building SiNE sometimes involved building unphysical emulations first, to keep initial complexity down
 
 When implementing SINR, SiNE initially assumed that at a receiver, all peer nodes contributed interference regardless of the lack of bandwidth overlap.  Only later was ACLR incorporated, and the MAC level protocols like TDMA and CSMA had to be implemented first.
+
+## Lesson Learned 5 - Claude wanted to attach the 'is_active' qualifier to the node
+
+... but I suggested it should attach to the wireless interface instead:
+
+~~~
+You're absolutely right - placing is_active at the interface level (on WirelessParams) is more accurate and flexible than at the node level.
+
+Why Interface-Level is Better
+Real-world scenarios that require per-interface control:
+
+Dual-band radios: A node with 2.4 GHz (eth1) and 5 GHz (eth2) may disable one band to save power while keeping the other active
+Directional antennas: One interface actively beamforming, another idle
+Hardware failures: One radio fails while others remain operational
+Regulatory compliance: One frequency band disabled due to local restrictions
+Adaptive radio selection: Dynamically enable/disable radios based on channel conditions
+
+Consistency with existing schema:
+
+Wireless parameters (position, frequency, power, antenna) are already per-interface
+Each interface can have different MCS tables, modulation schemes
+Position is per-interface (supports antenna arrays at different physical locations)
+~~~

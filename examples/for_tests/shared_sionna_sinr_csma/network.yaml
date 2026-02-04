@@ -1,0 +1,136 @@
+# CSMA/CA Model Example - WiFi 6 MANET with Carrier Sensing
+#
+# This example demonstrates the CSMA/CA statistical model for WiFi MANETs.
+# Key features:
+# - Carrier sense range: 2.5× communication range (WiFi typical)
+# - Traffic load: 30% duty cycle (default)
+# - Spatial reuse: Nodes beyond CS range can transmit concurrently
+# - Hidden node modeling: Nodes beyond CS range may collide
+
+name: sinr-csma-wifi6
+
+topology:
+  enable_sinr: true  # Explicit SINR computation with interference
+
+  # Scene configuration (required for wireless links)
+  scene:
+    file: scenes/vacuum.xml
+
+  # Shared bridge for MANET broadcast domain
+  shared_bridge:
+    enabled: true
+    name: csma-br0
+    nodes: [node1, node2, node3]
+    interface_name: eth1
+
+  nodes:
+    # Node 1: WiFi 6 AP with CSMA/CA
+    node1:
+      kind: linux
+      image: alpine:latest
+      exec:
+        - apk add --no-cache iproute2 iputils iperf3
+      interfaces:
+        eth1:
+          ip_address: 192.168.100.1/24
+          wireless:
+            # Physical layer
+            position: {x: 0, y: 0, z: 1}
+            frequency_ghz: 5.18          # WiFi 6 channel 36
+            bandwidth_mhz: 80            # 80 MHz channel
+            rf_power_dbm: 20             # 100 mW (typical WiFi 6)
+
+            # Antenna configuration
+            antenna_pattern: iso         # Isotropic (omnidirectional, 0.0 dBi)
+            polarization: V              # Vertical polarization
+
+            # Modulation (adaptive MCS or fixed)
+            # Option 1: Adaptive MCS (recommended)
+            mcs_table: examples/common_data/wifi6_mcs.csv
+            mcs_hysteresis_db: 2.0
+
+            # Option 2: Fixed modulation (uncomment to use)
+            # modulation: 64qam
+            # fec_type: ldpc
+            # fec_code_rate: 0.667
+
+            # MAC layer: CSMA/CA model
+            csma:
+              enabled: true                          # Enable CSMA/CA model
+              carrier_sense_range_multiplier: 2.5    # CS range = 2.5× communication range
+              traffic_load: 0.3                      # 30% duty cycle (default)
+
+    # Node 2: WiFi 6 client
+    node2:
+      kind: linux
+      image: alpine:latest
+      exec:
+        - apk add --no-cache iproute2 iputils iperf3
+      interfaces:
+        eth1:
+          ip_address: 192.168.100.2/24
+          wireless:
+            position: {x: 100, y: 0, z: 1}  # 100m from node1
+            frequency_ghz: 5.18
+            bandwidth_mhz: 80
+            rf_power_dbm: 20
+            antenna_pattern: iso  # Isotropic (0.0 dBi)
+            polarization: V
+            mcs_table: examples/common_data/wifi6_mcs.csv
+            mcs_hysteresis_db: 2.0
+
+            # Same CSMA config
+            csma:
+              enabled: true
+              carrier_sense_range_multiplier: 2.5
+              traffic_load: 0.3
+
+    # Node 3: WiFi 6 client (potential hidden node scenario)
+    node3:
+      kind: linux
+      image: alpine:latest
+      exec:
+        - apk add --no-cache iproute2 iputils iperf3
+      interfaces:
+        eth1:
+          ip_address: 192.168.100.3/24
+          wireless:
+            position: {x: 50, y: 86.6, z: 1}  # Equilateral triangle, 100m sides
+            frequency_ghz: 5.18
+            bandwidth_mhz: 80
+            rf_power_dbm: 20
+            antenna_pattern: iso  # Isotropic (0.0 dBi)
+            polarization: V
+            mcs_table: examples/common_data/wifi6_mcs.csv
+            mcs_hysteresis_db: 2.0
+
+            csma:
+              enabled: true
+              carrier_sense_range_multiplier: 2.5
+              traffic_load: 0.3
+
+# Expected Behavior:
+#
+# CSMA/CA model captures:
+# 1. Spatial reuse: Nodes beyond carrier sense range can transmit concurrently
+# 2. Hidden node problem: Nodes beyond CS range from each other may collide
+# 3. Realistic throughput: ~80-90% of rate (vs ~40-50% for all-TX worst-case)
+#
+# Carrier sense range calculation:
+# - Assume communication range ≈ 150m (at SNR threshold ~15 dB for 64-QAM)
+# - CS range = 150m × 2.5 = 375m
+# - All nodes within 100m of each other → all within CS range
+# - Result: Nodes defer when others transmit (no hidden nodes in this topology)
+#
+# Expected SINR:
+# - Link node1→node2: SINR ≈ SNR - 3 dB (one interferer, 30% duty cycle)
+# - With CSMA: Higher SINR than all-TX (spatial reuse benefit)
+#
+# Deployment:
+#   sudo $(which uv) run sine deploy examples/sinr_csma_example.yaml
+#
+# Expected output:
+#   Link: node1→node2 [wireless, CSMA model]
+#     SNR: 35.2 dB | SINR: 32.1 dB | Hidden nodes: 0/2 interferers
+#     Expected interference: -5.2 dBm (vs -2.3 dBm all-TX)
+#     Delay: 0.33 ms | Jitter: 0.00 ms | Loss: 0.01% | Rate: 480 Mbps

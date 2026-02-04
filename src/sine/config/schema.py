@@ -8,9 +8,12 @@ This module defines the schema for network.yaml files that describe:
 - Channel server settings
 """
 
+import logging
 from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
+
+logger = logging.getLogger(__name__)
 
 
 class ModulationType(str, Enum):
@@ -243,6 +246,16 @@ class WirelessParams(BaseModel):
     )
 
     position: Position
+
+    is_active: bool = Field(
+        default=True,
+        description=(
+            "Whether this wireless interface is active for transmission. "
+            "When false: interface does not contribute interference in SINR calculations. "
+            "Use for: powered-off radios, sleep modes, hardware failures, disabled frequency bands. "
+            "Allows per-interface control for multi-radio nodes (e.g., disable 2.4 GHz, keep 5 GHz active)."
+        )
+    )
 
     @model_validator(mode="after")
     def validate_mcs_or_fixed(self) -> "WirelessParams":
@@ -550,6 +563,15 @@ class TopologyDefinition(BaseModel):
         ge=10,
         le=10000,
     )
+    enable_sinr: bool = Field(
+        default=False,
+        description=(
+            "Enable SINR (Signal-to-Interference-plus-Noise Ratio) computation. "
+            "When true: compute interference from all active transmitters "
+            "(weighted by MAC model tx_probability if configured). "
+            "When false: compute SNR only (no interference modeling)."
+        )
+    )
 
     @field_validator("links", mode="after")
     @classmethod
@@ -642,6 +664,33 @@ class TopologyDefinition(BaseModel):
             self._validate_shared_bridge()
 
         return self
+
+    @model_validator(mode="after")
+    def validate_sinr_and_mac_model(self) -> "TopologyDefinition":
+        """Validate enable_sinr configuration and MAC model interaction."""
+        has_mac_model = self._has_mac_model_configured()
+
+        # Warn when MAC model configured without SINR
+        if has_mac_model and self.enable_sinr is False:
+            logger.warning(
+                "\nWARNING: MAC model (CSMA/TDMA) configured with enable_sinr=false.\n"
+                "Interference modeling: DISABLED (SNR computed, not SINR).\n"
+                "Throughput effects: ENABLED (TDMA slot multiplier, CSMA metadata).\n"
+                "Set 'topology.enable_sinr: true' to enable interference modeling.\n"
+            )
+
+        return self
+
+    def _has_mac_model_configured(self) -> bool:
+        """Check if any wireless interface has CSMA or TDMA configured."""
+        for node_config in self.nodes.values():
+            if node_config.interfaces:
+                for iface_config in node_config.interfaces.values():
+                    if iface_config.wireless:
+                        w = iface_config.wireless
+                        if (w.csma and w.csma.enabled) or (w.tdma and w.tdma.enabled):
+                            return True
+        return False
 
     def _validate_shared_bridge(self) -> None:
         """Validate shared bridge configuration."""

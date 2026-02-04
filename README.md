@@ -77,29 +77,27 @@ uv sync --extra dev
 
 ## Quick Start
 
-Deploy a simple two-node wireless network (20m separation, free space):
+Deploy a simple two-node wireless network with adaptive MCS (WiFi 6):
 
 ```bash
 # Terminal 1: Start channel server
 uv run sine channel-server
 
 # Terminal 2: Deploy emulation
-sudo $(which uv) run sine deploy examples/vacuum_20m/network.yaml
+sudo $(which uv) run sine deploy examples/for_user/adaptive_mcs_wifi6/network.yaml
 
 # Terminal 3: Test throughput
-docker exec -it clab-vacuum-20m-node1 iperf3 -s
+docker exec -it clab-adaptive-mcs-wifi6-node1 iperf3 -s
 # In another terminal:
-docker exec -it clab-vacuum-20m-node2 iperf3 -c 192.168.1.1
+docker exec -it clab-adaptive-mcs-wifi6-node2 iperf3 -c 192.168.1.1
 
-# Expected: ~188 Mbps (emulated 80 MHz WiFi6 with 64-QAM, LDPC rate-1/2)
+# Expected: Variable rate based on SNR (typical: 150-500 Mbps depending on selected MCS)
 
 # Cleanup
-uv run sine destroy examples/vacuum_20m/network.yaml
+uv run sine destroy examples/for_user/adaptive_mcs_wifi6/network.yaml
 ```
 
 **Why sudo?** Network emulation requires sudo to access container network namespaces via `nsenter` and configure `tc` with netem. Without sudo, links operate at full bandwidth (~10+ Gbps) without wireless emulation.
-
-**Troubleshooting:** If iperf3 shows 10+ Gbps, run `./examples/vacuum_20m/check_netem.sh` to diagnose.
 
 ## Creating Your Own Network
 
@@ -176,7 +174,7 @@ topology:
 - Scene file required for wireless links only
 - Antenna config: Specify **either** `antenna_pattern` (for Sionna RT patterns like `iso`/`hw_dipole`) **or** `antenna_gain_dbi` (for custom gain values), never both. When using `antenna_gain_dbi`, Sionna automatically uses the `iso` pattern (0 dBi) and adds your explicit gain during SNR calculation to prevent double-counting.
 
-See `examples/` for reference topologies.
+See `examples/for_user/` for reference topologies.
 
 ### 3. Deploy and Test
 
@@ -204,7 +202,7 @@ Automatically select optimal modulation and coding based on SNR (WiFi 6 style):
 interfaces:
   eth1:
     wireless:
-      mcs_table: examples/wifi6_adaptive/data/wifi6_mcs.csv
+      mcs_table: examples/common_data/wifi6_mcs.csv
       mcs_hysteresis_db: 2.0  # Prevent rapid switching
       # ... other params
 ```
@@ -217,7 +215,7 @@ mcs_index,modulation,code_rate,min_snr_db,fec_type,bandwidth_mhz
 # ... up to 1024-QAM
 ```
 
-See [examples/adaptive_mcs_wifi6/](examples/adaptive_mcs_wifi6/) for complete example.
+See [examples/for_user/adaptive_mcs_wifi6/](examples/for_user/adaptive_mcs_wifi6/) for complete example.
 
 ### SINR and Interference Modeling
 
@@ -242,10 +240,12 @@ interferers:
 - 80-120 MHz: 40 dB (1st adjacent)
 - >120 MHz: 45 dB (orthogonal)
 
-See examples:
-- [examples/manet_triangle_shared_sinr/](examples/manet_triangle_shared_sinr/) - MANET with interference
-- [examples/sinr_tdma_roundrobin/](examples/sinr_tdma_roundrobin/) - TDMA scheduling
-- [examples/sinr_csma/](examples/sinr_csma/) - CSMA/CA with interference
+**Examples coming soon:**
+- MANET with interference (to be added to `examples/for_user/`)
+- TDMA scheduling (to be added to `examples/for_user/`)
+- CSMA/CA with interference (to be added to `examples/for_user/`)
+
+For now, see test examples in `examples/for_tests/` for SINR demonstrations.
 
 ### MANET Support
 
@@ -271,26 +271,13 @@ topology:
     interface_name: eth1
 ```
 
-See [examples/manet_triangle_shared/](examples/manet_triangle_shared/) for complete example.
+**Example coming soon** (to be added to `examples/for_user/`).
+
+For now, see test examples in `examples/for_tests/shared_sionna_snr_triangle/` for a shared bridge MANET demonstration.
 
 ### Node Mobility
 
-Real-time position updates with automatic channel recomputation:
-
-```bash
-# Deploy with mobility API
-sudo $(which uv) run sine deploy --enable-mobility examples/two_rooms/network.yaml
-
-# Update node position via API
-curl -X POST http://localhost:8001/api/mobility/update \
-     -H "Content-Type: application/json" \
-     -d '{"node": "node2", "x": 10.0, "y": 5.0, "z": 1.5}'
-
-# Or use mobility scripts
-uv run python examples/mobility/linear_movement.py node2 30.0 1.0 1.0 30.0 40.0 1.0 1.0
-```
-
-See [examples/mobility/README.md](examples/mobility/README.md) for details.
+SiNE supports real-time position updates with automatic channel recomputation. See [CLAUDE.md](CLAUDE.md) for detailed mobility API documentation and examples.
 
 ### Real-Time Visualization
 
@@ -384,7 +371,7 @@ uv run python utilities/calc_spectralefficiency.py examples/vacuum_20m/network.y
 | [manet_triangle_shared_sinr/](examples/manet_triangle_shared_sinr/) | 3-node MANET with SINR | Interference modeling |
 | [sinr_tdma_roundrobin/](examples/sinr_tdma_roundrobin/) | Round-robin TDMA | Equal slot allocation |
 | [sinr_csma/](examples/sinr_csma/) | CSMA with SINR | Carrier sensing, MCS |
-| [mobility/](examples/mobility/) | Movement scripts | Dynamic position updates |
+| [mobility/](examples/for_user/mobility/) | Node mobility | Dynamic position updates, API examples |
 
 ## Channel Server API
 
