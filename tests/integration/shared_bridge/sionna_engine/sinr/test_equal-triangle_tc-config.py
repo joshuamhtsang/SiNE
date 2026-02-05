@@ -10,6 +10,7 @@ from tests.integration.fixtures import (
     channel_server,
     deploy_topology,
     destroy_topology,
+    extract_container_prefix,
     stop_deployment_process,
     verify_tc_config,
 )
@@ -30,7 +31,7 @@ def test_sinr_triangle_tc_config(channel_server, examples_for_tests: Path):
     Note: Expected rate is 192 Mbps (64-QAM, rate-0.5 LDPC, 80 MHz BW).
     With SINR, the rate should be similar to SNR case if SINR is high enough.
     """
-    yaml_path = examples_for_tests / "shared_sionna_sinr_triangle" / "network.yaml"
+    yaml_path = examples_for_tests / "shared_sionna_sinr_equal-triangle" / "network.yaml"
 
     if not yaml_path.exists():
         pytest.skip(f"Example not found: {yaml_path}")
@@ -41,9 +42,12 @@ def test_sinr_triangle_tc_config(channel_server, examples_for_tests: Path):
     try:
         deploy_process = deploy_topology(str(yaml_path))
 
+        # Get container prefix from topology
+        container_prefix = extract_container_prefix(str(yaml_path))
+
         # Test node1 -> node2 link
         result = verify_tc_config(
-            container_prefix="clab-manet-triangle-shared-sinr",
+            container_prefix=container_prefix,
             node="node1",
             interface="eth1",
             dst_node_ip="192.168.100.2",
@@ -75,7 +79,7 @@ def test_sinr_triangle_multiple_destinations(channel_server, examples_for_tests:
     - Rate limits are computed independently for each link
     - All-to-all links are correctly configured
     """
-    yaml_path = examples_for_tests / "shared_sionna_sinr_triangle" / "network.yaml"
+    yaml_path = examples_for_tests / "shared_sionna_sinr_equal-triangle" / "network.yaml"
 
     if not yaml_path.exists():
         pytest.skip(f"Example not found: {yaml_path}")
@@ -86,9 +90,12 @@ def test_sinr_triangle_multiple_destinations(channel_server, examples_for_tests:
     try:
         deploy_process = deploy_topology(str(yaml_path))
 
+        # Get container prefix from topology
+        container_prefix = extract_container_prefix(str(yaml_path))
+
         # Test node1 -> node2 link
         result_12 = verify_tc_config(
-            container_prefix="clab-manet-triangle-shared-sinr",
+            container_prefix=container_prefix,
             node="node1",
             interface="eth1",
             dst_node_ip="192.168.100.2",
@@ -98,7 +105,7 @@ def test_sinr_triangle_multiple_destinations(channel_server, examples_for_tests:
 
         # Test node1 -> node3 link
         result_13 = verify_tc_config(
-            container_prefix="clab-manet-triangle-shared-sinr",
+            container_prefix=container_prefix,
             node="node1",
             interface="eth1",
             dst_node_ip="192.168.100.3",

@@ -9,6 +9,7 @@ from tests.integration.fixtures import (
     channel_server,
     deploy_topology,
     destroy_topology,
+    extract_container_prefix,
     stop_deployment_process,
     verify_route_to_cidr,
 )
@@ -30,7 +31,7 @@ def test_asymmetric_nf_routing(channel_server, examples_for_tests: Path):
     - node2: 10.0 dB (cheap IoT)
     - node3: 5.0 dB (high-end BS)
     """
-    yaml_path = examples_for_tests / "shared_sionna_snr_asymmetric-nf" / "network.yaml"
+    yaml_path = examples_for_tests / "shared_sionna_snr_equal-triangle-varied-nf" / "network.yaml"
 
     if not yaml_path.exists():
         pytest.skip(f"Example not found: {yaml_path}")
@@ -41,10 +42,13 @@ def test_asymmetric_nf_routing(channel_server, examples_for_tests: Path):
     try:
         deploy_process = deploy_topology(str(yaml_path))
 
+        # Get container prefix from topology
+        container_prefix = extract_container_prefix(str(yaml_path))
+
         # Verify routes on all nodes regardless of NF
         for node in ["node1", "node2", "node3"]:
             verify_route_to_cidr(
-                "clab-manet-triangle-shared-asymmetric-nf",
+                container_prefix,
                 node,
                 "192.168.100.0/24",
                 "eth1"

@@ -10,6 +10,7 @@ from tests.integration.fixtures import (
     channel_server,
     deploy_topology,
     destroy_topology,
+    extract_container_prefix,
     stop_deployment_process,
     verify_ping_connectivity,
     run_iperf3_test,
@@ -20,7 +21,7 @@ from sine.config.loader import load_topology
 @pytest.mark.integration
 @pytest.mark.slow
 @pytest.mark.sionna
-def test_asymmetric_nf_connectivity(channel_server, examples_for_tests: Path):
+def test_asymmetric_nf_connectivity(channel_server, examples_for_tests: Path, bridge_node_ips: dict):
     """Test ping connectivity with heterogeneous noise figures.
 
     Validates that:
@@ -33,7 +34,7 @@ def test_asymmetric_nf_connectivity(channel_server, examples_for_tests: Path):
     - node2: 10.0 dB NF (cheap IoT radio)
     - node3: 5.0 dB NF (high-end base station)
     """
-    yaml_path = examples_for_tests / "shared_sionna_snr_asymmetric-nf" / "network.yaml"
+    yaml_path = examples_for_tests / "shared_sionna_snr_equal-triangle-varied-nf" / "network.yaml"
 
     if not yaml_path.exists():
         pytest.skip(f"Example not found: {yaml_path}")
@@ -56,13 +57,10 @@ def test_asymmetric_nf_connectivity(channel_server, examples_for_tests: Path):
     try:
         deploy_process = deploy_topology(str(yaml_path))
 
-        node_ips = {
-            "node1": "192.168.100.1",
-            "node2": "192.168.100.2",
-            "node3": "192.168.100.3",
-        }
+        # Get container prefix from topology
+        container_prefix = extract_container_prefix(str(yaml_path))
 
-        verify_ping_connectivity("clab-manet-triangle-shared-asymmetric-nf", node_ips)
+        verify_ping_connectivity(container_prefix, bridge_node_ips)
 
     finally:
         stop_deployment_process(deploy_process)
@@ -86,7 +84,7 @@ def test_asymmetric_nf_throughput(channel_server, examples_for_tests: Path):
     Note: Actual SNR difference = node2_NF - node1_NF = 10 - 7 = 3 dB
     This may or may not affect throughput depending on MCS thresholds.
     """
-    yaml_path = examples_for_tests / "shared_sionna_snr_asymmetric-nf" / "network.yaml"
+    yaml_path = examples_for_tests / "shared_sionna_snr_equal-triangle-varied-nf" / "network.yaml"
 
     if not yaml_path.exists():
         pytest.skip(f"Example not found: {yaml_path}")
@@ -137,7 +135,7 @@ def test_asymmetric_nf_throughput(channel_server, examples_for_tests: Path):
 @pytest.mark.integration
 @pytest.mark.slow
 @pytest.mark.sionna
-def test_asymmetric_nf_bidirectional_snr(channel_server, examples_for_tests: Path):
+def test_asymmetric_nf_bidirectional_snr(channel_server, examples_for_tests: Path, bridge_node_ips: dict):
     """Test asymmetric SNR with heterogeneous noise figures.
 
     Validates that:
@@ -150,7 +148,7 @@ def test_asymmetric_nf_bidirectional_snr(channel_server, examples_for_tests: Pat
       node2→node1: SNR = Y dB (uses node1's NF = 7 dB)
     Where Y - X ≈ 3 dB (NF difference)
     """
-    yaml_path = examples_for_tests / "shared_sionna_snr_asymmetric-nf" / "network.yaml"
+    yaml_path = examples_for_tests / "shared_sionna_snr_equal-triangle-varied-nf" / "network.yaml"
 
     if not yaml_path.exists():
         pytest.skip(f"Example not found: {yaml_path}")
@@ -161,14 +159,11 @@ def test_asymmetric_nf_bidirectional_snr(channel_server, examples_for_tests: Pat
     try:
         deploy_process = deploy_topology(str(yaml_path))
 
-        # Verify basic connectivity (which confirms SNR is sufficient)
-        node_ips = {
-            "node1": "192.168.100.1",
-            "node2": "192.168.100.2",
-            "node3": "192.168.100.3",
-        }
+        # Get container prefix from topology
+        container_prefix = extract_container_prefix(str(yaml_path))
 
-        verify_ping_connectivity("clab-manet-triangle-shared-asymmetric-nf", node_ips)
+        # Verify basic connectivity (which confirms SNR is sufficient)
+        verify_ping_connectivity(container_prefix, bridge_node_ips)
 
     finally:
         stop_deployment_process(deploy_process)

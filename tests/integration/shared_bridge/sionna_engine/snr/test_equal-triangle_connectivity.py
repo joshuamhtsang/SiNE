@@ -26,6 +26,7 @@ from tests.integration.fixtures import (
     channel_server,
     deploy_topology,
     destroy_topology,
+    extract_container_prefix,
     run_iperf3_test,
     stop_deployment_process,
     verify_ping_connectivity,
@@ -40,13 +41,13 @@ __all__ = ["channel_server"]
 
 @pytest.mark.integration
 @pytest.mark.slow
-def test_manet_shared_bridge_connectivity(channel_server, examples_for_tests: Path):
+def test_manet_shared_bridge_connectivity(channel_server, examples_for_tests: Path, bridge_node_ips: dict):
     """
     Test MANET shared bridge connectivity.
 
     Expected: All nodes can ping each other (all-to-all connectivity).
     """
-    yaml_path = examples_for_tests / "shared_sionna_snr_triangle" / "network.yaml"
+    yaml_path = examples_for_tests / "shared_sionna_snr_equal-triangle" / "network.yaml"
 
     if not yaml_path.exists():
         pytest.skip(f"Example not found: {yaml_path}")
@@ -59,14 +60,10 @@ def test_manet_shared_bridge_connectivity(channel_server, examples_for_tests: Pa
         # Deploy (returns background process)
         deploy_process = deploy_topology(str(yaml_path))
 
-        # Test connectivity (IPs already configured by deployment)
-        node_ips = {
-            "node1": "192.168.100.1",
-            "node2": "192.168.100.2",
-            "node3": "192.168.100.3",
-        }
+        # Get container prefix from topology
+        container_prefix = extract_container_prefix(str(yaml_path))
 
-        verify_ping_connectivity("clab-manet-triangle-shared", node_ips)
+        verify_ping_connectivity(container_prefix, bridge_node_ips)
 
     finally:
         # Stop deployment process
@@ -77,14 +74,14 @@ def test_manet_shared_bridge_connectivity(channel_server, examples_for_tests: Pa
 
 @pytest.mark.integration
 @pytest.mark.slow
-def test_manet_shared_bridge_throughput(channel_server, examples_for_tests: Path):
+def test_manet_shared_bridge_throughput(channel_server, examples_for_tests: Path, bridge_node_ips: dict):
     """
     Test MANET shared bridge throughput.
 
     Expected: Throughput matches configured rate (~192 Mbps for 64-QAM, 80 MHz, rate-1/2).
     PHY rate = 80 MHz × 6 bits/symbol × 0.5 code_rate × 0.8 efficiency = 192 Mbps
     """
-    yaml_path = examples_for_tests / "shared_sionna_snr_triangle" / "network.yaml"
+    yaml_path = examples_for_tests / "shared_sionna_snr_equal-triangle" / "network.yaml"
 
     if not yaml_path.exists():
         pytest.skip(f"Example not found: {yaml_path}")
@@ -97,12 +94,15 @@ def test_manet_shared_bridge_throughput(channel_server, examples_for_tests: Path
         # Deploy (returns background process)
         deploy_process = deploy_topology(str(yaml_path))
 
+        # Get container prefix from topology
+        container_prefix = extract_container_prefix(str(yaml_path))
+
         # Run iperf3 test (using the shared bridge IPs already configured)
         throughput = run_iperf3_test(
-            container_prefix="clab-manet-triangle-shared",
+            container_prefix=container_prefix,
             server_node="node1",
             client_node="node2",
-            client_ip="192.168.100.1",  # Use existing bridge IP
+            client_ip=bridge_node_ips["node1"],
         )
 
         # Validate: 93-100% of ~192 Mbps (64-QAM, 80 MHz, rate-1/2)
@@ -122,13 +122,13 @@ def test_manet_shared_bridge_throughput(channel_server, examples_for_tests: Path
 
 @pytest.mark.integration
 @pytest.mark.slow
-def test_manet_shared_bridge_bidirectional_throughput(channel_server, examples_for_tests: Path):
+def test_manet_shared_bridge_bidirectional_throughput(channel_server, examples_for_tests: Path, bridge_node_ips: dict):
     """
     Test bidirectional throughput in MANET shared bridge.
 
     Expected: Both directions achieve similar throughput (symmetric links).
     """
-    yaml_path = examples_for_tests / "shared_sionna_snr_triangle" / "network.yaml"
+    yaml_path = examples_for_tests / "shared_sionna_snr_equal-triangle" / "network.yaml"
 
     if not yaml_path.exists():
         pytest.skip(f"Example not found: {yaml_path}")
@@ -141,20 +141,23 @@ def test_manet_shared_bridge_bidirectional_throughput(channel_server, examples_f
         # Deploy (returns background process)
         deploy_process = deploy_topology(str(yaml_path))
 
+        # Get container prefix from topology
+        container_prefix = extract_container_prefix(str(yaml_path))
+
         # Test node1 → node2
         throughput_1_to_2 = run_iperf3_test(
-            container_prefix="clab-manet-triangle-shared",
+            container_prefix=container_prefix,
             server_node="node1",
             client_node="node2",
-            client_ip="192.168.100.1"
+            client_ip=bridge_node_ips["node1"]
         )
 
         # Test node2 → node1
         throughput_2_to_1 = run_iperf3_test(
-            container_prefix="clab-manet-triangle-shared",
+            container_prefix=container_prefix,
             server_node="node2",
             client_node="node1",
-            client_ip="192.168.100.2"
+            client_ip=bridge_node_ips["node2"]
         )
 
         # Both directions should be within 10% of each other

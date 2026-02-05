@@ -27,6 +27,7 @@ from tests.integration.fixtures import (
     channel_server,
     deploy_topology,
     destroy_topology,
+    extract_container_prefix,
     stop_deployment_process,
     verify_tc_config,
 )
@@ -46,7 +47,7 @@ def test_manet_shared_bridge_tc_config(channel_server, examples_for_tests: Path)
 
     Expected: Per-destination TC with HTB classes, netem qdiscs, and flower filters.
     """
-    yaml_path = examples_for_tests / "shared_sionna_snr_triangle" / "network.yaml"
+    yaml_path = examples_for_tests / "shared_sionna_snr_equal-triangle" / "network.yaml"
 
     if not yaml_path.exists():
         pytest.skip(f"Example not found: {yaml_path}")
@@ -59,6 +60,9 @@ def test_manet_shared_bridge_tc_config(channel_server, examples_for_tests: Path)
         # Deploy (returns background process)
         deploy_process = deploy_topology(str(yaml_path))
 
+        # Get container prefix from topology
+        container_prefix = extract_container_prefix(str(yaml_path))
+
         # Expected parameters (from network.yaml: 64-QAM, 80 MHz, rate-1/2 LDPC)
         # PHY rate = 80 MHz × 6 bits/symbol × 0.5 code_rate × 0.8 efficiency = 192 Mbps
         expected_rate = 192.0
@@ -69,7 +73,7 @@ def test_manet_shared_bridge_tc_config(channel_server, examples_for_tests: Path)
         # Verify TC config for node1 → node2
         print("\nVerifying node1 → node2 TC configuration...")
         result = verify_tc_config(
-            container_prefix="clab-manet-triangle-shared",
+            container_prefix=container_prefix,
             node="node1",
             interface="eth1",
             dst_node_ip="192.168.100.2",
@@ -90,7 +94,7 @@ def test_manet_shared_bridge_tc_config(channel_server, examples_for_tests: Path)
         # Verify TC config for node1 → node3
         print("\nVerifying node1 → node3 TC configuration...")
         result = verify_tc_config(
-            container_prefix="clab-manet-triangle-shared",
+            container_prefix=container_prefix,
             node="node1",
             interface="eth1",
             dst_node_ip="192.168.100.3",
@@ -110,7 +114,7 @@ def test_manet_shared_bridge_tc_config(channel_server, examples_for_tests: Path)
         # Verify TC config for node2 → node1
         print("\nVerifying node2 → node1 TC configuration...")
         result = verify_tc_config(
-            container_prefix="clab-manet-triangle-shared",
+            container_prefix=container_prefix,
             node="node2",
             interface="eth1",
             dst_node_ip="192.168.100.1",
@@ -161,7 +165,7 @@ def test_shared_bridge_bidirectional_asymmetric_nf(channel_server, examples_for_
     - Packets to node3 (192.168.100.3): Uses node3's NF=5dB → lower loss
     """
     # Use the pre-created test topology file
-    yaml_path = examples_for_tests / "shared_sionna_snr_asymmetric-nf" / "network.yaml"
+    yaml_path = examples_for_tests / "shared_sionna_snr_equal-triangle-varied-nf" / "network.yaml"
 
     if not yaml_path.exists():
         pytest.skip(f"Example not found: {yaml_path}")

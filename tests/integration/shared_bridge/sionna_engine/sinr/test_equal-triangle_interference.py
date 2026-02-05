@@ -10,6 +10,7 @@ from tests.integration.fixtures import (
     channel_server,
     deploy_topology,
     destroy_topology,
+    extract_container_prefix,
     stop_deployment_process,
     verify_ping_connectivity,
 )
@@ -19,7 +20,7 @@ from sine.config.loader import load_topology
 @pytest.mark.integration
 @pytest.mark.slow
 @pytest.mark.sionna
-def test_sinr_triangle_interference(channel_server, examples_for_tests: Path):
+def test_sinr_triangle_interference(channel_server, examples_for_tests: Path, bridge_node_ips: dict):
     """Test SINR computation with 3-node triangle topology.
 
     Validates that:
@@ -28,7 +29,7 @@ def test_sinr_triangle_interference(channel_server, examples_for_tests: Path):
     - All-to-all connectivity works
     - SINR computation includes interference from other nodes
     """
-    yaml_path = examples_for_tests / "shared_sionna_sinr_triangle" / "network.yaml"
+    yaml_path = examples_for_tests / "shared_sionna_sinr_equal-triangle" / "network.yaml"
 
     if not yaml_path.exists():
         pytest.skip(f"Example not found: {yaml_path}")
@@ -43,15 +44,11 @@ def test_sinr_triangle_interference(channel_server, examples_for_tests: Path):
     try:
         deploy_process = deploy_topology(str(yaml_path))
 
-        # Define node IPs from the example
-        node_ips = {
-            "node1": "192.168.100.1",
-            "node2": "192.168.100.2",
-            "node3": "192.168.100.3",
-        }
+        # Get container prefix from topology
+        container_prefix = extract_container_prefix(str(yaml_path))
 
         # Verify connectivity
-        verify_ping_connectivity("clab-manet-triangle-shared-sinr", node_ips)
+        verify_ping_connectivity(container_prefix, bridge_node_ips)
 
     finally:
         stop_deployment_process(deploy_process)
@@ -61,7 +58,7 @@ def test_sinr_triangle_interference(channel_server, examples_for_tests: Path):
 @pytest.mark.integration
 @pytest.mark.slow
 @pytest.mark.sionna
-def test_sinr_degradation(channel_server, examples_for_tests: Path):
+def test_sinr_degradation(channel_server, examples_for_tests: Path, bridge_node_ips: dict):
     """Confirm SINR < SNR when interference is present.
 
     Tests that:
@@ -71,7 +68,7 @@ def test_sinr_degradation(channel_server, examples_for_tests: Path):
     Note: This test validates deployment but does not check specific SINR values
     (those are logged during deployment).
     """
-    yaml_path = examples_for_tests / "shared_sionna_sinr_triangle" / "network.yaml"
+    yaml_path = examples_for_tests / "shared_sionna_sinr_equal-triangle" / "network.yaml"
 
     if not yaml_path.exists():
         pytest.skip(f"Example not found: {yaml_path}")
@@ -91,13 +88,11 @@ def test_sinr_degradation(channel_server, examples_for_tests: Path):
         #   SNR: XX.X dB | SINR: YY.Y dB
         # Where SINR < SNR due to interference
 
+        # Get container prefix from topology
+        container_prefix = extract_container_prefix(str(yaml_path))
+
         # Verify basic connectivity to confirm the network is operational
-        node_ips = {
-            "node1": "192.168.100.1",
-            "node2": "192.168.100.2",
-            "node3": "192.168.100.3",
-        }
-        verify_ping_connectivity("clab-manet-triangle-shared-sinr", node_ips)
+        verify_ping_connectivity(container_prefix, bridge_node_ips)
 
     finally:
         stop_deployment_process(deploy_process)

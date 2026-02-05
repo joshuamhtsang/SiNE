@@ -10,6 +10,7 @@ from tests.integration.fixtures import (
     channel_server,
     deploy_topology,
     destroy_topology,
+    extract_container_prefix,
     stop_deployment_process,
     verify_ping_connectivity,
     verify_route_to_cidr,
@@ -21,7 +22,7 @@ from sine.config.loader import load_topology
 @pytest.mark.integration
 @pytest.mark.slow
 @pytest.mark.sionna
-def test_sinr_csma_interference(channel_server, examples_for_tests: Path):
+def test_sinr_csma_interference(channel_server, examples_for_tests: Path, bridge_node_ips: dict):
     """Test CSMA/CA with adjacent-channel interference.
 
     Validates that:
@@ -56,14 +57,11 @@ def test_sinr_csma_interference(channel_server, examples_for_tests: Path):
     try:
         deploy_process = deploy_topology(str(yaml_path))
 
-        # Verify basic connectivity
-        node_ips = {
-            "node1": "192.168.100.1",
-            "node2": "192.168.100.2",
-            "node3": "192.168.100.3",
-        }
+        # Get container prefix from topology
+        container_prefix = extract_container_prefix(str(yaml_path))
 
-        verify_ping_connectivity("clab-sinr-csma-wifi6", node_ips)
+        # Verify basic connectivity
+        verify_ping_connectivity(container_prefix, bridge_node_ips)
 
     finally:
         stop_deployment_process(deploy_process)
@@ -73,7 +71,7 @@ def test_sinr_csma_interference(channel_server, examples_for_tests: Path):
 @pytest.mark.integration
 @pytest.mark.slow
 @pytest.mark.sionna
-def test_sinr_csma_connectivity(channel_server, examples_for_tests: Path):
+def test_sinr_csma_connectivity(channel_server, examples_for_tests: Path, bridge_node_ips: dict):
     """Test all-to-all ping connectivity with CSMA.
 
     Validates that:
@@ -91,13 +89,10 @@ def test_sinr_csma_connectivity(channel_server, examples_for_tests: Path):
     try:
         deploy_process = deploy_topology(str(yaml_path))
 
-        node_ips = {
-            "node1": "192.168.100.1",
-            "node2": "192.168.100.2",
-            "node3": "192.168.100.3",
-        }
+        # Get container prefix from topology
+        container_prefix = extract_container_prefix(str(yaml_path))
 
-        verify_ping_connectivity("clab-sinr-csma-wifi6", node_ips)
+        verify_ping_connectivity(container_prefix, bridge_node_ips)
 
     finally:
         stop_deployment_process(deploy_process)
@@ -125,10 +120,13 @@ def test_sinr_csma_routing(channel_server, examples_for_tests: Path):
     try:
         deploy_process = deploy_topology(str(yaml_path))
 
+        # Get container prefix from topology
+        container_prefix = extract_container_prefix(str(yaml_path))
+
         # Verify routes on all nodes
         for node in ["node1", "node2", "node3"]:
             verify_route_to_cidr(
-                "clab-sinr-csma-wifi6",
+                container_prefix,
                 node,
                 "192.168.100.0/24",
                 "eth1"
@@ -164,9 +162,12 @@ def test_sinr_csma_tc_config(channel_server, examples_for_tests: Path):
     try:
         deploy_process = deploy_topology(str(yaml_path))
 
+        # Get container prefix from topology
+        container_prefix = extract_container_prefix(str(yaml_path))
+
         # Test node1 -> node2 link
         result = verify_tc_config(
-            container_prefix="clab-sinr-csma-wifi6",
+            container_prefix=container_prefix,
             node="node1",
             interface="eth1",
             dst_node_ip="192.168.100.2",

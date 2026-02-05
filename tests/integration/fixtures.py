@@ -73,11 +73,44 @@ def get_uv_path() -> str:
     )
 
 
-def deploy_topology(yaml_path: str) -> subprocess.Popen:
+def extract_container_prefix(yaml_path: Path) -> str:
+    """Extract container prefix from topology YAML name field.
+
+    Containerlab convention: clab-<name>-<node>
+    This extracts the 'clab-<name>' prefix.
+
+    Args:
+        yaml_path: Path to topology YAML
+
+    Returns:
+        Container prefix (e.g., 'clab-manet-triangle-shared')
+
+    Example:
+        >>> yaml_path = Path("examples/for_tests/shared_sionna_snr_equal-triangle/network.yaml")
+        >>> prefix = extract_container_prefix(yaml_path)
+        >>> # prefix == "clab-manet-triangle-shared"
+    """
+    import yaml
+
+    with open(yaml_path, "r") as f:
+        config = yaml.safe_load(f)
+
+    # Extract the 'name' field from the topology
+    if "topology" in config and "name" in config["topology"]:
+        lab_name = config["topology"]["name"]
+        return f"clab-{lab_name}"
+    else:
+        # Fallback: extract from filename
+        lab_name = yaml_path.parent.name
+        return f"clab-{lab_name}"
+
+
+def deploy_topology(yaml_path: str, enable_mobility: bool = False) -> subprocess.Popen:
     """Deploy a topology using sine deploy command.
 
     Args:
         yaml_path: Path to the topology YAML file
+        enable_mobility: If True, deploy with --enable-mobility flag
 
     Returns:
         Popen object for the running deployment process
@@ -87,13 +120,19 @@ def deploy_topology(yaml_path: str) -> subprocess.Popen:
     """
     uv_path = get_uv_path()
 
+    mobility_str = " (with mobility)" if enable_mobility else ""
     print(f"\n{'='*70}")
-    print(f"Deploying topology: {yaml_path}")
+    print(f"Deploying topology{mobility_str}: {yaml_path}")
     print(f"{'='*70}\n")
+
+    # Build command
+    cmd = ["sudo", uv_path, "run", "sine", "deploy", str(yaml_path)]
+    if enable_mobility:
+        cmd.append("--enable-mobility")
 
     # Start deployment in background
     process = subprocess.Popen(
-        ["sudo", uv_path, "run", "sine", "deploy", str(yaml_path)],
+        cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -633,6 +672,91 @@ def channel_server():
         process.wait()
 
 
+@pytest.fixture(scope="session")
+def channel_server_fallback():
+    """Start channel server in fallback mode for tests.
+
+    This is a session-scoped fixture that starts the channel server once
+    with --force-fallback flag for testing fallback engine without GPU.
+
+    Yields:
+        Server URL (http://localhost:8000)
+    """
+    uv_path = get_uv_path()
+
+    # Start channel server in background with --force-fallback
+    logger.info("Starting channel server in fallback mode...")
+    print("\n" + "="*70)
+    print("CHANNEL SERVER STARTUP (FALLBACK MODE)")
+    print("="*70 + "\n")
+
+    process = subprocess.Popen(
+        [uv_path, "run", "sine", "channel-server", "--force-fallback"],
+        # stdout and stderr will go to the test output (not piped)
+    )
+
+    # Wait for server to be ready (check health endpoint)
+    server_url = "http://localhost:8000"
+    max_retries = 30
+
+    for i in range(max_retries):
+        try:
+            with urllib.request.urlopen(f"{server_url}/health", timeout=1) as response:
+                if response.status == 200:
+                    logger.info(f"Channel server ready at {server_url} (fallback mode)")
+                    print(f"✓ Channel server is ready at {server_url} (fallback mode)")
+                    print("="*70 + "\n")
+                    break
+        except (urllib.error.URLError, OSError):
+            if i < max_retries - 1:
+                time.sleep(1)
+            else:
+                process.kill()
+                raise RuntimeError("Channel server failed to start in fallback mode")
+
+    yield server_url
+
+    # Cleanup: stop channel server
+    logger.info("Stopping channel server (fallback mode)...")
+    print("\n" + "="*70)
+    print("Stopping channel server (fallback mode)...")
+    print("="*70 + "\n")
+
+    process.terminate()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+
+
+@pytest.fixture
+def bridge_node_ips() -> dict[str, str]:
+    """Standard shared bridge node IPs (192.168.100.x/24).
+
+    Returns:
+        Dictionary mapping node names to IP addresses for shared bridge topology
+    """
+    return {
+        "node1": "192.168.100.1",
+        "node2": "192.168.100.2",
+        "node3": "192.168.100.3",
+    }
+
+
+@pytest.fixture
+def p2p_node_ips() -> dict[str, str]:
+    """Standard P2P node IPs.
+
+    Returns:
+        Dictionary mapping node names to IP addresses for P2P topology
+    """
+    return {
+        "node1": "10.0.0.1",
+        "node2": "10.0.0.2",
+    }
+
+
 # =============================================================================
 # YAML Config Modification Helpers
 # =============================================================================
@@ -663,7 +787,7 @@ def modify_topology_mcs(
     Example:
         >>> # Test with BPSK for low-SINR scenarios
         >>> config = modify_topology_mcs(
-        ...     source_yaml=Path("examples/for_tests/shared_sionna_sinr_triangle/network.yaml"),
+        ...     source_yaml=Path("examples/for_tests/shared_sionna_sinr_equal-triangle/network.yaml"),
         ...     modulation="bpsk",
         ...     fec_type="ldpc",
         ...     fec_code_rate=0.5,
@@ -697,5 +821,134 @@ def modify_topology_mcs(
                             wireless["rf_power_dbm"] = tx_power_dbm
 
     logger.info(f"Modified topology MCS settings: modulation={modulation}, fec={fec_type}, rate={fec_code_rate}, tx_power={tx_power_dbm} dBm")
+
+    return config
+
+
+def modify_topology_wireless(
+    source_yaml: Path,
+    frequency_ghz: float | None = None,
+    rf_power_dbm: float | None = None,
+    bandwidth_mhz: int | None = None,
+    noise_figure_db: float | None = None,
+    is_active: bool | None = None,
+) -> dict:
+    """Modify wireless parameters in a topology YAML.
+
+    Similar to modify_topology_mcs but for RF parameters.
+    Returns modified config as dict (caller writes to temp file).
+
+    Args:
+        source_yaml: Path to source network.yaml
+        frequency_ghz: Optional frequency in GHz (e.g., 2.4, 5.18)
+        rf_power_dbm: Optional TX power in dBm (e.g., 5, 20, 30)
+        bandwidth_mhz: Optional bandwidth in MHz (e.g., 20, 40, 80, 160)
+        noise_figure_db: Optional noise figure in dB (e.g., 6.0, 7.0, 10.0)
+        is_active: Optional active state (True/False)
+
+    Returns:
+        Modified topology config as dict
+
+    Example:
+        >>> # Test different frequency bands
+        >>> config = modify_topology_wireless(
+        ...     source_yaml=Path("examples/for_tests/shared_sionna_snr_equal-triangle/network.yaml"),
+        ...     frequency_ghz=2.4,
+        ...     bandwidth_mhz=20,
+        ... )
+    """
+    import yaml
+
+    # Load source YAML
+    with open(source_yaml, "r") as f:
+        config = yaml.safe_load(f)
+
+    # Modify all wireless interfaces
+    if "topology" in config and "nodes" in config["topology"]:
+        for node_name, node_config in config["topology"]["nodes"].items():
+            if "interfaces" in node_config:
+                for iface_name, iface_config in node_config["interfaces"].items():
+                    if "wireless" in iface_config:
+                        wireless = iface_config["wireless"]
+
+                        # Update wireless parameters
+                        if frequency_ghz is not None:
+                            wireless["frequency_ghz"] = frequency_ghz
+                        if rf_power_dbm is not None:
+                            wireless["rf_power_dbm"] = rf_power_dbm
+                        if bandwidth_mhz is not None:
+                            wireless["bandwidth_mhz"] = bandwidth_mhz
+                        if noise_figure_db is not None:
+                            wireless["noise_figure_db"] = noise_figure_db
+                        if is_active is not None:
+                            wireless["is_active"] = is_active
+
+    logger.info(f"Modified wireless parameters: freq={frequency_ghz} GHz, power={rf_power_dbm} dBm, bw={bandwidth_mhz} MHz, nf={noise_figure_db} dB, active={is_active}")
+
+    return config
+
+
+def modify_topology_antenna(
+    source_yaml: Path,
+    antenna_gain_dbi: float | None = None,
+    antenna_pattern: str | None = None,
+    polarization: str | None = None,
+) -> dict:
+    """Modify antenna parameters in a topology YAML.
+
+    Note: antenna_gain_dbi and antenna_pattern are mutually exclusive.
+    Returns modified config as dict.
+
+    Args:
+        source_yaml: Path to source network.yaml
+        antenna_gain_dbi: Optional antenna gain in dBi (e.g., 0.0, 2.15, 3.0)
+        antenna_pattern: Optional pattern ("iso", "dipole", "hw_dipole", "tr38901")
+        polarization: Optional polarization ("V", "H", "VH", "cross")
+
+    Returns:
+        Modified topology config as dict
+
+    Raises:
+        ValueError: If both antenna_gain_dbi and antenna_pattern are specified
+
+    Example:
+        >>> # Test with different antenna types
+        >>> config = modify_topology_antenna(
+        ...     source_yaml=Path("examples/for_tests/shared_sionna_snr_equal-triangle/network.yaml"),
+        ...     antenna_pattern="iso",
+        ...     polarization="V",
+        ... )
+    """
+    import yaml
+
+    if antenna_gain_dbi is not None and antenna_pattern is not None:
+        raise ValueError("Cannot specify both antenna_gain_dbi and antenna_pattern")
+
+    # Load source YAML
+    with open(source_yaml, "r") as f:
+        config = yaml.safe_load(f)
+
+    # Modify all wireless interfaces
+    if "topology" in config and "nodes" in config["topology"]:
+        for node_name, node_config in config["topology"]["nodes"].items():
+            if "interfaces" in node_config:
+                for iface_name, iface_config in node_config["interfaces"].items():
+                    if "wireless" in iface_config:
+                        wireless = iface_config["wireless"]
+
+                        # Update antenna parameters
+                        if antenna_gain_dbi is not None:
+                            # Remove antenna_pattern if present
+                            wireless.pop("antenna_pattern", None)
+                            wireless["antenna_gain_dbi"] = antenna_gain_dbi
+                        elif antenna_pattern is not None:
+                            # Remove antenna_gain_dbi if present
+                            wireless.pop("antenna_gain_dbi", None)
+                            wireless["antenna_pattern"] = antenna_pattern
+
+                        if polarization is not None:
+                            wireless["polarization"] = polarization
+
+    logger.info(f"Modified antenna parameters: gain={antenna_gain_dbi} dBi, pattern={antenna_pattern}, pol={polarization}")
 
     return config

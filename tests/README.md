@@ -310,6 +310,132 @@ uv run pytest -m "not sionna" -v
 
 6. **Update this README** if adding a new test category or major functionality
 
+## Writing Comprehensive Tests: The Gold Standard Checklist
+
+Every example in `examples/for_tests/` should have comprehensive test coverage following the gold standard pattern established in [tests/integration/point_to_point/sionna_engine/snr/test_two_rooms_comprehensive.py](integration/point_to_point/sionna_engine/snr/test_two_rooms_comprehensive.py).
+
+### Core Test Categories
+
+Every example should have tests covering:
+
+- [ ] **Connectivity**: Bidirectional ping tests (all-to-all for MANET, node1 ↔ node2 for P2P)
+- [ ] **Throughput**: iperf3 measurements with expected ranges based on modulation/FEC
+- [ ] **Routing**: Verify routes to bridge subnet (eth1) for shared bridge topologies
+- [ ] **TC Configuration**: Validate netem delay, loss%, rate match channel computations
+- [ ] **Mode-Specific Validation**:
+  - **SINR mode**: Interference validation, tx_probability weighting
+  - **MAC protocols**: CSMA carrier sense range, TDMA slot ownership
+  - **Adaptive MCS**: MCS index selection based on SNR/SINR thresholds
+  - **Indoor/scene**: Scene loading, path loss comparison vs vacuum
+
+### Standard Fixture Usage Pattern
+
+```python
+from tests.integration.fixtures import (
+    channel_server,          # Ensures channel server is running (session-scoped)
+    deploy_topology,         # Deploy topology helper
+    destroy_topology,        # Cleanup helper
+    stop_deployment_process, # Stop deployment process
+    extract_container_prefix, # Extract container prefix from YAML
+    bridge_node_ips,         # Standard 192.168.100.x IPs (fixture)
+    p2p_node_ips,           # Standard 10.0.0.x IPs (fixture)
+    verify_ping_connectivity, # All-to-all ping helper
+    run_iperf3_test,         # Throughput measurement helper
+    verify_tc_config,        # TC/netem validation helper
+)
+
+@pytest.mark.integration
+@pytest.mark.slow
+@pytest.mark.sionna  # or @pytest.mark.fallback
+def test_example_connectivity(channel_server, examples_for_tests: Path, bridge_node_ips: dict):
+    """Test connectivity with standard fixture pattern.
+
+    Validates:
+    - All-to-all connectivity works
+    - Expected SNR/SINR provides sufficient link quality
+    """
+    yaml_path = examples_for_tests / "shared_sionna_snr_equal-triangle" / "network.yaml"
+
+    if not yaml_path.exists():
+        pytest.skip(f"Example not found: {yaml_path}")
+
+    # Extract container prefix dynamically from YAML
+    container_prefix = extract_container_prefix(yaml_path)
+
+    destroy_topology(str(yaml_path))
+
+    deploy_process = None
+    try:
+        deploy_process = deploy_topology(str(yaml_path))
+
+        # Use fixture for node IPs (no hardcoding!)
+        verify_ping_connectivity(container_prefix, bridge_node_ips)
+
+        print("✓ Connectivity validated")
+
+    finally:
+        stop_deployment_process(deploy_process)
+        destroy_topology(str(yaml_path))
+```
+
+### Key Principles
+
+1. **No Hardcoded Values**: Use `extract_container_prefix()` and fixture IPs instead of hardcoded strings
+2. **Explicit Expectations**: Document expected values (SNR range, throughput, MCS index) in docstrings
+3. **Proper Cleanup**: Always use `try/finally` with `destroy_topology()` to ensure cleanup
+4. **channel_server Parameter**: Include `channel_server` as a test parameter to ensure server is started (session-scoped fixture)
+5. **Descriptive Docstrings**: Explain what is validated and why, including expected values and physical rationale
+
+### Anti-Patterns to Avoid
+
+❌ **Hardcoded container prefixes:**
+```python
+# BAD
+container_prefix = "clab-manet-triangle-shared"
+```
+
+✅ **Dynamic extraction:**
+```python
+# GOOD
+container_prefix = extract_container_prefix(yaml_path)
+```
+
+❌ **Hardcoded node IPs:**
+```python
+# BAD
+node_ips = {"node1": "192.168.100.1", "node2": "192.168.100.2", "node3": "192.168.100.3"}
+```
+
+✅ **Fixture-based IPs:**
+```python
+# GOOD
+def test_func(channel_server, examples_for_tests: Path, bridge_node_ips: dict):
+    # bridge_node_ips automatically provided
+```
+
+❌ **Missing channel_server parameter:**
+```python
+# BAD - channel server may not be running!
+def test_deployment(examples_for_tests: Path):
+    ...
+```
+
+✅ **Include channel_server:**
+```python
+# GOOD - ensures channel server is started
+def test_deployment(channel_server, examples_for_tests: Path):
+    ...
+```
+
+### Reference Examples
+
+**Gold Standard Examples** (comprehensive coverage):
+- [test_two_rooms_comprehensive.py](integration/point_to_point/sionna_engine/snr/test_two_rooms_comprehensive.py) - 6 tests, indoor multipath
+- [test_csma_mcs_comprehensive.py](integration/shared_bridge/sionna_engine/snr/test_csma_mcs_comprehensive.py) - 6 tests, CSMA + MCS
+- [test_asym-triangle_connectivity.py](integration/shared_bridge/sionna_engine/sinr/test_asym-triangle_connectivity.py) - SINR with asymmetric topology
+
+**Study these examples** when writing new tests to maintain consistency and quality standards.
+
 ## Test Statistics
 
 **Current test inventory** (as of 2026-01-31):
