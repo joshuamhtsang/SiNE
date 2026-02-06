@@ -10,6 +10,7 @@ from tests.integration.fixtures import (
     channel_server_fallback,
     deploy_topology,
     destroy_topology,
+    extract_container_prefix,
     stop_deployment_process,
     verify_ping_connectivity,
     run_iperf3_test,
@@ -39,11 +40,14 @@ def test_fallback_vacuum_connectivity(channel_server_fallback, examples_for_test
 
     deploy_process = None
     try:
-        deploy_process = deploy_topology(str(yaml_path))
+        deploy_process = deploy_topology(str(yaml_path), channel_server_url=channel_server_fallback)
+
+        # Extract container prefix from YAML (e.g., "clab-fallback-vacuum")
+        container_prefix = extract_container_prefix(yaml_path)
 
         # Test bidirectional connectivity (p2p has only 2 nodes)
         node_pair = {k: v for k, v in list(p2p_node_ips.items())[:2]}
-        verify_ping_connectivity("clab-fallback-vacuum", node_pair)
+        verify_ping_connectivity(container_prefix, node_pair)
 
         print("✓ Fallback vacuum connectivity validated")
 
@@ -73,11 +77,14 @@ def test_fallback_vacuum_throughput(channel_server_fallback, examples_for_tests:
 
     deploy_process = None
     try:
-        deploy_process = deploy_topology(str(yaml_path))
+        deploy_process = deploy_topology(str(yaml_path), channel_server_url=channel_server_fallback)
+
+        # Extract container prefix from YAML
+        container_prefix = extract_container_prefix(yaml_path)
 
         # Measure throughput node1 -> node2
         throughput = run_iperf3_test(
-            container_prefix="clab-fallback-vacuum",
+            container_prefix=container_prefix,
             server_node="node2",
             client_node="node1",
             client_ip="10.0.0.2",
@@ -120,12 +127,15 @@ def test_fallback_vacuum_tc_config(channel_server_fallback, examples_for_tests: 
 
     deploy_process = None
     try:
-        deploy_process = deploy_topology(str(yaml_path))
+        deploy_process = deploy_topology(str(yaml_path), channel_server_url=channel_server_fallback)
+
+        # Extract container prefix from YAML
+        container_prefix = extract_container_prefix(yaml_path)
 
         # Verify node1's eth1 interface
         # Expected: ~0.07 ms delay (20m / c), very low loss, ~192 Mbps rate
         result1 = verify_tc_config(
-            container_prefix="clab-fallback-vacuum",
+            container_prefix=container_prefix,
             node="node1",
             interface="eth1",
             expected_rate_mbps=192.0,  # 64-QAM, rate-0.5 LDPC
@@ -134,7 +144,7 @@ def test_fallback_vacuum_tc_config(channel_server_fallback, examples_for_tests: 
 
         # Verify node2's eth1 interface (reverse direction)
         result2 = verify_tc_config(
-            container_prefix="clab-fallback-vacuum",
+            container_prefix=container_prefix,
             node="node2",
             interface="eth1",
             expected_rate_mbps=192.0,

@@ -37,12 +37,13 @@ class EmulationError(Exception):
 class EmulationController:
     """Main SiNE emulation controller."""
 
-    def __init__(self, topology_path: str | Path):
+    def __init__(self, topology_path: str | Path, channel_server_url: str | None = None):
         """
         Initialize controller with path to topology file.
 
         Args:
             topology_path: Path to network.yaml file
+            channel_server_url: Optional channel server URL to override YAML config
         """
         self.topology_path = Path(topology_path)
         self.loader = TopologyLoader(topology_path)
@@ -51,6 +52,7 @@ class EmulationController:
         self.netem_config = NetemConfigurator()
         self.scene_builder = SceneBuilder()
         self.channel_server_url: str = "http://localhost:8000"
+        self._channel_server_override: str | None = channel_server_url  # CLI override
         self._running = False
         self._link_states: dict[tuple[str, str], dict] = {}  # Stores netem and RF metrics
         self._link_mcs_info: dict[tuple[str, str], dict] = {}  # MCS info for each link
@@ -108,7 +110,13 @@ class EmulationController:
             logger.error(f"Failed to load topology: {e}")
             raise EmulationError(f"Failed to load topology: {e}") from e
 
-        self.channel_server_url = self.config.topology.channel_server
+        # Use CLI override if provided, otherwise use YAML config
+        if self._channel_server_override:
+            self.channel_server_url = self._channel_server_override
+            logger.info(f"Using channel server from CLI: {self.channel_server_url}")
+        else:
+            self.channel_server_url = self.config.topology.channel_server
+            logger.info(f"Using channel server from YAML: {self.channel_server_url}")
 
         # Load scene (only required if there are wireless links)
         if self._has_wireless_links():

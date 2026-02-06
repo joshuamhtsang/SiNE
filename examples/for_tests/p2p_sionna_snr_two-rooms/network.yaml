@@ -44,7 +44,7 @@
 #
 #   3. Test connectivity:
 #      docker exec -it clab-two-rooms-node1 iperf3 -s
-#      docker exec -it clab-two-rooms-node2 iperf3 -c 18.0.0.1
+#      docker exec -it clab-two-rooms-node2 iperf3 -c 10.0.0.1
 #
 #   4. Run mobility (move node2 along east wall):
 #      uv run python examples/mobility/linear_movement.py node2 30.0 10.0 1.0 30.0 30.0 1.0 1.0
@@ -69,7 +69,7 @@ topology:
         - apk add --no-cache iproute2 iputils iperf3
       interfaces:
         eth1:
-          ip_address: 18.0.0.1/24
+          ip_address: 10.0.0.1/24
           wireless:
             rf_power_dbm: 20.0              # WiFi 6 typical TX power
             rx_sensitivity_dbm: -80.0       # WiFi 6 receiver sensitivity (minimum detectable signal)
@@ -94,7 +94,7 @@ topology:
         - apk add --no-cache iproute2 iputils iperf3
       interfaces:
         eth1:
-          ip_address: 18.0.0.2/24
+          ip_address: 10.0.0.2/24
           wireless:
             rf_power_dbm: 20.0
             rx_sensitivity_dbm: -80.0       # WiFi 6 receiver sensitivity (minimum detectable signal)

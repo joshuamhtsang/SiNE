@@ -238,7 +238,8 @@ def deploy(topology: Path, channel_server: str, enable_mobility: bool, mobility_
     if enable_mobility:
         console.print(f"[dim]Mobility API will be available on port {mobility_port}[/]")
 
-    controller = EmulationController(topology)
+    # Pass channel_server URL to override YAML config if specified
+    controller = EmulationController(topology, channel_server_url=channel_server)
 
     async def run_emulation() -> None:
         try:
@@ -279,8 +280,8 @@ def deploy(topology: Path, channel_server: str, enable_mobility: bool, mobility_
         from sine.mobility.api import MobilityAPIServer
 
         async def run_with_mobility() -> None:
-            # Start emulation controller
-            controller_obj = EmulationController(topology)
+            # Start emulation controller with channel_server override if specified
+            controller_obj = EmulationController(topology, channel_server_url=channel_server)
             await controller_obj.start()
 
             console.print("[bold green]Emulation deployed successfully![/]")

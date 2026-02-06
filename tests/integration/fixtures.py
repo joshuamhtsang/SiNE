@@ -167,19 +167,22 @@ def get_uv_path() -> str:
 def extract_container_prefix(yaml_path: str | Path) -> str:
     """Extract container prefix from topology YAML name field.
 
-    Containerlab convention: clab-<name>-<node>
-    This extracts the 'clab-<name>' prefix.
+    Containerlab convention: <prefix>-<name>-<node>
+    This extracts the '<prefix>-<name>' part (e.g., 'clab-fallback-vacuum').
 
     Args:
         yaml_path: Path to topology YAML (str or Path)
 
     Returns:
-        Container prefix (e.g., 'clab-manet-triangle-shared')
+        Container prefix (e.g., 'clab-fallback-vacuum')
+
+    Raises:
+        ValueError: If 'name' field is missing from YAML
 
     Example:
-        >>> yaml_path = Path("examples/for_tests/shared_sionna_snr_equal-triangle/network.yaml")
+        >>> yaml_path = Path("examples/for_tests/p2p_fallback_snr_vacuum/network.yaml")
         >>> prefix = extract_container_prefix(yaml_path)
-        >>> # prefix == "clab-manet-triangle-shared"
+        >>> # prefix == "clab-fallback-vacuum"
     """
     import yaml
 
@@ -190,14 +193,16 @@ def extract_container_prefix(yaml_path: str | Path) -> str:
     with open(yaml_path, "r") as f:
         config = yaml.safe_load(f)
 
-    # Extract the 'name' field from the topology
-    if "topology" in config and "name" in config["topology"]:
-        lab_name = config["topology"]["name"]
-        return f"clab-{lab_name}"
-    else:
-        # Fallback: extract from filename
-        lab_name = yaml_path.parent.name
-        return f"clab-{lab_name}"
+    # Extract the top-level 'name' field (required by schema)
+    if "name" not in config:
+        raise ValueError(f"Missing required 'name' field in {yaml_path}")
+
+    lab_name = config["name"]
+
+    # Get prefix (defaults to 'clab' if not specified)
+    prefix = config.get("prefix", "clab")
+
+    return f"{prefix}-{lab_name}"
 
 
 def deploy_topology(yaml_path: str, enable_mobility: bool = False, channel_server_url: str = "http://localhost:8000") -> subprocess.Popen:
@@ -829,7 +834,7 @@ def channel_server_fallback():
     with --force-fallback flag for testing fallback engine without GPU.
 
     Yields:
-        Server URL (http://localhost:8000)
+        Server URL (http://localhost:8001)
     """
     uv_path = get_uv_path()
 
@@ -840,12 +845,12 @@ def channel_server_fallback():
     print("="*70 + "\n")
 
     process = subprocess.Popen(
-        [uv_path, "run", "sine", "channel-server", "--force-fallback"],
+        [uv_path, "run", "sine", "channel-server", "--force-fallback", "--port", "8001"],
         # stdout and stderr will go to the test output (not piped)
     )
 
     # Wait for server to be ready (check health endpoint)
-    server_url = "http://localhost:8000"
+    server_url = "http://localhost:8001"
     max_retries = 30
 
     for i in range(max_retries):
