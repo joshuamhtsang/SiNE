@@ -8,7 +8,9 @@ This module contains:
 Import these in integration test files to avoid duplication.
 """
 
+import atexit
 import logging
+import signal
 import subprocess
 import time
 import urllib.error
@@ -18,6 +20,95 @@ from pathlib import Path
 import pytest
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Global cleanup tracking (for Ctrl+C handling)
+# =============================================================================
+
+# Track deployed topologies and channel server process for cleanup on exit
+_deployed_topologies: list[Path] = []
+_channel_server_process: subprocess.Popen | None = None
+_cleanup_registered = False
+
+
+def _cleanup_all():
+    """Clean up all deployed topologies and channel server on exit.
+
+    Called by atexit handler or signal handlers (SIGINT, SIGTERM).
+    """
+    global _channel_server_process  # Needed because we reassign to None later
+
+    if not _deployed_topologies and not _channel_server_process:
+        return  # Nothing to clean up
+
+    print("\n" + "="*70)
+    print("EMERGENCY CLEANUP (Ctrl+C or test interruption detected)")
+    print("="*70)
+
+    # Destroy all deployed topologies
+    if _deployed_topologies:
+        print(f"\nCleaning up {len(_deployed_topologies)} deployed topology(ies)...")
+        for yaml_path in _deployed_topologies:
+            try:
+                print(f"  Destroying: {yaml_path}")
+                destroy_topology(str(yaml_path))
+            except Exception as e:
+                logger.error(f"Failed to destroy {yaml_path}: {e}")
+
+        _deployed_topologies.clear()
+
+    # Stop channel server
+    if _channel_server_process:
+        print("\nStopping channel server...")
+        try:
+            _channel_server_process.terminate()
+            try:
+                _channel_server_process.wait(timeout=5)
+                print("  ✓ Channel server stopped")
+            except subprocess.TimeoutExpired:
+                print("  Channel server didn't stop gracefully, killing...")
+                _channel_server_process.kill()
+                _channel_server_process.wait()
+                print("  ✓ Channel server killed")
+        except Exception as e:
+            logger.error(f"Failed to stop channel server: {e}")
+        finally:
+            _channel_server_process = None
+
+    print("="*70)
+    print("Cleanup complete")
+    print("="*70 + "\n")
+
+
+def _signal_handler(signum, _frame):
+    """Handle SIGINT (Ctrl+C) and SIGTERM by cleaning up."""
+    print(f"\n\nReceived signal {signum}, cleaning up...")
+    _cleanup_all()
+    # Re-raise KeyboardInterrupt to let pytest handle it
+    if signum == signal.SIGINT:
+        raise KeyboardInterrupt
+
+
+def _register_cleanup_handlers():
+    """Register atexit and signal handlers for cleanup.
+
+    Only registers once per process.
+    """
+    global _cleanup_registered
+
+    if _cleanup_registered:
+        return
+
+    # Register atexit handler
+    atexit.register(_cleanup_all)
+
+    # Register signal handlers for Ctrl+C and SIGTERM
+    signal.signal(signal.SIGINT, _signal_handler)
+    signal.signal(signal.SIGTERM, _signal_handler)
+
+    _cleanup_registered = True
+    logger.debug("Registered cleanup handlers for atexit, SIGINT, and SIGTERM")
 
 
 # =============================================================================
@@ -121,9 +212,18 @@ def deploy_topology(yaml_path: str, enable_mobility: bool = False, channel_serve
         Popen object for the running deployment process
 
     Note:
-        Caller is responsible for stopping the process and cleanup.
+        This function automatically registers the topology for cleanup on exit
+        (via atexit handler) in case of Ctrl+C or test interruption.
+        Tests should still call destroy_topology() in their finally blocks for
+        normal cleanup.
     """
+    global _deployed_topologies
+
     uv_path = get_uv_path()
+    yaml_path_obj = Path(yaml_path)
+
+    # Register cleanup handlers on first deployment
+    _register_cleanup_handlers()
 
     mobility_str = " (with mobility)" if enable_mobility else ""
     print(f"\n{'='*70}")
@@ -170,6 +270,11 @@ def deploy_topology(yaml_path: str, enable_mobility: bool = False, channel_serve
     print("Deployment complete!")
     print("="*70 + "\n")
 
+    # Register this topology for emergency cleanup
+    if yaml_path_obj not in _deployed_topologies:
+        _deployed_topologies.append(yaml_path_obj)
+        logger.debug(f"Registered topology for cleanup: {yaml_path_obj}")
+
     return process
 
 
@@ -197,8 +302,14 @@ def destroy_topology(yaml_path: str) -> None:
 
     Args:
         yaml_path: Path to the topology YAML file
+
+    Note:
+        Automatically unregisters the topology from emergency cleanup tracking.
     """
+    global _deployed_topologies
+
     uv_path = get_uv_path()
+    yaml_path_obj = Path(yaml_path)
 
     print(f"\n{'='*70}")
     print(f"Destroying topology: {yaml_path}")
@@ -214,6 +325,11 @@ def destroy_topology(yaml_path: str) -> None:
         logger.warning(f"Destroy command failed: {result.stderr}")
     else:
         print("Topology destroyed successfully\n")
+
+    # Unregister from emergency cleanup tracking
+    if yaml_path_obj in _deployed_topologies:
+        _deployed_topologies.remove(yaml_path_obj)
+        logger.debug(f"Unregistered topology from cleanup: {yaml_path_obj}")
 
 
 def configure_ips(container_prefix: str, node_ips: dict[str, str]) -> None:
@@ -635,10 +751,17 @@ def channel_server():
     This is a session-scoped fixture that starts the channel server once
     at the beginning of the test session and stops it at the end.
 
+    Handles Ctrl+C gracefully via registered cleanup handlers.
+
     Yields:
         Server URL (http://localhost:8000)
     """
+    global _channel_server_process
+
     uv_path = get_uv_path()
+
+    # Register cleanup handlers (will handle Ctrl+C)
+    _register_cleanup_handlers()
 
     # Start channel server in background
     logger.info("Starting channel server...")
@@ -650,6 +773,9 @@ def channel_server():
         [uv_path, "run", "sine", "channel-server"],
         # stdout and stderr will go to the test output (not piped)
     )
+
+    # Track process for emergency cleanup
+    _channel_server_process = process
 
     # Wait for server to be ready (check health endpoint)
     server_url = "http://localhost:8000"
@@ -668,22 +794,31 @@ def channel_server():
                 time.sleep(1)
             else:
                 process.kill()
+                _channel_server_process = None
                 raise RuntimeError("Channel server failed to start")
 
-    yield server_url
-
-    # Cleanup: stop channel server
-    logger.info("Stopping channel server...")
-    print("\n" + "="*70)
-    print("Stopping channel server...")
-    print("="*70 + "\n")
-
-    process.terminate()
     try:
-        process.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait()
+        yield server_url
+    finally:
+        # Normal cleanup: stop channel server
+        logger.info("Stopping channel server...")
+        print("\n" + "="*70)
+        print("Stopping channel server (normal shutdown)...")
+        print("="*70 + "\n")
+
+        if process.poll() is None:  # Check if still running
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+                print("✓ Channel server stopped")
+            except subprocess.TimeoutExpired:
+                print("Channel server didn't stop gracefully, killing...")
+                process.kill()
+                process.wait()
+                print("✓ Channel server killed")
+
+        # Clear tracking (already cleaned up)
+        _channel_server_process = None
 
 
 @pytest.fixture(scope="session")
