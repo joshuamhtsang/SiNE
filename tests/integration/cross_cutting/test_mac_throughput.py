@@ -82,8 +82,11 @@ def mobility_deployment(examples_for_tests: Path, channel_server):
     print(f"{'='*70}\n")
 
     # Start deployment with mobility API in background
+    # Use the existing channel server to avoid port conflict
     deploy_process = subprocess.Popen(
-        ["sudo", uv_path, "run", "sine", "deploy", "--enable-mobility", str(yaml_path)],
+        ["sudo", uv_path, "run", "sine", "deploy",
+         "--channel-server", "http://localhost:8000",
+         "--enable-mobility", str(yaml_path)],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,

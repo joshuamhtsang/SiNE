@@ -73,14 +73,14 @@ def get_uv_path() -> str:
     )
 
 
-def extract_container_prefix(yaml_path: Path) -> str:
+def extract_container_prefix(yaml_path: str | Path) -> str:
     """Extract container prefix from topology YAML name field.
 
     Containerlab convention: clab-<name>-<node>
     This extracts the 'clab-<name>' prefix.
 
     Args:
-        yaml_path: Path to topology YAML
+        yaml_path: Path to topology YAML (str or Path)
 
     Returns:
         Container prefix (e.g., 'clab-manet-triangle-shared')
@@ -91,6 +91,10 @@ def extract_container_prefix(yaml_path: Path) -> str:
         >>> # prefix == "clab-manet-triangle-shared"
     """
     import yaml
+
+    # Convert to Path if string
+    if isinstance(yaml_path, str):
+        yaml_path = Path(yaml_path)
 
     with open(yaml_path, "r") as f:
         config = yaml.safe_load(f)
@@ -105,12 +109,13 @@ def extract_container_prefix(yaml_path: Path) -> str:
         return f"clab-{lab_name}"
 
 
-def deploy_topology(yaml_path: str, enable_mobility: bool = False) -> subprocess.Popen:
+def deploy_topology(yaml_path: str, enable_mobility: bool = False, channel_server_url: str = "http://localhost:8000") -> subprocess.Popen:
     """Deploy a topology using sine deploy command.
 
     Args:
         yaml_path: Path to the topology YAML file
         enable_mobility: If True, deploy with --enable-mobility flag
+        channel_server_url: URL of the channel server to use (default: http://localhost:8000)
 
     Returns:
         Popen object for the running deployment process
@@ -123,10 +128,13 @@ def deploy_topology(yaml_path: str, enable_mobility: bool = False) -> subprocess
     mobility_str = " (with mobility)" if enable_mobility else ""
     print(f"\n{'='*70}")
     print(f"Deploying topology{mobility_str}: {yaml_path}")
+    print(f"Using channel server: {channel_server_url}")
     print(f"{'='*70}\n")
 
     # Build command
     cmd = ["sudo", uv_path, "run", "sine", "deploy", str(yaml_path)]
+    # Always specify the channel server URL to avoid starting a new one
+    cmd.extend(["--channel-server", channel_server_url])
     if enable_mobility:
         cmd.append("--enable-mobility")
 
@@ -249,8 +257,14 @@ def run_iperf3_test(
     server_container = f"{container_prefix}-{server_node}"
     client_container = f"{container_prefix}-{client_node}"
 
+    # Kill any existing iperf3 processes first
+    print(f"\nCleaning up any existing iperf3 processes on {server_container}...")
+    kill_cmd = f"docker exec {server_container} pkill -9 iperf3 || true"
+    subprocess.run(kill_cmd, shell=True)
+    time.sleep(0.5)
+
     # Start iperf3 server in background
-    print(f"\nStarting iperf3 server on {server_container}...")
+    print(f"Starting iperf3 server on {server_container}...")
     server_cmd = f"docker exec -d {server_container} iperf3 -s"
     subprocess.run(server_cmd, shell=True, check=True)
 

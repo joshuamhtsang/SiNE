@@ -213,7 +213,7 @@ def test_two_rooms_tc_config(channel_server, examples_for_tests: Path):
             node="node1",
             interface="eth1",
             expected_rate_mbps=100.0,  # Approximate for 256-QAM
-            tolerance_percent=30.0,     # Allow wide tolerance for indoor multipath
+            rate_tolerance_mbps=30.0,  # 30% tolerance for indoor multipath
         )
 
         # Verify node2's eth1 interface (reverse direction)
@@ -222,7 +222,7 @@ def test_two_rooms_tc_config(channel_server, examples_for_tests: Path):
             node="node2",
             interface="eth1",
             expected_rate_mbps=100.0,
-            tolerance_percent=30.0,
+            rate_tolerance_mbps=30.0,  # 30% tolerance
         )
 
         print("✓ Two-rooms TC config validated for both directions")

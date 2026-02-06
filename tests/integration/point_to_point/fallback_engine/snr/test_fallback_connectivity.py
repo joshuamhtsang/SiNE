@@ -129,7 +129,7 @@ def test_fallback_vacuum_tc_config(channel_server_fallback, examples_for_tests: 
             node="node1",
             interface="eth1",
             expected_rate_mbps=192.0,  # 64-QAM, rate-0.5 LDPC
-            tolerance_percent=20.0,
+            rate_tolerance_mbps=38.4,  # 20% tolerance
         )
 
         # Verify node2's eth1 interface (reverse direction)
@@ -138,7 +138,7 @@ def test_fallback_vacuum_tc_config(channel_server_fallback, examples_for_tests: 
             node="node2",
             interface="eth1",
             expected_rate_mbps=192.0,
-            tolerance_percent=20.0,
+            rate_tolerance_mbps=38.4,  # 20% tolerance
         )
 
         print("✓ Fallback vacuum TC config validated for both directions")

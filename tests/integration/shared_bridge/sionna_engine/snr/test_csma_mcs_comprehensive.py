@@ -214,7 +214,7 @@ def test_csma_mcs_routing(channel_server, examples_for_tests: Path, bridge_node_
                 container_prefix="clab-csma-mcs",
                 node=node_name,
                 cidr="192.168.100.0/24",
-                expected_interface="eth1",
+                interface="eth1",
             )
 
         print("✓ CSMA MCS routing validated for all nodes")
@@ -255,7 +255,7 @@ def test_csma_mcs_tc_config(channel_server, examples_for_tests: Path):
             interface="eth1",
             dst_node_ip="192.168.100.3",
             expected_rate_mbps=64.0,
-            tolerance_percent=30.0,
+            rate_tolerance_mbps=19.2,  # 30% tolerance
         )
 
         print("✓ CSMA MCS TC config validated")
