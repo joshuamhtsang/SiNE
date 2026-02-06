@@ -11,15 +11,15 @@ This example validates:
 import pytest
 from pathlib import Path
 from tests.integration.fixtures import (
+    bridge_node_ips,
     channel_server,
     deploy_topology,
     destroy_topology,
-    stop_deployment_process,
-    verify_ping_connectivity,
-    verify_tc_config,
-    verify_route_to_cidr,
-    bridge_node_ips,
     extract_container_prefix,
+    stop_deployment_process,
+    verify_route_to_cidr,
+    verify_selective_ping_connectivity,
+    verify_tc_config,
 )
 
 
@@ -30,10 +30,10 @@ def test_csma_mcs_connectivity(channel_server, examples_for_tests: Path, bridge_
     """Test ping connectivity with CSMA carrier sensing.
 
     Validates that:
-    - Node2 ↔ Node3 connectivity (primary link, ~11 dB SINR)
+    - Node2 ↔ Node3 connectivity (primary link, SINR ~15-17 dB)
     - CSMA carrier sensing doesn't break connectivity
-    - Expected: SINR ~11 dB → QPSK capable
-    - Carrier sense range = communication_range × 2.5
+    - Node1 is isolated (negative SINR prevents transmission)
+    - Expected: SINR ~17 dB → 16-QAM capable (MCS 4)
     """
     yaml_path = examples_for_tests / "shared_sionna_sinr_csma-mcs" / "network.yaml"
 
@@ -49,10 +49,23 @@ def test_csma_mcs_connectivity(channel_server, examples_for_tests: Path, bridge_
         # Extract container prefix from YAML (e.g., "clab-csma-mcs-test")
         container_prefix = extract_container_prefix(yaml_path)
 
-        # Test connectivity between all nodes
-        verify_ping_connectivity(container_prefix, bridge_node_ips)
+        # Test only node2↔node3 connectivity (node1 has negative SINR outbound)
+        verify_selective_ping_connectivity(
+            container_prefix=container_prefix,
+            node_ips=bridge_node_ips,
+            expected_success=[
+                ("node2", "node3"),  # SINR=17.3 dB, loss=0.00%
+                ("node3", "node2"),  # SINR=14.8 dB, loss=0.04%
+            ],
+            expected_failure=[
+                ("node1", "node2"),  # SINR=-4.3 dB, 100% loss
+                ("node1", "node3"),  # SINR=-6.8 dB, 100% loss
+                ("node2", "node1"),  # Return path fails (node1→node2 100% loss)
+                ("node3", "node1"),  # Return path fails (node1→node3 100% loss)
+            ],
+        )
 
-        print("✓ CSMA MCS connectivity validated")
+        print("✓ CSMA MCS connectivity validated (node2↔node3 only)")
 
     finally:
         stop_deployment_process(deploy_process)
@@ -67,9 +80,10 @@ def test_csma_mcs_index_validation(channel_server, examples_for_tests: Path, bri
 
     Validates that:
     - MCS index is selected from MCS table
-    - Expected: MCS 2 (QPSK, rate-0.5, LDPC) for SINR ~11 dB
+    - Expected: MCS 4 (16-QAM, rate-0.75, LDPC) for SINR ~17 dB
     - SINR (not SNR) determines MCS choice
     - Deployment logs show selected MCS
+    - Node1 has negative SINR → 100% loss (no valid MCS)
 
     Note: This test validates deployment succeeds with MCS table.
     Actual MCS index verification requires parsing deployment logs or
@@ -90,13 +104,27 @@ def test_csma_mcs_index_validation(channel_server, examples_for_tests: Path, bri
         # Extract container prefix from YAML (e.g., "clab-csma-mcs-test")
         container_prefix = extract_container_prefix(yaml_path)
 
-        # Verify connectivity - if MCS selection failed, links might not work
-        verify_ping_connectivity(container_prefix, bridge_node_ips)
+        # Verify connectivity - only node2↔node3 works (node1 isolated)
+        verify_selective_ping_connectivity(
+            container_prefix=container_prefix,
+            node_ips=bridge_node_ips,
+            expected_success=[
+                ("node2", "node3"),  # MCS 4 selected (SINR=17.3 dB)
+                ("node3", "node2"),  # MCS 3 selected (SINR=14.8 dB)
+            ],
+            expected_failure=[
+                ("node1", "node2"),
+                ("node1", "node3"),
+                ("node2", "node1"),
+                ("node3", "node1"),
+            ],
+        )
 
         # Future enhancement: Parse deployment stdout to extract MCS index
         # and verify it matches expected value based on SINR
         print("✓ CSMA MCS index selection validated (deployment successful)")
-        print("  Note: Expected MCS 2 (QPSK, rate-0.5) for SINR ~11 dB")
+        print("  Note: Expected MCS 4 (16-QAM, rate-0.75) for SINR ~17 dB")
+        print("  Note: Node1 has negative SINR → no valid MCS (100% loss)")
 
     finally:
         stop_deployment_process(deploy_process)
@@ -106,17 +134,34 @@ def test_csma_mcs_index_validation(channel_server, examples_for_tests: Path, bri
 @pytest.mark.integration
 @pytest.mark.slow
 @pytest.mark.sionna
-def test_csma_mcs_hidden_node_problem(channel_server, examples_for_tests: Path, bridge_node_ips: dict):
-    """Validate hidden node scenario modeling.
+def test_csma_mcs_hidden_node_problem(
+    channel_server, examples_for_tests: Path, bridge_node_ips: dict
+):
+    """Validate hidden node scenario with asymmetric connectivity.
 
     Validates that:
     - Node1 @ 30m is beyond carrier sense range of Node2
     - CS range = communication_range × 2.5 = 11m × 2.5 = 27.5m
     - Node1 interference is NOT sensed by Node2
-    - Deployment succeeds despite hidden node
+    - **Node1 CANNOT successfully transmit** (negative SINR due to interference)
+    - Node2 ↔ Node3 connectivity works (positive SINR both directions)
+    - **Pings TO node1 FAIL** because return path has negative SINR
 
-    Note: This test validates topology geometry. Actual carrier sense
-    behavior is modeled in channel computation, not in container network.
+    Expected SINR values (one-way link):
+    - node1→node2: -4.3 dB ❌ (interference from node3 >> signal)
+    - node1→node3: -6.8 dB ❌ (interference from node2 >> signal)
+    - node2→node1: 31.7 dB ✅ (forward path works)
+    - node2→node3: 17.3 dB ✅
+    - node3→node1: 29.2 dB ✅ (forward path works)
+    - node3→node2: 14.8 dB ✅
+
+    Ping test results (requires both forward + return):
+    - node2 → node1: FAIL (forward 31.7 dB works, return -4.3 dB fails)
+    - node3 → node1: FAIL (forward 29.2 dB works, return -6.8 dB fails)
+    - node2 ↔ node3: SUCCESS (both directions have positive SINR)
+
+    This demonstrates the hidden node problem: node1 becomes an "island" - it can
+    receive transmissions but cannot send replies due to negative SINR.
     """
     yaml_path = examples_for_tests / "shared_sionna_sinr_csma-mcs" / "network.yaml"
 
@@ -132,11 +177,29 @@ def test_csma_mcs_hidden_node_problem(channel_server, examples_for_tests: Path, 
         # Extract container prefix from YAML (e.g., "clab-csma-mcs-test")
         container_prefix = extract_container_prefix(yaml_path)
 
-        # Verify all-to-all connectivity works despite hidden node
-        verify_ping_connectivity(container_prefix, bridge_node_ips)
+        # Verify selective connectivity based on SINR values
+        # node1 has negative SINR for its transmissions (interference >> signal)
+        # Pings require BOTH forward and return paths to work
+        # Pings TO node1 fail because return path (node1→) has negative SINR
+        verify_selective_ping_connectivity(
+            container_prefix=container_prefix,
+            node_ips=bridge_node_ips,
+            expected_success=[
+                ("node2", "node3"),  # Both directions work (SINR ~15-17 dB)
+                ("node3", "node2"),  # Both directions work (SINR ~15-17 dB)
+            ],
+            expected_failure=[
+                ("node1", "node2"),  # Forward fails (SINR=-4.3 dB)
+                ("node1", "node3"),  # Forward fails (SINR=-6.8 dB)
+                ("node2", "node1"),  # Forward works (31.7 dB), return fails (-4.3 dB)
+                ("node3", "node1"),  # Forward works (29.2 dB), return fails (-6.8 dB)
+            ],
+        )
 
         print("✓ CSMA hidden node scenario validated")
-        print("  Note: Node1 (30m) beyond CS range (27.5m) of Node2")
+        print("  Note: Node1 is an 'island' - can receive but cannot transmit")
+        print("  Successful links: node2↔node3 only")
+        print("  Failed links: All paths involving node1 (negative SINR return path)")
 
     finally:
         stop_deployment_process(deploy_process)
@@ -146,18 +209,20 @@ def test_csma_mcs_hidden_node_problem(channel_server, examples_for_tests: Path, 
 @pytest.mark.integration
 @pytest.mark.slow
 @pytest.mark.sionna
-def test_csma_mcs_snr_vs_sinr_comparison(channel_server, examples_for_tests: Path, bridge_node_ips: dict):
+def test_csma_mcs_snr_vs_sinr_comparison(
+    channel_server, examples_for_tests: Path, bridge_node_ips: dict
+):
     """Document SNR vs SINR degradation from hidden node interference.
 
     Validates that:
-    - SNR ~42 dB (no interference, theoretical)
-    - SINR ~11 dB (with interference from hidden node)
-    - Degradation: ~31 dB from hidden node interference
-    - MCS selection uses SINR correctly
+    - SNR ~41 dB (no interference, theoretical)
+    - SINR ~17 dB (with interference from hidden node)
+    - Degradation: ~24 dB from hidden node interference
+    - MCS selection uses SINR correctly (MCS 4 vs MCS 5+)
+    - Node1 experiences NEGATIVE SINR (interference > signal)
 
     Note: This test validates deployment and connectivity.
-    Actual SNR/SINR values require channel server API enhancement
-    to expose interference metrics.
+    Actual SNR/SINR values are visible in deployment logs.
     """
     yaml_path = examples_for_tests / "shared_sionna_sinr_csma-mcs" / "network.yaml"
 
@@ -173,11 +238,27 @@ def test_csma_mcs_snr_vs_sinr_comparison(channel_server, examples_for_tests: Pat
         # Extract container prefix from YAML (e.g., "clab-csma-mcs-test")
         container_prefix = extract_container_prefix(yaml_path)
 
-        # Verify connectivity works with SINR-based channel computation
-        verify_ping_connectivity(container_prefix, bridge_node_ips)
+        # Verify connectivity - only node2↔node3 works
+        verify_selective_ping_connectivity(
+            container_prefix=container_prefix,
+            node_ips=bridge_node_ips,
+            expected_success=[
+                ("node2", "node3"),  # SNR=41.2 dB, SINR=17.3 dB
+                ("node3", "node2"),  # SNR=41.2 dB, SINR=14.8 dB
+            ],
+            expected_failure=[
+                ("node1", "node2"),  # SNR=31.7 dB, SINR=-4.3 dB (negative!)
+                ("node1", "node3"),  # SNR=29.2 dB, SINR=-6.8 dB (negative!)
+                ("node2", "node1"),
+                ("node3", "node1"),
+            ],
+        )
 
         print("✓ CSMA SNR vs SINR comparison validated")
-        print("  Note: Expected ~31 dB degradation from hidden node interference")
+        print("  Note: ~24 dB degradation from hidden node interference")
+        print("  SNR: ~41 dB (no interference) → MCS 5+ capable")
+        print("  SINR: ~17 dB (with interference) → MCS 4 selected")
+        print("  Node1: SINR negative (-4 to -7 dB) → 100% loss")
 
     finally:
         stop_deployment_process(deploy_process)
@@ -232,10 +313,15 @@ def test_csma_mcs_tc_config(channel_server, examples_for_tests: Path, bridge_nod
     """Validate netem parameters match SINR-computed values.
 
     Validates that:
-    - Rate limit matches MCS 2 (~64 Mbps expected for QPSK rate-0.5)
+    - Rate limit matches MCS 4 (~192 Mbps for 16-QAM rate-0.75)
     - Loss% reflects SINR-based PER
     - Per-destination tc flower filters configured
     - Bidirectional verification
+
+    Note: SINR ~17 dB (not 11 dB) due to:
+    - Signal from node2 (10m): -40 dBm
+    - Interference from node1 (40m, 30% prob): -57.2 dBm
+    - SINR = 17.2 dB → MCS 4 (16-QAM rate-0.75)
     """
     yaml_path = examples_for_tests / "shared_sionna_sinr_csma-mcs" / "network.yaml"
 
@@ -251,19 +337,22 @@ def test_csma_mcs_tc_config(channel_server, examples_for_tests: Path, bridge_nod
         # Extract container prefix from YAML (e.g., "clab-csma-mcs-test")
         container_prefix = extract_container_prefix(yaml_path)
 
-        # Verify node2 -> node3 link (primary link with SINR ~11 dB)
-        # Expected: QPSK rate-0.5 → ~64 Mbps
+        # Verify node2 -> node3 link (primary link with SINR ~17 dB)
+        # Expected: 16-QAM rate-0.75 → ~192 Mbps (MCS 4)
         result = verify_tc_config(
             container_prefix=container_prefix,
             node="node2",
             interface="eth1",
             dst_node_ip=bridge_node_ips["node3"],
-            expected_rate_mbps=64.0,
-            rate_tolerance_mbps=19.2,  # 30% tolerance
+            expected_rate_mbps=192.0,
+            rate_tolerance_mbps=20.0,  # ~10% tolerance
         )
 
         print("✓ CSMA MCS TC config validated")
-        print(f"  Rate: {result.get('rate_mbps', 'N/A')} Mbps (expected ~64 Mbps for QPSK)")
+        print(
+            f"  Rate: {result.get('rate_mbps', 'N/A')} Mbps "
+            f"(expected ~192 Mbps for 16-QAM rate-0.75)"
+        )
 
     finally:
         stop_deployment_process(deploy_process)

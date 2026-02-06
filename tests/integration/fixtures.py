@@ -446,6 +446,80 @@ def verify_ping_connectivity(container_prefix: str, node_ips: dict[str, str]) ->
     print(f"{'='*70}\n")
 
 
+def verify_selective_ping_connectivity(
+    container_prefix: str,
+    node_ips: dict[str, str],
+    expected_success: list[tuple[str, str]] | None = None,
+    expected_failure: list[tuple[str, str]] | None = None,
+) -> None:
+    """Test selective ping connectivity between nodes.
+
+    Args:
+        container_prefix: Docker container name prefix (e.g., "clab-mylab")
+        node_ips: Dictionary mapping node names to IP addresses
+        expected_success: List of (src_node, dst_node) tuples expected to succeed
+        expected_failure: List of (src_node, dst_node) tuples expected to fail
+
+    Raises:
+        AssertionError: If expected successes fail OR expected failures succeed
+    """
+    print(f"\n{'='*70}")
+    print("Testing selective ping connectivity")
+    print(f"{'='*70}\n")
+
+    # Test expected successes
+    if expected_success:
+        print("Testing links expected to SUCCEED:")
+        for src_node, dst_node in expected_success:
+            src_container = f"{container_prefix}-{src_node}"
+            dst_ip = node_ips[dst_node]
+
+            print(f"  {src_node} -> {dst_node} ({dst_ip})...", end=" ")
+
+            cmd = f"docker exec {src_container} ping -c 3 -W 2 {dst_ip}"
+            result = subprocess.run(
+                cmd, shell=True, capture_output=True, text=True
+            )
+
+            if result.returncode == 0:
+                print("✓ SUCCESS (as expected)")
+            else:
+                print("✗ FAILED (unexpected!)")
+                raise AssertionError(
+                    f"Ping unexpectedly failed: {src_node} -> {dst_node} ({dst_ip})\n"
+                    f"This link was expected to succeed (positive SINR).\n"
+                    f"Output: {result.stdout}\n{result.stderr}"
+                )
+
+    # Test expected failures
+    if expected_failure:
+        print("\nTesting links expected to FAIL (negative SINR):")
+        for src_node, dst_node in expected_failure:
+            src_container = f"{container_prefix}-{src_node}"
+            dst_ip = node_ips[dst_node]
+
+            print(f"  {src_node} -> {dst_node} ({dst_ip})...", end=" ")
+
+            cmd = f"docker exec {src_container} ping -c 3 -W 2 {dst_ip}"
+            result = subprocess.run(
+                cmd, shell=True, capture_output=True, text=True
+            )
+
+            if result.returncode != 0:
+                print("✓ FAILED (as expected, negative SINR)")
+            else:
+                print("✗ SUCCESS (unexpected!)")
+                raise AssertionError(
+                    f"Ping unexpectedly succeeded: {src_node} -> {dst_node} ({dst_ip})\n"
+                    f"This link was expected to fail due to negative SINR.\n"
+                    f"Check SINR computation or link parameters."
+                )
+
+    print(f"\n{'='*70}")
+    print("Selective ping tests passed!")
+    print(f"{'='*70}\n")
+
+
 def verify_route_to_cidr(
     container_prefix: str,
     node: str,

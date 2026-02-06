@@ -7,13 +7,14 @@ different noise figures, resulting in asymmetric SNR values.
 import pytest
 from pathlib import Path
 from tests.integration.fixtures import (
+    bridge_node_ips,
     channel_server,
     deploy_topology,
     destroy_topology,
     extract_container_prefix,
+    run_iperf3_test,
     stop_deployment_process,
     verify_ping_connectivity,
-    run_iperf3_test,
 )
 from sine.config.loader import load_topology
 

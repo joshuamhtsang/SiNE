@@ -9,13 +9,14 @@ import tempfile
 import yaml
 from pathlib import Path
 from tests.integration.fixtures import (
+    bridge_node_ips,
     channel_server,
     deploy_topology,
     destroy_topology,
     extract_container_prefix,
+    modify_topology_mcs,
     stop_deployment_process,
     verify_ping_connectivity,
-    modify_topology_mcs,
 )
 
 

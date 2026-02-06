@@ -7,6 +7,7 @@ Collision Avoidance) in shared bridge topologies.
 import pytest
 from pathlib import Path
 from tests.integration.fixtures import (
+    bridge_node_ips,
     channel_server,
     deploy_topology,
     destroy_topology,

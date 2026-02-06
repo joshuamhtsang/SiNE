@@ -23,6 +23,7 @@ import pytest
 
 # Import shared fixtures and helpers
 from tests.integration.fixtures import (
+    bridge_node_ips,
     channel_server,
     deploy_topology,
     destroy_topology,
@@ -36,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 
 # Prevent "imported but unused" warnings - these are pytest fixtures
-__all__ = ["channel_server"]
+__all__ = ["bridge_node_ips", "channel_server"]
 
 
 @pytest.mark.integration

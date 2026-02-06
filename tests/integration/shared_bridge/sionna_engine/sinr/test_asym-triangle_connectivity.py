@@ -7,13 +7,14 @@ SINR values suitable for reliable packet delivery.
 import pytest
 from pathlib import Path
 from tests.integration.fixtures import (
+    bridge_node_ips,
     channel_server,
     deploy_topology,
     destroy_topology,
     extract_container_prefix,
+    run_iperf3_test,
     stop_deployment_process,
     verify_ping_connectivity,
-    run_iperf3_test,
 )
 
 
