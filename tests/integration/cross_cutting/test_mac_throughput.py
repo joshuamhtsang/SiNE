@@ -32,12 +32,12 @@ import pytest
 # Import shared fixtures and helpers
 from tests.integration.fixtures import (
     channel_server,
-    configure_ips,
     deploy_topology,
     destroy_topology,
     get_uv_path,
     run_iperf3_test,
     stop_deployment_process,
+    extract_container_prefix,
 )
 
 logger = logging.getLogger(__name__)
@@ -66,7 +66,7 @@ def mobility_deployment(examples_for_tests: Path, channel_server):
     Yields:
         Tuple of (deploy_process, yaml_path)
     """
-    yaml_path = examples_for_tests / "shared_sionna_snr_csma-mcs" / "network.yaml"
+    yaml_path = examples_for_tests / "shared_sionna_sinr_csma-mcs" / "network.yaml"
 
     if not yaml_path.exists():
         pytest.skip(f"Example not found: {yaml_path}")
@@ -147,12 +147,15 @@ def test_csma_throughput_spatial_reuse(channel_server, examples_for_tests: Path)
         # Deploy (returns background process)
         deploy_process = deploy_topology(str(yaml_path))
 
+        # Extract container prefix from YAML
+        container_prefix = extract_container_prefix(yaml_path)
+
         # Note: IPs already configured by deployment (192.168.100.x/24)
         # No additional IP configuration needed (unlike earlier CSMA tests)
 
         # Run iperf3 test (using the shared bridge IPs)
         throughput = run_iperf3_test(
-            container_prefix="clab-sinr-csma-wifi6",
+            container_prefix=container_prefix,
             server_node="node1",
             client_node="node2",
             client_ip="192.168.100.1",  # Use existing bridge IP
@@ -192,13 +195,16 @@ def test_tdma_fixed_throughput_matches_slot_ownership(channel_server, examples_f
         # Deploy (returns background process)
         deploy_process = deploy_topology(str(yaml_path))
 
+        # Extract container prefix from YAML
+        container_prefix = extract_container_prefix(yaml_path)
+
         # Configure IPs (using shared bridge IPs already configured by deployment)
         # Note: The deployment already configured 192.168.100.x/24 IPs on eth1
         # We don't need to add additional IPs for this test
 
         # Run iperf3 test (using the shared bridge IPs)
         throughput = run_iperf3_test(
-            container_prefix="clab-sinr-tdma-fixed",
+            container_prefix=container_prefix,
             server_node="node1",
             client_node="node2",
             client_ip="192.168.100.1",  # Use existing bridge IP
@@ -241,12 +247,15 @@ def test_tdma_roundrobin_throughput(channel_server, examples_for_tests: Path):
         # Deploy (returns background process)
         deploy_process = deploy_topology(str(yaml_path))
 
+        # Extract container prefix from YAML
+        container_prefix = extract_container_prefix(yaml_path)
+
         # Note: IPs already configured by deployment (192.168.100.x/24)
         # No additional IP configuration needed (unlike CSMA test)
 
         # Run iperf3 test (using the shared bridge IPs)
         throughput = run_iperf3_test(
-            container_prefix="clab-sinr-tdma-roundrobin",
+            container_prefix=container_prefix,
             server_node="node1",
             client_node="node2",
             client_ip="192.168.100.1",  # Use existing bridge IP
@@ -373,19 +382,16 @@ def test_csma_mcs_uses_sinr(mobility_deployment):
 
     assert link_found, "Link node2 → node3 not found in deployment summary"
 
+    # Extract container prefix from YAML
+    container_prefix = extract_container_prefix(yaml_path)
+
     # Validation 7: Run iperf3 test to verify throughput matches selected MCS
-    # Configure IPs on the test link (node2 → node3)
-    configure_ips(
-        container_prefix="clab-csma-mcs-test",
-        node_ips={
-            "node2": "192.168.100.2",
-            "node3": "192.168.100.3",
-        }
-    )
+    # Note: IPs are automatically configured by SiNE from the topology YAML
+    # (192.168.100.1, 192.168.100.2, 192.168.100.3 for node1, node2, node3)
 
     # Run iperf3 test (node2 → node3, the interference-limited link)
     throughput = run_iperf3_test(
-        container_prefix="clab-csma-mcs-test",
+        container_prefix=container_prefix,
         server_node="node3",
         client_node="node2",
         client_ip="192.168.100.3"
@@ -440,9 +446,11 @@ def test_csma_vs_tdma_ratio(channel_server, examples_for_tests: Path):
     try:
         # Test CSMA
         csma_process = deploy_topology(str(csma_yaml))
+        # Extract CSMA container prefix from YAML
+        csma_container_prefix = extract_container_prefix(csma_yaml)
         # Use existing bridge IPs (192.168.100.x)
         csma_throughput = run_iperf3_test(
-            container_prefix="clab-sinr-csma-wifi6",
+            container_prefix=csma_container_prefix,
             server_node="node1",
             client_node="node2",
             client_ip="192.168.100.1",  # Use existing bridge IP
@@ -453,9 +461,11 @@ def test_csma_vs_tdma_ratio(channel_server, examples_for_tests: Path):
 
         # Test TDMA
         tdma_process = deploy_topology(str(tdma_yaml))
+        # Extract TDMA container prefix from YAML
+        tdma_container_prefix = extract_container_prefix(tdma_yaml)
         # Use existing bridge IPs (192.168.100.x)
         tdma_throughput = run_iperf3_test(
-            container_prefix="clab-sinr-tdma-fixed",
+            container_prefix=tdma_container_prefix,
             server_node="node1",
             client_node="node2",
             client_ip="192.168.100.1",  # Use existing bridge IP

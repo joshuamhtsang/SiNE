@@ -1441,7 +1441,7 @@ nodes:
 - Carrier sense range computed from communication range and multiplier
 
 **Examples**:
-- `shared_sionna_snr_csma-mcs/`: CSMA/CA with adaptive MCS (SNR mode)
+- `shared_sionna_sinr_csma-mcs/`: CSMA/CA with adaptive MCS (SINR mode, hidden node test)
 - `shared_sionna_sinr_csma/`: CSMA with interference-aware MCS (SINR mode)
 
 **Considerations**:

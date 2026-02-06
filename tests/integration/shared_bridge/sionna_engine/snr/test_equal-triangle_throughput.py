@@ -12,6 +12,7 @@ from tests.integration.fixtures import (
     destroy_topology,
     stop_deployment_process,
     run_iperf3_test,
+    extract_container_prefix,
 )
 
 
@@ -38,9 +39,12 @@ def test_equal_triangle_throughput_node1_to_node2(channel_server, examples_for_t
     try:
         deploy_process = deploy_topology(str(yaml_path))
 
+        # Extract container prefix from YAML
+        container_prefix = extract_container_prefix(yaml_path)
+
         # Measure throughput node1 -> node2
         throughput = run_iperf3_test(
-            container_prefix="clab-manet-triangle-shared",
+            container_prefix=container_prefix,
             server_node="node2",
             client_node="node1",
             client_ip="192.168.100.2",
@@ -85,6 +89,9 @@ def test_equal_triangle_throughput_all_pairs(channel_server, examples_for_tests:
     try:
         deploy_process = deploy_topology(str(yaml_path))
 
+        # Extract container prefix from YAML
+        container_prefix = extract_container_prefix(yaml_path)
+
         # Test all 6 directional pairs
         pairs = [
             ("node1", "node2", "192.168.100.2"),
@@ -98,7 +105,7 @@ def test_equal_triangle_throughput_all_pairs(channel_server, examples_for_tests:
         throughputs = []
         for client_node, server_node, server_ip in pairs:
             throughput = run_iperf3_test(
-                container_prefix="clab-manet-triangle-shared",
+                container_prefix=container_prefix,
                 server_node=server_node,
                 client_node=client_node,
                 client_ip=server_ip,

@@ -19,6 +19,7 @@ from tests.integration.fixtures import (
     run_iperf3_test,
     verify_tc_config,
     p2p_node_ips,
+    extract_container_prefix,
 )
 
 
@@ -45,10 +46,13 @@ def test_two_rooms_connectivity(channel_server, examples_for_tests: Path, p2p_no
     try:
         deploy_process = deploy_topology(str(yaml_path))
 
+        # Extract container prefix from YAML (e.g., "clab-two-rooms")
+        container_prefix = extract_container_prefix(yaml_path)
+
         # Test bidirectional connectivity (p2p has only 2 nodes)
         # Use only the two nodes from the fixture
         node_pair = {k: v for k, v in list(p2p_node_ips.items())[:2]}
-        verify_ping_connectivity("clab-two-rooms", node_pair)
+        verify_ping_connectivity(container_prefix, node_pair)
 
         print("✓ Two-rooms connectivity validated")
 
@@ -60,7 +64,7 @@ def test_two_rooms_connectivity(channel_server, examples_for_tests: Path, p2p_no
 @pytest.mark.integration
 @pytest.mark.slow
 @pytest.mark.sionna
-def test_two_rooms_throughput(channel_server, examples_for_tests: Path):
+def test_two_rooms_throughput(channel_server, examples_for_tests: Path, p2p_node_ips: dict):
     """Test iperf3 throughput with high-order modulation.
 
     Validates that:
@@ -79,12 +83,15 @@ def test_two_rooms_throughput(channel_server, examples_for_tests: Path):
     try:
         deploy_process = deploy_topology(str(yaml_path))
 
+        # Extract container prefix from YAML (e.g., "clab-two-rooms")
+        container_prefix = extract_container_prefix(yaml_path)
+
         # Measure throughput node1 -> node2
         throughput = run_iperf3_test(
-            container_prefix="clab-two-rooms",
+            container_prefix=container_prefix,
             server_node="node2",
             client_node="node1",
-            client_ip="10.0.0.2",
+            client_ip=p2p_node_ips["node2"],
             duration_sec=10,
         )
 
@@ -105,7 +112,7 @@ def test_two_rooms_throughput(channel_server, examples_for_tests: Path):
 @pytest.mark.integration
 @pytest.mark.slow
 @pytest.mark.sionna
-def test_two_rooms_scene_loading(channel_server, examples_for_tests: Path):
+def test_two_rooms_scene_loading(channel_server, examples_for_tests: Path, p2p_node_ips: dict):
     """Test that two_rooms.xml scene loads correctly and affects path loss.
 
     Validates that:
@@ -127,10 +134,12 @@ def test_two_rooms_scene_loading(channel_server, examples_for_tests: Path):
         # If scene file is missing or malformed, deployment will fail
         deploy_process = deploy_topology(str(yaml_path))
 
+        # Extract container prefix from YAML (e.g., "clab-two-rooms")
+        container_prefix = extract_container_prefix(yaml_path)
+
         # Verify connectivity - if scene loading failed, SNR would be much higher
         # (free space) and connectivity might still work but with wrong assumptions
-        node_ips = {"node1": "10.0.0.1", "node2": "10.0.0.2"}
-        verify_ping_connectivity("clab-two-rooms", node_ips)
+        verify_ping_connectivity(container_prefix, p2p_node_ips)
 
         print("✓ Two-rooms scene loaded and validated")
 
@@ -142,7 +151,7 @@ def test_two_rooms_scene_loading(channel_server, examples_for_tests: Path):
 @pytest.mark.integration
 @pytest.mark.slow
 @pytest.mark.sionna
-def test_two_rooms_multipath(channel_server, examples_for_tests: Path):
+def test_two_rooms_multipath(channel_server, examples_for_tests: Path, p2p_node_ips: dict):
     """Test multipath delay spread is within OFDM cyclic prefix bounds.
 
     Validates that:
@@ -169,11 +178,13 @@ def test_two_rooms_multipath(channel_server, examples_for_tests: Path):
         # but our OFDM assumptions would be violated
         deploy_process = deploy_topology(str(yaml_path))
 
+        # Extract container prefix from YAML (e.g., "clab-two-rooms")
+        container_prefix = extract_container_prefix(yaml_path)
+
         # For now, we validate that deployment succeeds and connectivity works
         # Future enhancement: Query channel server /api/visualization/state
         # to get actual τ_rms value and assert < 800ns
-        node_ips = {"node1": "10.0.0.1", "node2": "10.0.0.2"}
-        verify_ping_connectivity("clab-two-rooms", node_ips)
+        verify_ping_connectivity(container_prefix, p2p_node_ips)
 
         print("✓ Two-rooms multipath validated (deployment successful)")
         print("  Note: τ_rms < 800ns assumed from successful OFDM-based channel computation")
@@ -206,10 +217,13 @@ def test_two_rooms_tc_config(channel_server, examples_for_tests: Path):
     try:
         deploy_process = deploy_topology(str(yaml_path))
 
+        # Extract container prefix from YAML (e.g., "clab-two-rooms")
+        container_prefix = extract_container_prefix(yaml_path)
+
         # Verify node1's eth1 interface
         # Expected: ~0.1 ms delay (30m distance), moderate loss, ~100 Mbps rate
         result1 = verify_tc_config(
-            container_prefix="clab-two-rooms",
+            container_prefix=container_prefix,
             node="node1",
             interface="eth1",
             expected_rate_mbps=100.0,  # Approximate for 256-QAM
@@ -218,7 +232,7 @@ def test_two_rooms_tc_config(channel_server, examples_for_tests: Path):
 
         # Verify node2's eth1 interface (reverse direction)
         result2 = verify_tc_config(
-            container_prefix="clab-two-rooms",
+            container_prefix=container_prefix,
             node="node2",
             interface="eth1",
             expected_rate_mbps=100.0,
@@ -236,7 +250,7 @@ def test_two_rooms_tc_config(channel_server, examples_for_tests: Path):
 @pytest.mark.very_slow
 @pytest.mark.sionna
 @pytest.mark.skip(reason="Mobility API requires --enable-mobility flag, tested separately")
-def test_two_rooms_mobility(channel_server, examples_for_tests: Path):
+def test_two_rooms_mobility(channel_server, examples_for_tests: Path, p2p_node_ips: dict):
     """Test mobility: move node2 along wall, verify channel recomputation.
 
     Validates that:
@@ -261,9 +275,11 @@ def test_two_rooms_mobility(channel_server, examples_for_tests: Path):
         # Deploy with mobility enabled
         deploy_process = deploy_topology(str(yaml_path), enable_mobility=True)
 
+        # Extract container prefix from YAML (e.g., "clab-two-rooms")
+        container_prefix = extract_container_prefix(yaml_path)
+
         # Test initial position connectivity
-        node_ips = {"node1": "10.0.0.1", "node2": "10.0.0.2"}
-        verify_ping_connectivity("clab-two-rooms", node_ips)
+        verify_ping_connectivity(container_prefix, p2p_node_ips)
 
         # Move node2 from (30, 1, 1) to (30, 5, 1) - along wall
         # This would require mobility API calls (not implemented here)

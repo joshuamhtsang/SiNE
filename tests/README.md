@@ -175,8 +175,9 @@ Available fixtures and helpers:
 - `destroy_topology()` - Cleanup deployed topology
 - `run_iperf3_test()` - Run throughput tests between containers
 - `test_ping_connectivity()` - Validate all-to-all connectivity
-- `configure_ips()` - Configure IP addresses on container interfaces
 - `get_uv_path()` - Get path to uv executable
+
+**Note:** IP addresses are automatically configured by SiNE from the topology YAML during deployment (see [manager.py:260-269](../src/sine/topology/manager.py#L260-L269)). Manual IP configuration is not needed in tests.
 
 ## Running Tests
 
@@ -241,7 +242,7 @@ Where:
 - `p2p_fallback_snr_vacuum/` - Point-to-point, fallback engine, SNR-only, free space
 - `p2p_sionna_snr_two-rooms/` - Point-to-point, Sionna, SNR-only, indoor scene
 - `shared_sionna_sinr_triangle/` - Shared bridge, Sionna, SINR, 3-node triangle
-- `shared_sionna_snr_csma-mcs/` - Shared bridge, Sionna, SNR, CSMA with MCS
+- `shared_sionna_sinr_csma-mcs/` - Shared bridge, Sionna, SINR, CSMA with MCS
 
 **Benefits:**
 - Easy to search with grep (e.g., `grep -r "p2p_sionna" tests/`)

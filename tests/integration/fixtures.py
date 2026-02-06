@@ -337,22 +337,6 @@ def destroy_topology(yaml_path: str) -> None:
         logger.debug(f"Unregistered topology from cleanup: {yaml_path_obj}")
 
 
-def configure_ips(container_prefix: str, node_ips: dict[str, str]) -> None:
-    """Configure IP addresses on container interfaces.
-
-    Args:
-        container_prefix: Docker container name prefix (e.g., "clab-mylab")
-        node_ips: Dictionary mapping node names to IP addresses
-                  (e.g., {"node1": "192.168.1.1/24"})
-    """
-    for node_name, ip_addr in node_ips.items():
-        container_name = f"{container_prefix}-{node_name}"
-        cmd = f"docker exec {container_name} ip addr add {ip_addr} dev eth1"
-
-        print(f"Configuring IP on {container_name}: {ip_addr}")
-        subprocess.run(cmd, shell=True, check=False)
-
-
 def run_iperf3_test(
     container_prefix: str,
     server_node: str,

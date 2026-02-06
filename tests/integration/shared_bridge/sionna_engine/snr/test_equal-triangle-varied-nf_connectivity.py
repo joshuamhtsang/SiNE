@@ -95,9 +95,12 @@ def test_asymmetric_nf_throughput(channel_server, examples_for_tests: Path):
     try:
         deploy_process = deploy_topology(str(yaml_path))
 
+        # Extract container prefix from YAML
+        container_prefix = extract_container_prefix(yaml_path)
+
         # Test node1 -> node2 (uses node2's NF = 10 dB)
         throughput_12 = run_iperf3_test(
-            container_prefix="clab-manet-triangle-shared-asymmetric-nf",
+            container_prefix=container_prefix,
             server_node="node2",
             client_node="node1",
             client_ip="192.168.100.2",
@@ -111,7 +114,7 @@ def test_asymmetric_nf_throughput(channel_server, examples_for_tests: Path):
 
         # Test node2 -> node1 (uses node1's NF = 7 dB)
         throughput_21 = run_iperf3_test(
-            container_prefix="clab-manet-triangle-shared-asymmetric-nf",
+            container_prefix=container_prefix,
             server_node="node1",
             client_node="node2",
             client_ip="192.168.100.1",

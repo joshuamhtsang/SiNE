@@ -1,4 +1,4 @@
-"""Comprehensive integration tests for shared_sionna_snr_csma-mcs example.
+"""Comprehensive integration tests for shared_sionna_sinr_csma-mcs example.
 
 Tests CSMA/CA MAC protocol with adaptive MCS selection based on SINR.
 This example validates:
@@ -19,6 +19,7 @@ from tests.integration.fixtures import (
     verify_tc_config,
     verify_route_to_cidr,
     bridge_node_ips,
+    extract_container_prefix,
 )
 
 
@@ -34,7 +35,7 @@ def test_csma_mcs_connectivity(channel_server, examples_for_tests: Path, bridge_
     - Expected: SINR ~11 dB → QPSK capable
     - Carrier sense range = communication_range × 2.5
     """
-    yaml_path = examples_for_tests / "shared_sionna_snr_csma-mcs" / "network.yaml"
+    yaml_path = examples_for_tests / "shared_sionna_sinr_csma-mcs" / "network.yaml"
 
     if not yaml_path.exists():
         pytest.skip(f"Example not found: {yaml_path}")
@@ -45,8 +46,11 @@ def test_csma_mcs_connectivity(channel_server, examples_for_tests: Path, bridge_
     try:
         deploy_process = deploy_topology(str(yaml_path))
 
+        # Extract container prefix from YAML (e.g., "clab-csma-mcs-test")
+        container_prefix = extract_container_prefix(yaml_path)
+
         # Test connectivity between all nodes
-        verify_ping_connectivity("clab-csma-mcs", bridge_node_ips)
+        verify_ping_connectivity(container_prefix, bridge_node_ips)
 
         print("✓ CSMA MCS connectivity validated")
 
@@ -58,7 +62,7 @@ def test_csma_mcs_connectivity(channel_server, examples_for_tests: Path, bridge_
 @pytest.mark.integration
 @pytest.mark.slow
 @pytest.mark.sionna
-def test_csma_mcs_index_validation(channel_server, examples_for_tests: Path):
+def test_csma_mcs_index_validation(channel_server, examples_for_tests: Path, bridge_node_ips: dict):
     """Validate MCS index selection based on SINR.
 
     Validates that:
@@ -71,7 +75,7 @@ def test_csma_mcs_index_validation(channel_server, examples_for_tests: Path):
     Actual MCS index verification requires parsing deployment logs or
     querying channel server API (future enhancement).
     """
-    yaml_path = examples_for_tests / "shared_sionna_snr_csma-mcs" / "network.yaml"
+    yaml_path = examples_for_tests / "shared_sionna_sinr_csma-mcs" / "network.yaml"
 
     if not yaml_path.exists():
         pytest.skip(f"Example not found: {yaml_path}")
@@ -83,13 +87,11 @@ def test_csma_mcs_index_validation(channel_server, examples_for_tests: Path):
         # Deployment validates MCS table loading and selection
         deploy_process = deploy_topology(str(yaml_path))
 
+        # Extract container prefix from YAML (e.g., "clab-csma-mcs-test")
+        container_prefix = extract_container_prefix(yaml_path)
+
         # Verify connectivity - if MCS selection failed, links might not work
-        node_ips = {
-            "node1": "192.168.100.1",
-            "node2": "192.168.100.2",
-            "node3": "192.168.100.3",
-        }
-        verify_ping_connectivity("clab-csma-mcs", node_ips)
+        verify_ping_connectivity(container_prefix, bridge_node_ips)
 
         # Future enhancement: Parse deployment stdout to extract MCS index
         # and verify it matches expected value based on SINR
@@ -104,7 +106,7 @@ def test_csma_mcs_index_validation(channel_server, examples_for_tests: Path):
 @pytest.mark.integration
 @pytest.mark.slow
 @pytest.mark.sionna
-def test_csma_mcs_hidden_node_problem(channel_server, examples_for_tests: Path):
+def test_csma_mcs_hidden_node_problem(channel_server, examples_for_tests: Path, bridge_node_ips: dict):
     """Validate hidden node scenario modeling.
 
     Validates that:
@@ -116,7 +118,7 @@ def test_csma_mcs_hidden_node_problem(channel_server, examples_for_tests: Path):
     Note: This test validates topology geometry. Actual carrier sense
     behavior is modeled in channel computation, not in container network.
     """
-    yaml_path = examples_for_tests / "shared_sionna_snr_csma-mcs" / "network.yaml"
+    yaml_path = examples_for_tests / "shared_sionna_sinr_csma-mcs" / "network.yaml"
 
     if not yaml_path.exists():
         pytest.skip(f"Example not found: {yaml_path}")
@@ -127,13 +129,11 @@ def test_csma_mcs_hidden_node_problem(channel_server, examples_for_tests: Path):
     try:
         deploy_process = deploy_topology(str(yaml_path))
 
+        # Extract container prefix from YAML (e.g., "clab-csma-mcs-test")
+        container_prefix = extract_container_prefix(yaml_path)
+
         # Verify all-to-all connectivity works despite hidden node
-        node_ips = {
-            "node1": "192.168.100.1",
-            "node2": "192.168.100.2",
-            "node3": "192.168.100.3",
-        }
-        verify_ping_connectivity("clab-csma-mcs", node_ips)
+        verify_ping_connectivity(container_prefix, bridge_node_ips)
 
         print("✓ CSMA hidden node scenario validated")
         print("  Note: Node1 (30m) beyond CS range (27.5m) of Node2")
@@ -146,7 +146,7 @@ def test_csma_mcs_hidden_node_problem(channel_server, examples_for_tests: Path):
 @pytest.mark.integration
 @pytest.mark.slow
 @pytest.mark.sionna
-def test_csma_mcs_snr_vs_sinr_comparison(channel_server, examples_for_tests: Path):
+def test_csma_mcs_snr_vs_sinr_comparison(channel_server, examples_for_tests: Path, bridge_node_ips: dict):
     """Document SNR vs SINR degradation from hidden node interference.
 
     Validates that:
@@ -159,7 +159,7 @@ def test_csma_mcs_snr_vs_sinr_comparison(channel_server, examples_for_tests: Pat
     Actual SNR/SINR values require channel server API enhancement
     to expose interference metrics.
     """
-    yaml_path = examples_for_tests / "shared_sionna_snr_csma-mcs" / "network.yaml"
+    yaml_path = examples_for_tests / "shared_sionna_sinr_csma-mcs" / "network.yaml"
 
     if not yaml_path.exists():
         pytest.skip(f"Example not found: {yaml_path}")
@@ -170,13 +170,11 @@ def test_csma_mcs_snr_vs_sinr_comparison(channel_server, examples_for_tests: Pat
     try:
         deploy_process = deploy_topology(str(yaml_path))
 
+        # Extract container prefix from YAML (e.g., "clab-csma-mcs-test")
+        container_prefix = extract_container_prefix(yaml_path)
+
         # Verify connectivity works with SINR-based channel computation
-        node_ips = {
-            "node1": "192.168.100.1",
-            "node2": "192.168.100.2",
-            "node3": "192.168.100.3",
-        }
-        verify_ping_connectivity("clab-csma-mcs", node_ips)
+        verify_ping_connectivity(container_prefix, bridge_node_ips)
 
         print("✓ CSMA SNR vs SINR comparison validated")
         print("  Note: Expected ~31 dB degradation from hidden node interference")
@@ -197,7 +195,7 @@ def test_csma_mcs_routing(channel_server, examples_for_tests: Path, bridge_node_
     - Routes use eth1 (not default Docker eth0)
     - Routing works despite CSMA carrier sensing
     """
-    yaml_path = examples_for_tests / "shared_sionna_snr_csma-mcs" / "network.yaml"
+    yaml_path = examples_for_tests / "shared_sionna_sinr_csma-mcs" / "network.yaml"
 
     if not yaml_path.exists():
         pytest.skip(f"Example not found: {yaml_path}")
@@ -208,10 +206,13 @@ def test_csma_mcs_routing(channel_server, examples_for_tests: Path, bridge_node_
     try:
         deploy_process = deploy_topology(str(yaml_path))
 
+        # Extract container prefix from YAML (e.g., "clab-csma-mcs-test")
+        container_prefix = extract_container_prefix(yaml_path)
+
         # Verify routes for all 3 nodes
         for node_name in bridge_node_ips.keys():
             verify_route_to_cidr(
-                container_prefix="clab-csma-mcs",
+                container_prefix=container_prefix,
                 node=node_name,
                 cidr="192.168.100.0/24",
                 interface="eth1",
@@ -227,7 +228,7 @@ def test_csma_mcs_routing(channel_server, examples_for_tests: Path, bridge_node_
 @pytest.mark.integration
 @pytest.mark.slow
 @pytest.mark.sionna
-def test_csma_mcs_tc_config(channel_server, examples_for_tests: Path):
+def test_csma_mcs_tc_config(channel_server, examples_for_tests: Path, bridge_node_ips: dict):
     """Validate netem parameters match SINR-computed values.
 
     Validates that:
@@ -236,7 +237,7 @@ def test_csma_mcs_tc_config(channel_server, examples_for_tests: Path):
     - Per-destination tc flower filters configured
     - Bidirectional verification
     """
-    yaml_path = examples_for_tests / "shared_sionna_snr_csma-mcs" / "network.yaml"
+    yaml_path = examples_for_tests / "shared_sionna_sinr_csma-mcs" / "network.yaml"
 
     if not yaml_path.exists():
         pytest.skip(f"Example not found: {yaml_path}")
@@ -247,13 +248,16 @@ def test_csma_mcs_tc_config(channel_server, examples_for_tests: Path):
     try:
         deploy_process = deploy_topology(str(yaml_path))
 
+        # Extract container prefix from YAML (e.g., "clab-csma-mcs-test")
+        container_prefix = extract_container_prefix(yaml_path)
+
         # Verify node2 -> node3 link (primary link with SINR ~11 dB)
         # Expected: QPSK rate-0.5 → ~64 Mbps
         result = verify_tc_config(
-            container_prefix="clab-csma-mcs",
+            container_prefix=container_prefix,
             node="node2",
             interface="eth1",
-            dst_node_ip="192.168.100.3",
+            dst_node_ip=bridge_node_ips["node3"],
             expected_rate_mbps=64.0,
             rate_tolerance_mbps=19.2,  # 30% tolerance
         )
