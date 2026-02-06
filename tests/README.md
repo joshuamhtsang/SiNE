@@ -104,12 +104,12 @@ Tests that affect multiple modes or demonstrate phenomena across topologies:
 **Running integration tests:**
 ```bash
 # All integration tests (requires sudo)
-UV_PATH=$(which uv) sudo -E uv run pytest tests/integration/ -v -s
+UV_PATH=$(which uv) sudo -E $(which uv) run pytest tests/integration/ -v -s
 
 # Specific category
-UV_PATH=$(which uv) sudo -E uv run pytest tests/integration/point_to_point/ -v -s
-UV_PATH=$(which uv) sudo -E uv run pytest tests/integration/shared_bridge/ -v -s
-UV_PATH=$(which uv) sudo -E uv run pytest tests/integration/cross_cutting/ -v -s
+UV_PATH=$(which uv) sudo -E $(which uv) run pytest tests/integration/point_to_point/ -v -s
+UV_PATH=$(which uv) sudo -E $(which uv) run pytest tests/integration/shared_bridge/ -v -s
+UV_PATH=$(which uv) sudo -E $(which uv) run pytest tests/integration/cross_cutting/ -v -s
 ```
 
 **Why sudo?** Integration tests require sudo for:
@@ -137,7 +137,7 @@ Use markers to selectively run tests:
 uv run pytest -m "not slow and not very_slow" -v
 
 # Integration tests only
-UV_PATH=$(which uv) sudo -E uv run pytest -m integration -v -s
+UV_PATH=$(which uv) sudo -E $(which uv) run pytest -m integration -v -s
 
 # Sionna tests (require GPU)
 uv run pytest -m sionna -v
@@ -186,11 +186,11 @@ Available fixtures and helpers:
 uv run pytest tests/unit/ -v
 
 # Integration tests (requires sudo)
-UV_PATH=$(which uv) sudo -E uv run pytest tests/integration/ -v -s
+UV_PATH=$(which uv) sudo -E $(which uv) run pytest tests/integration/ -v -s
 
 # All tests (unit + integration)
 uv run pytest tests/unit/ -v && \
-  UV_PATH=$(which uv) sudo -E uv run pytest tests/integration/ -v -s
+  UV_PATH=$(which uv) sudo -E $(which uv) run pytest tests/integration/ -v -s
 ```
 
 **Single test file:**
@@ -262,7 +262,7 @@ uv run pytest tests/unit/ -m "not slow" -v
 ```bash
 # Run all tests including slow ones
 uv run pytest tests/unit/ -v
-UV_PATH=$(which uv) sudo -E uv run pytest tests/integration/ -v -s
+UV_PATH=$(which uv) sudo -E $(which uv) run pytest tests/integration/ -v -s
 ```
 
 **GPU-aware testing:**

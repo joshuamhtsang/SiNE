@@ -196,11 +196,11 @@ uv run sine channel-server
 
 # Deploy emulation (prints deployment summary with containers, interfaces, netem params)
 # NOTE: Requires sudo for netem (network emulation) configuration
-# Use full path to avoid "uv: command not found" error with sudo
-sudo $(which uv) run sine deploy examples/vacuum_20m/network.yaml
+# CRITICAL: MUST use full pattern - UV_PATH=$(which uv) sudo -E $(which uv) run ...
+UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy examples/vacuum_20m/network.yaml
 
 # Deploy with mobility API enabled (for dynamic position updates)
-sudo $(which uv) run sine deploy --enable-mobility examples/vacuum_20m/network.yaml
+UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy --enable-mobility examples/vacuum_20m/network.yaml
 
 # Validate topology
 uv run sine validate examples/vacuum_20m/network.yaml
@@ -215,7 +215,7 @@ uv run sine info
 uv run sine status
 
 # Destroy emulation
-uv run sine destroy examples/vacuum_20m/network.yaml
+UV_PATH=$(which uv) sudo -E $(which uv) run sine destroy examples/vacuum_20m/network.yaml
 
 # Interactive scene viewer (Jupyter notebook)
 uv run --with jupyter jupyter notebook scenes/viewer.ipynb
@@ -731,7 +731,7 @@ Monitor running emulations in real-time with cached channel metrics and 3D path 
 uv run sine channel-server
 
 # 2. Deploy emulation
-sudo $(which uv) run sine deploy examples/two_rooms/network.yaml
+UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy examples/two_rooms/network.yaml
 
 # 3. Open live viewer (browser-based Jupyter)
 uv run --with jupyter jupyter notebook scenes/viewer_live.ipynb
@@ -1586,7 +1586,7 @@ SiNE supports real-time position updates with automatic channel recomputation, e
 uv run sine channel-server
 
 # Deploy with mobility enabled
-sudo $(which uv) run sine deploy --enable-mobility examples/for_tests/p2p_sionna_snr_two-rooms/network.yaml
+UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy --enable-mobility examples/for_tests/p2p_sionna_snr_two-rooms/network.yaml
 
 # Mobility API now running on http://localhost:8001
 ```
@@ -1687,7 +1687,7 @@ Use the live viewer to monitor moving nodes in real-time:
 
 ```bash
 # 1. Deploy with mobility
-sudo $(which uv) run sine deploy --enable-mobility examples/for_tests/p2p_sionna_snr_two-rooms/network.yaml
+UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy --enable-mobility examples/for_tests/p2p_sionna_snr_two-rooms/network.yaml
 
 # 2. Start mobility script
 uv run python examples/for_user/mobility/linear_movement.py node2 0.0 0.0 1.0 20.0 0.0 1.0 30.0 &
@@ -1809,11 +1809,11 @@ tests/
 uv run pytest tests/unit/ -v
 
 # Integration tests (requires sudo)
-UV_PATH=$(which uv) sudo -E uv run pytest tests/integration/ -v -s
+UV_PATH=$(which uv) sudo -E $(which uv) run pytest tests/integration/ -v -s
 
 # Specific category
 uv run pytest tests/unit/channel/ -v
-UV_PATH=$(which uv) sudo -E uv run pytest tests/integration/point_to_point/ -v -s
+UV_PATH=$(which uv) sudo -E $(which uv) run pytest tests/integration/point_to_point/ -v -s
 ```
 
 ### Pytest Markers
