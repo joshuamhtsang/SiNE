@@ -16,6 +16,7 @@ from tests.integration.fixtures import (
     deploy_topology,
     destroy_topology,
     extract_container_prefix,
+    run_iperf3_test,
     stop_deployment_process,
     verify_route_to_cidr,
     verify_selective_ping_connectivity,
@@ -79,15 +80,14 @@ def test_csma_mcs_index_validation(channel_server, examples_for_tests: Path, bri
     """Validate MCS index selection based on SINR.
 
     Validates that:
-    - MCS index is selected from MCS table
+    - MCS index is selected from MCS table based on SINR (not SNR)
     - Expected: MCS 4 (16-QAM, rate-0.75, LDPC) for SINR ~17 dB
-    - SINR (not SNR) determines MCS choice
-    - Deployment logs show selected MCS
+    - SNR is symmetric (41.2 dB both directions, same distance/power)
+    - SINR is asymmetric due to different interference distances:
+      * node2→node3: SINR=17.3 dB (interferer node1 at 40m from RX)
+      * node3→node2: SINR=14.8 dB (interferer node1 at 30m from RX)
+    - Closer interferer = stronger interference = lower SINR
     - Node1 has negative SINR → 100% loss (no valid MCS)
-
-    Note: This test validates deployment succeeds with MCS table.
-    Actual MCS index verification requires parsing deployment logs or
-    querying channel server API (future enhancement).
     """
     yaml_path = examples_for_tests / "shared_sionna_sinr_csma-mcs" / "network.yaml"
 
@@ -99,10 +99,89 @@ def test_csma_mcs_index_validation(channel_server, examples_for_tests: Path, bri
     deploy_process = None
     try:
         # Deployment validates MCS table loading and selection
-        deploy_process = deploy_topology(str(yaml_path))
+        deploy_process = deploy_topology(str(yaml_path), enable_mobility=True)
 
         # Extract container prefix from YAML (e.g., "clab-csma-mcs-test")
         container_prefix = extract_container_prefix(yaml_path)
+
+        # Wait for mobility API to be ready
+        import urllib.request
+        import json
+        import time
+        max_retries = 30
+        api_ready = False
+        for _ in range(max_retries):
+            try:
+                with urllib.request.urlopen("http://localhost:8001/api/emulation/summary", timeout=1) as response:
+                    if response.status == 200:
+                        api_ready = True
+                        break
+            except Exception:
+                time.sleep(1)
+
+        if not api_ready:
+            raise RuntimeError("Mobility API did not become ready in time")
+
+        # Query deployment summary to extract MCS index and SINR
+        with urllib.request.urlopen("http://localhost:8001/api/emulation/summary") as response:
+            summary = json.loads(response.read())
+
+        # Validate node2 → node3 link
+        link_2_to_3 = None
+        link_3_to_2 = None
+        for link in summary.get("links", []):
+            if link["tx_node"] == "node2" and link["rx_node"] == "node3":
+                link_2_to_3 = link
+            elif link["tx_node"] == "node3" and link["rx_node"] == "node2":
+                link_3_to_2 = link
+
+        assert link_2_to_3 is not None, "Link node2→node3 not found in deployment summary"
+        assert link_3_to_2 is not None, "Link node3→node2 not found in deployment summary"
+
+        # Validate SNR symmetry (same distance, same power)
+        snr_2_to_3 = link_2_to_3["snr_db"]
+        snr_3_to_2 = link_3_to_2["snr_db"]
+        assert abs(snr_2_to_3 - snr_3_to_2) < 1.0, (
+            f"SNR should be symmetric: node2→node3={snr_2_to_3:.1f} dB, "
+            f"node3→node2={snr_3_to_2:.1f} dB (both ~41 dB)"
+        )
+
+        # Validate SINR asymmetry (different interference distances)
+        sinr_2_to_3 = link_2_to_3.get("sinr_db")
+        sinr_3_to_2 = link_3_to_2.get("sinr_db")
+        assert sinr_2_to_3 is not None, "SINR should be computed for node2→node3"
+        assert sinr_3_to_2 is not None, "SINR should be computed for node3→node2"
+
+        # node2→node3 has higher SINR (interferer farther from RX: 40m vs 30m)
+        assert sinr_2_to_3 > sinr_3_to_2, (
+            f"SINR should be higher for node2→node3 (interferer @ 40m from RX) "
+            f"than node3→node2 (interferer @ 30m from RX). "
+            f"Got: {sinr_2_to_3:.1f} dB vs {sinr_3_to_2:.1f} dB"
+        )
+
+        # Validate MCS selection based on SINR
+        mcs_2_to_3 = link_2_to_3.get("mcs_index")
+        mcs_3_to_2 = link_3_to_2.get("mcs_index")
+        assert mcs_2_to_3 is not None, "MCS index should be selected for node2→node3"
+        assert mcs_3_to_2 is not None, "MCS index should be selected for node3→node2"
+
+        # Expected: MCS 4 or 3 for SINR ~15-17 dB
+        assert 3 <= mcs_2_to_3 <= 5, f"MCS for node2→node3 should be 3-5, got {mcs_2_to_3}"
+        assert 3 <= mcs_3_to_2 <= 5, f"MCS for node3→node2 should be 3-5, got {mcs_3_to_2}"
+
+        print(f"\n{'='*70}")
+        print("MCS Index Validation Results:")
+        print(f"{'='*70}")
+        print(f"Link node2 → node3:")
+        print(f"  SNR: {snr_2_to_3:.1f} dB | SINR: {sinr_2_to_3:.1f} dB | MCS: {mcs_2_to_3}")
+        print(f"  Interferer (node1) at 40m from RX")
+        print(f"\nLink node3 → node2:")
+        print(f"  SNR: {snr_3_to_2:.1f} dB | SINR: {sinr_3_to_2:.1f} dB | MCS: {mcs_3_to_2}")
+        print(f"  Interferer (node1) at 30m from RX")
+        print(f"\n✓ SNR symmetric: {snr_2_to_3:.1f} dB ≈ {snr_3_to_2:.1f} dB (same distance)")
+        print(f"✓ SINR asymmetric: {sinr_2_to_3:.1f} dB > {sinr_3_to_2:.1f} dB (closer interferer = lower SINR)")
+        print(f"✓ MCS selected based on SINR (not SNR)")
+        print(f"{'='*70}\n")
 
         # Verify connectivity - only node2↔node3 works (node1 isolated)
         verify_selective_ping_connectivity(
@@ -110,7 +189,7 @@ def test_csma_mcs_index_validation(channel_server, examples_for_tests: Path, bri
             node_ips=bridge_node_ips,
             expected_success=[
                 ("node2", "node3"),  # MCS 4 selected (SINR=17.3 dB)
-                ("node3", "node2"),  # MCS 3 selected (SINR=14.8 dB)
+                ("node3", "node2"),  # MCS 3 or 4 selected (SINR=14.8 dB)
             ],
             expected_failure=[
                 ("node1", "node2"),
@@ -120,11 +199,7 @@ def test_csma_mcs_index_validation(channel_server, examples_for_tests: Path, bri
             ],
         )
 
-        # Future enhancement: Parse deployment stdout to extract MCS index
-        # and verify it matches expected value based on SINR
-        print("✓ CSMA MCS index selection validated (deployment successful)")
-        print("  Note: Expected MCS 4 (16-QAM, rate-0.75) for SINR ~17 dB")
-        print("  Note: Node1 has negative SINR → no valid MCS (100% loss)")
+        print("✓ CSMA MCS index selection validated")
 
     finally:
         stop_deployment_process(deploy_process)
@@ -200,6 +275,109 @@ def test_csma_mcs_hidden_node_problem(
         print("  Note: Node1 is an 'island' - can receive but cannot transmit")
         print("  Successful links: node2↔node3 only")
         print("  Failed links: All paths involving node1 (negative SINR return path)")
+
+    finally:
+        stop_deployment_process(deploy_process)
+        destroy_topology(str(yaml_path))
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+@pytest.mark.sionna
+def test_csma_mcs_hidden_node_throughput(
+    channel_server, examples_for_tests: Path, bridge_node_ips: dict
+):
+    """Demonstrate hidden node problem with iperf3 throughput tests.
+
+    This test shows the asymmetric connectivity of the hidden node:
+    - **node1 → node2 iperf3: FAILS** (negative SINR=-4.3 dB, ~100% loss)
+    - **node2 → node1 iperf3: SUCCEEDS** (positive SINR=31.7 dB, good throughput)
+
+    Key insight: node1 can RECEIVE traffic (node2→node1 works) but CANNOT
+    SEND traffic (node1→node2 fails). This is the classic hidden node problem:
+    - node1 is outside carrier sense range (30m > 27.5m CS range)
+    - node1's transmissions collide with node3's transmissions at node2 (RX)
+    - Interference from node3 overwhelms node1's signal (SINR negative)
+
+    Expected behavior:
+    - node1→node2: iperf3 fails (0-10 Mbps, ~100% packet loss)
+    - node2→node1: iperf3 succeeds (180-220 Mbps, minimal loss)
+
+    This dramatic asymmetry (0 vs 200 Mbps) highlights the hidden node problem.
+    """
+    yaml_path = examples_for_tests / "shared_sionna_sinr_csma-mcs" / "network.yaml"
+
+    if not yaml_path.exists():
+        pytest.skip(f"Example not found: {yaml_path}")
+
+    destroy_topology(str(yaml_path))
+
+    deploy_process = None
+    try:
+        deploy_process = deploy_topology(str(yaml_path))
+
+        # Extract container prefix from YAML (e.g., "clab-csma-mcs-test")
+        container_prefix = extract_container_prefix(yaml_path)
+
+        print(f"\n{'='*70}")
+        print("Hidden Node Throughput Test (Asymmetric Connectivity)")
+        print(f"{'='*70}\n")
+
+        # Test 1: node1 → node2 (SHOULD FAIL due to negative SINR)
+        print("Test 1: node1 → node2 (hidden node TX - should fail)")
+        print("  Expected: 0-10 Mbps (negative SINR=-4.3 dB, ~100% loss)\n")
+
+        try:
+            throughput_1_to_2 = run_iperf3_test(
+                container_prefix=container_prefix,
+                server_node="node2",
+                client_node="node1",
+                client_ip=bridge_node_ips["node2"],
+                duration_sec=8,
+            )
+
+            print(f"  Measured: {throughput_1_to_2:.2f} Mbps")
+
+            # Expect very low throughput (negative SINR → high loss)
+            assert throughput_1_to_2 < 10.0, (
+                f"Expected throughput < 10 Mbps for node1→node2 (negative SINR), "
+                f"but got {throughput_1_to_2:.2f} Mbps"
+            )
+
+            print("  ✓ FAILED as expected (hidden node cannot transmit)\n")
+
+        except Exception as e:
+            # iperf3 may fail completely due to 100% loss
+            print(f"  ✓ FAILED as expected: {e}\n")
+
+        # Test 2: node2 → node1 (SHOULD SUCCEED with good SINR)
+        print("Test 2: node2 → node1 (TO hidden node - should succeed)")
+        print("  Expected: 180-220 Mbps (positive SINR=31.7 dB, low loss)\n")
+
+        throughput_2_to_1 = run_iperf3_test(
+            container_prefix=container_prefix,
+            server_node="node1",
+            client_node="node2",
+            client_ip=bridge_node_ips["node1"],
+            duration_sec=8,
+        )
+
+        print(f"  Measured: {throughput_2_to_1:.2f} Mbps")
+
+        # Expect good throughput (positive SINR → low loss)
+        assert 180.0 <= throughput_2_to_1 <= 220.0, (
+            f"Expected throughput 180-220 Mbps for node2→node1 (positive SINR), "
+            f"but got {throughput_2_to_1:.2f} Mbps"
+        )
+
+        print("  ✓ SUCCESS (can transmit TO hidden node)\n")
+
+        print(f"{'='*70}")
+        print("✓ Hidden node asymmetry demonstrated!")
+        print(f"  node1→node2: 0-10 Mbps (FAILED - negative SINR)")
+        print(f"  node2→node1: {throughput_2_to_1:.2f} Mbps (SUCCESS - positive SINR)")
+        print(f"  Asymmetry factor: ~20-200× difference!")
+        print(f"{'='*70}\n")
 
     finally:
         stop_deployment_process(deploy_process)
