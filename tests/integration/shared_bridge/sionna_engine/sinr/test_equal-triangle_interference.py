@@ -4,8 +4,10 @@ Tests that SINR is correctly computed with interference from multiple transmitte
 in shared bridge topologies.
 """
 
-import pytest
 from pathlib import Path
+
+import pytest
+
 from tests.integration.fixtures import (
     bridge_node_ips,
     channel_server,
@@ -13,7 +15,7 @@ from tests.integration.fixtures import (
     destroy_topology,
     extract_container_prefix,
     stop_deployment_process,
-    verify_ping_connectivity,
+    verify_selective_ping_connectivity,
 )
 from sine.config.loader import load_topology
 
@@ -21,14 +23,16 @@ from sine.config.loader import load_topology
 @pytest.mark.integration
 @pytest.mark.slow
 @pytest.mark.sionna
-def test_sinr_triangle_interference(channel_server, examples_for_tests: Path, bridge_node_ips: dict):
-    """Test SINR computation with 3-node triangle topology.
+def test_sinr_triangle_interference(
+    channel_server, examples_for_tests: Path, bridge_node_ips: dict
+):
+    """Test SINR computation with 3-node equilateral triangle topology.
 
     Validates that:
     - enable_sinr flag is set in the example
     - Deployment completes successfully
-    - All-to-all connectivity works
-    - SINR computation includes interference from other nodes
+    - SINR = 0 dB for all links (signal equals interference in equilateral triangle)
+    - All pings FAIL due to 0 dB SINR (100% packet loss expected)
     """
     yaml_path = examples_for_tests / "shared_sionna_sinr_equal-triangle" / "network.yaml"
 
@@ -48,8 +52,27 @@ def test_sinr_triangle_interference(channel_server, examples_for_tests: Path, br
         # Get container prefix from topology
         container_prefix = extract_container_prefix(str(yaml_path))
 
-        # Verify connectivity
-        verify_ping_connectivity(container_prefix, bridge_node_ips)
+        # In an equilateral triangle with SINR enabled:
+        # - All nodes are equidistant (20m)
+        # - Signal power = Interference power at each receiver
+        # - SINR = 0 dB for all links
+        # - Expected result: ALL pings should FAIL (100% packet loss)
+        all_pairs = [
+            ("node1", "node2"),
+            ("node1", "node3"),
+            ("node2", "node1"),
+            ("node2", "node3"),
+            ("node3", "node1"),
+            ("node3", "node2"),
+        ]
+
+        # Verify all pings fail (SINR = 0 dB → 100% packet loss)
+        verify_selective_ping_connectivity(
+            container_prefix,
+            bridge_node_ips,
+            expected_success=None,
+            expected_failure=all_pairs,
+        )
 
     finally:
         stop_deployment_process(deploy_process)
@@ -59,15 +82,18 @@ def test_sinr_triangle_interference(channel_server, examples_for_tests: Path, br
 @pytest.mark.integration
 @pytest.mark.slow
 @pytest.mark.sionna
-def test_sinr_degradation(channel_server, examples_for_tests: Path, bridge_node_ips: dict):
+def test_sinr_degradation(
+    channel_server, examples_for_tests: Path, bridge_node_ips: dict
+):
     """Confirm SINR < SNR when interference is present.
 
     Tests that:
     - SINR is lower than SNR when multiple interferers are active
-    - The difference reflects adjacent-channel ACLR filtering
+    - For equilateral triangle: SNR = 36 dB, SINR = 0 dB (signal = interference)
+    - Deployment succeeds but connectivity fails due to 0 dB SINR
 
-    Note: This test validates deployment but does not check specific SINR values
-    (those are logged during deployment).
+    Note: SINR vs SNR values are visible in deployment logs:
+      SNR: 36.0 dB | SINR: 0.0 dB
     """
     yaml_path = examples_for_tests / "shared_sionna_sinr_equal-triangle" / "network.yaml"
 
@@ -85,15 +111,30 @@ def test_sinr_degradation(channel_server, examples_for_tests: Path, bridge_node_
         deploy_process = deploy_topology(str(yaml_path))
 
         # Note: SINR vs SNR comparison is visible in deployment logs
-        # The deployment output shows:
-        #   SNR: XX.X dB | SINR: YY.Y dB
-        # Where SINR < SNR due to interference
+        # Expected for equilateral triangle:
+        #   SNR: 36.0 dB (signal without interference)
+        #   SINR: 0.0 dB (signal = interference)
+        # This demonstrates SINR < SNR degradation due to interference
 
         # Get container prefix from topology
         container_prefix = extract_container_prefix(str(yaml_path))
 
-        # Verify basic connectivity to confirm the network is operational
-        verify_ping_connectivity(container_prefix, bridge_node_ips)
+        # Verify all pings fail (SINR = 0 dB means network is NOT operational)
+        all_pairs = [
+            ("node1", "node2"),
+            ("node1", "node3"),
+            ("node2", "node1"),
+            ("node2", "node3"),
+            ("node3", "node1"),
+            ("node3", "node2"),
+        ]
+
+        verify_selective_ping_connectivity(
+            container_prefix,
+            bridge_node_ips,
+            expected_success=None,
+            expected_failure=all_pairs,
+        )
 
     finally:
         stop_deployment_process(deploy_process)
