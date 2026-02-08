@@ -807,6 +807,43 @@ def verify_tc_config(
 # =============================================================================
 
 
+def wait_for_port_available(port: int, timeout_seconds: int = 10) -> None:
+    """Wait for a port to become available.
+
+    Args:
+        port: Port number to check
+        timeout_seconds: Maximum time to wait in seconds
+
+    Raises:
+        RuntimeError: If port is still in use after timeout
+    """
+    import socket
+
+    print(f"Waiting for port {port} to be available...")
+
+    for attempt in range(timeout_seconds):
+        try:
+            # Try to bind to the port to check if it's available
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                s.bind(('0.0.0.0', port))
+                print(f"✓ Port {port} is available")
+                return
+        except OSError as exc:
+            if attempt < timeout_seconds - 1:
+                print(
+                    f"  Port {port} in use, waiting... "
+                    f"(attempt {attempt + 1}/{timeout_seconds})"
+                )
+                time.sleep(1)
+            else:
+                print(f"✗ Port {port} still in use after {timeout_seconds} seconds")
+                raise RuntimeError(
+                    f"Port {port} is in use by another process. "
+                    f"Please kill it manually:\n  lsof -ti :{port} | xargs kill -9"
+                ) from exc
+
+
 @pytest.fixture(scope="session")
 def channel_server():
     """Start channel server for tests, stop after all tests complete.
@@ -826,11 +863,15 @@ def channel_server():
     # Register cleanup handlers (will handle Ctrl+C)
     _register_cleanup_handlers()
 
-    # Start channel server in background
-    logger.info("Starting channel server...")
+    # Wait for port 8000 to be available (from previous run shutdown)
     print("\n" + "="*70)
     print("CHANNEL SERVER STARTUP")
     print("="*70 + "\n")
+    wait_for_port_available(8000, timeout_seconds=10)
+    print()
+
+    # Start channel server in background
+    logger.info("Starting channel server...")
 
     process = subprocess.Popen(
         [uv_path, "run", "sine", "channel-server"],
