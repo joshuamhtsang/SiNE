@@ -71,6 +71,14 @@ def _cleanup_all():
                 _channel_server_process.kill()
                 _channel_server_process.wait()
                 print("  ✓ Channel server killed")
+
+            # Wait for port to be released (important for next test run)
+            print("  Waiting for port 8000 to be released...")
+            try:
+                wait_for_port_available(8000, timeout_seconds=5)
+                print("  ✓ Port 8000 is now available")
+            except RuntimeError:
+                print("  ⚠ Port 8000 still in use (may need manual cleanup)")
         except Exception as e:
             logger.error(f"Failed to stop channel server: {e}")
         finally:
@@ -1212,6 +1220,18 @@ def channel_server():
     """
     global _channel_server_process
 
+    # DEFENSIVE FIX: Check if server already running (pytest sometimes double-enters session fixtures)
+    # Each test can still use different scenes - server reloads via /scene/load endpoint
+    if _channel_server_process is not None and _channel_server_process.poll() is None:
+        print("\n" + "="*70)
+        print("Channel server already running, reusing existing instance")
+        print(f"✓ Server PID: {_channel_server_process.pid}")
+        print("  (Different scenes/configs handled via /scene/load endpoint)")
+        print("="*70 + "\n")
+        yield "http://localhost:8000"
+        # Early return - don't run cleanup since server is shared
+        return
+
     uv_path = get_uv_path()
 
     # Register cleanup handlers (will handle Ctrl+C)
@@ -1219,7 +1239,8 @@ def channel_server():
 
     # Wait for port 8000 to be available (from previous run shutdown)
     print("\n" + "="*70)
-    print("CHANNEL SERVER STARTUP")
+    print("CHANNEL SERVER STARTUP (session-scoped fixture)")
+    print(f"DEBUG: Starting new server at {time.time()}")
     print("="*70 + "\n")
     wait_for_port_available(8000, timeout_seconds=10)
     print()
@@ -1262,6 +1283,8 @@ def channel_server():
         logger.info("Stopping channel server...")
         print("\n" + "="*70)
         print("Stopping channel server (normal shutdown)...")
+        print(f"DEBUG: Fixture cleanup being called at {time.time()}")
+        print(f"DEBUG: process.poll() = {process.poll()}")
         print("="*70 + "\n")
 
         if process.poll() is None:  # Check if still running
@@ -1274,6 +1297,11 @@ def channel_server():
                 process.kill()
                 process.wait()
                 print("✓ Channel server killed")
+
+        # Wait for port to be released (important for next test session)
+        print("Waiting for port 8000 to be released...")
+        wait_for_port_available(8000, timeout_seconds=10)
+        print("✓ Port 8000 is now available")
 
         # Clear tracking (already cleaned up)
         _channel_server_process = None
@@ -1335,6 +1363,11 @@ def channel_server_fallback():
     except subprocess.TimeoutExpired:
         process.kill()
         process.wait()
+
+    # Wait for port to be released
+    print("Waiting for port 8001 to be released...")
+    wait_for_port_available(8001, timeout_seconds=10)
+    print("✓ Port 8001 is now available")
 
 
 @pytest.fixture
