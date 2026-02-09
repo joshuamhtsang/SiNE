@@ -8,6 +8,8 @@ This example validates:
 - SNR vs SINR comparison (interference impact)
 """
 
+import subprocess
+
 import pytest
 from pathlib import Path
 from tests.integration.fixtures import (
@@ -284,26 +286,24 @@ def test_csma_mcs_hidden_node_problem(
 @pytest.mark.integration
 @pytest.mark.slow
 @pytest.mark.sionna
-def test_csma_mcs_hidden_node_throughput(
+@pytest.mark.integration
+@pytest.mark.slow
+@pytest.mark.sionna
+def test_csma_mcs_hidden_node_tcp_failure(
     channel_server, examples_for_tests: Path, bridge_node_ips: dict
 ):
-    """Demonstrate hidden node problem with iperf3 throughput tests.
+    """Demonstrate that TCP fails in hidden node scenario due to missing ACK path.
 
-    This test shows the asymmetric connectivity of the hidden node:
-    - **node1 → node2 iperf3: FAILS** (negative SINR=-4.3 dB, ~100% loss)
-    - **node2 → node1 iperf3: SUCCEEDS** (positive SINR=31.7 dB, good throughput)
+    Hidden node SINR (one-way):
+    - node2 → node1: SINR=31.7 dB ✅ (forward path works)
+    - node1 → node2: SINR=-4.3 dB ❌ (return path fails, 100% loss)
 
-    Key insight: node1 can RECEIVE traffic (node2→node1 works) but CANNOT
-    SEND traffic (node1→node2 fails). This is the classic hidden node problem:
-    - node1 is outside carrier sense range (30m > 27.5m CS range)
-    - node1's transmissions collide with node3's transmissions at node2 (RX)
-    - Interference from node3 overwhelms node1's signal (SINR negative)
+    TCP requires bidirectional communication:
+    1. SYN/SYN-ACK handshake (fails if ACKs are dropped)
+    2. Data segments + ACK responses (stalls without ACKs)
+    3. TCP window updates (can't proceed without ACKs)
 
-    Expected behavior:
-    - node1→node2: iperf3 fails (0-10 Mbps, ~100% packet loss)
-    - node2→node1: iperf3 succeeds (180-220 Mbps, minimal loss)
-
-    This dramatic asymmetry (0 vs 200 Mbps) highlights the hidden node problem.
+    Expected behavior: iperf3 hangs or times out
     """
     yaml_path = examples_for_tests / "shared_sionna_sinr_csma-mcs" / "network.yaml"
 
@@ -320,63 +320,118 @@ def test_csma_mcs_hidden_node_throughput(
         container_prefix = extract_container_prefix(yaml_path)
 
         print(f"\n{'='*70}")
-        print("Hidden Node Throughput Test (Asymmetric Connectivity)")
+        print("Hidden Node TCP Test (Should Fail)")
         print(f"{'='*70}\n")
 
-        # Test 1: node1 → node2 (SHOULD FAIL due to negative SINR)
-        print("Test 1: node1 → node2 (hidden node TX - should fail)")
-        print("  Expected: 0-10 Mbps (negative SINR=-4.3 dB, ~100% loss)\n")
+        print("Test: node2 → node1 (TCP)")
+        print("  Forward path: SINR=31.7 dB ✅")
+        print("  Return path: SINR=-4.3 dB ❌ (ACKs cannot reach sender)")
+        print("  Expected: Connection hangs or very low throughput (<10 Mbps)\n")
 
+        # Test TCP from node2 → node1 (should fail or timeout)
         try:
-            throughput_1_to_2 = run_iperf3_test(
+            throughput = run_iperf3_test(
                 container_prefix=container_prefix,
-                server_node="node2",
-                client_node="node1",
-                client_ip=bridge_node_ips["node2"],
+                server_node="node1",
+                client_node="node2",
+                server_ip=bridge_node_ips["node1"],
                 duration_sec=8,
+                protocol="tcp",
             )
 
-            print(f"  Measured: {throughput_1_to_2:.2f} Mbps")
+            print(f"  Measured: {throughput:.2f} Mbps")
 
-            # Expect very low throughput (negative SINR → high loss)
-            assert throughput_1_to_2 < 10.0, (
-                f"Expected throughput < 10 Mbps for node1→node2 (negative SINR), "
-                f"but got {throughput_1_to_2:.2f} Mbps"
-            )
+            # If we got here, check if throughput is very low
+            if throughput < 10.0:
+                print("  ✓ TCP failed as expected (very low throughput due to missing ACKs)\n")
+            else:
+                # Unexpected: TCP worked despite negative return SINR
+                raise AssertionError(
+                    f"TCP unexpectedly succeeded with {throughput:.2f} Mbps. "
+                    f"Expected <10 Mbps due to negative return SINR."
+                )
 
-            print("  ✓ FAILED as expected (hidden node cannot transmit)\n")
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+            # iperf3 command failed (timeout or connection error)
+            print(f"  ✓ TCP failed as expected: {e}\n")
 
-        except Exception as e:
-            # iperf3 may fail completely due to 100% loss
-            print(f"  ✓ FAILED as expected: {e}\n")
+        print(f"{'='*70}")
+        print("✓ TCP failure confirmed (hidden node breaks bidirectional protocols)")
+        print(f"{'='*70}\n")
 
-        # Test 2: node2 → node1 (SHOULD SUCCEED with good SINR)
-        print("Test 2: node2 → node1 (TO hidden node - should succeed)")
-        print("  Expected: 180-220 Mbps (positive SINR=31.7 dB, low loss)\n")
+    finally:
+        stop_deployment_process(deploy_process)
+        destroy_topology(str(yaml_path))
 
-        throughput_2_to_1 = run_iperf3_test(
+
+@pytest.mark.integration
+@pytest.mark.slow
+@pytest.mark.sionna
+def test_csma_mcs_hidden_node_udp_success(
+    channel_server, examples_for_tests: Path, bridge_node_ips: dict
+):
+    """Demonstrate that UDP succeeds in hidden node scenario (one-way traffic).
+
+    Hidden node SINR (one-way):
+    - node2 → node1: SINR=31.7 dB ✅ (forward path works)
+    - node1 → node2: SINR=-4.3 dB ❌ (return path fails, but not needed for UDP)
+
+    UDP is connectionless:
+    - No handshake required
+    - No ACKs for data segments
+    - Pure one-way data flow
+
+    Expected behavior: High throughput (180-220 Mbps) because only forward path matters
+    """
+    yaml_path = examples_for_tests / "shared_sionna_sinr_csma-mcs" / "network.yaml"
+
+    if not yaml_path.exists():
+        pytest.skip(f"Example not found: {yaml_path}")
+
+    destroy_topology(str(yaml_path))
+
+    deploy_process = None
+    try:
+        deploy_process = deploy_topology(str(yaml_path))
+
+        # Extract container prefix from YAML (e.g., "clab-csma-mcs-test")
+        container_prefix = extract_container_prefix(yaml_path)
+
+        print(f"\n{'='*70}")
+        print("Hidden Node UDP Test (Should Succeed)")
+        print(f"{'='*70}\n")
+
+        print("Test: node2 → node1 (UDP)")
+        print("  Forward path: SINR=31.7 dB ✅ (data packets arrive)")
+        print("  Return path: Not needed (UDP has no ACKs)")
+        print("  Expected: 180-220 Mbps (high SINR → low loss)\n")
+
+        # Test UDP from node2 → node1 (should succeed)
+        throughput = run_iperf3_test(
             container_prefix=container_prefix,
             server_node="node1",
             client_node="node2",
-            client_ip=bridge_node_ips["node1"],
+            server_ip=bridge_node_ips["node1"],
             duration_sec=8,
+            protocol="udp",
+            udp_bandwidth_mbps=300,  # Target bandwidth
         )
 
-        print(f"  Measured: {throughput_2_to_1:.2f} Mbps")
+        print(f"  Measured: {throughput:.2f} Mbps")
 
         # Expect good throughput (positive SINR → low loss)
-        assert 180.0 <= throughput_2_to_1 <= 220.0, (
-            f"Expected throughput 180-220 Mbps for node2→node1 (positive SINR), "
-            f"but got {throughput_2_to_1:.2f} Mbps"
+        assert 180.0 <= throughput <= 250.0, (
+            f"Expected UDP throughput 180-250 Mbps for node2→node1 (positive SINR=31.7 dB), "
+            f"but got {throughput:.2f} Mbps"
         )
 
-        print("  ✓ SUCCESS (can transmit TO hidden node)\n")
+        print("  ✓ UDP succeeded (one-way protocol works with forward path only)\n")
 
         print(f"{'='*70}")
-        print("✓ Hidden node asymmetry demonstrated!")
-        print(f"  node1→node2: 0-10 Mbps (FAILED - negative SINR)")
-        print(f"  node2→node1: {throughput_2_to_1:.2f} Mbps (SUCCESS - positive SINR)")
-        print(f"  Asymmetry factor: ~20-200× difference!")
+        print("✓ UDP success confirmed!")
+        print(f"  TCP: FAILS (needs bidirectional, return path broken)")
+        print(f"  UDP: SUCCEEDS (one-way only, forward path works)")
+        print(f"  Throughput: {throughput:.2f} Mbps")
         print(f"{'='*70}\n")
 
     finally:

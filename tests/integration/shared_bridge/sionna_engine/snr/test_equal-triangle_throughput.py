@@ -47,7 +47,7 @@ def test_equal_triangle_throughput_node1_to_node2(channel_server, examples_for_t
             container_prefix=container_prefix,
             server_node="node2",
             client_node="node1",
-            client_ip="192.168.100.2",
+            server_ip="192.168.100.2",
             duration_sec=10,
         )
 
@@ -108,7 +108,7 @@ def test_equal_triangle_throughput_all_pairs(channel_server, examples_for_tests:
                 container_prefix=container_prefix,
                 server_node=server_node,
                 client_node=client_node,
-                client_ip=server_ip,
+                server_ip=server_ip,
                 duration_sec=8,  # Shorter duration for 6 tests
             )
             throughputs.append(throughput)

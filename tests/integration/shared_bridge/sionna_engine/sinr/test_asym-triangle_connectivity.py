@@ -139,7 +139,7 @@ def test_sinr_asymmetric_throughput(channel_server, examples_for_tests: Path, br
             container_prefix=container_prefix,
             server_node="node2",
             client_node="node1",
-            client_ip=bridge_node_ips["node2"],
+            server_ip=bridge_node_ips["node2"],
             duration_sec=10,
         )
 

@@ -91,7 +91,7 @@ def test_two_rooms_throughput(channel_server, examples_for_tests: Path, p2p_node
             container_prefix=container_prefix,
             server_node="node2",
             client_node="node1",
-            client_ip=p2p_node_ips["node2"],
+            server_ip=p2p_node_ips["node2"],
             duration_sec=10,
         )
 

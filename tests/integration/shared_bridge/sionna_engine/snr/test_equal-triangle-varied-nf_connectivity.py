@@ -104,7 +104,7 @@ def test_asymmetric_nf_throughput(channel_server, examples_for_tests: Path):
             container_prefix=container_prefix,
             server_node="node2",
             client_node="node1",
-            client_ip="192.168.100.2",
+            server_ip="192.168.100.2",
             duration_sec=8,
         )
 
@@ -118,7 +118,7 @@ def test_asymmetric_nf_throughput(channel_server, examples_for_tests: Path):
             container_prefix=container_prefix,
             server_node="node1",
             client_node="node2",
-            client_ip="192.168.100.1",
+            server_ip="192.168.100.1",
             duration_sec=8,
         )
 

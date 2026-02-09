@@ -337,12 +337,45 @@ def destroy_topology(yaml_path: str) -> None:
         logger.debug(f"Unregistered topology from cleanup: {yaml_path_obj}")
 
 
+def wait_for_iperf3(container_name: str, max_wait_sec: int = 30) -> None:
+    """Wait for iperf3 to be available in a container.
+
+    Containerlab's exec commands run asynchronously, so we need to wait for
+    package installation to complete before using iperf3.
+
+    Args:
+        container_name: Docker container name
+        max_wait_sec: Maximum time to wait in seconds
+
+    Raises:
+        RuntimeError: If iperf3 is not available after max_wait_sec
+    """
+    start_time = time.time()
+    while time.time() - start_time < max_wait_sec:
+        result = subprocess.run(
+            f"docker exec {container_name} which iperf3",
+            shell=True,
+            capture_output=True,
+        )
+        if result.returncode == 0:
+            return  # iperf3 is available
+
+        time.sleep(0.5)  # Wait before retrying
+
+    raise RuntimeError(
+        f"iperf3 not available in {container_name} after {max_wait_sec}s. "
+        f"Check that the container has 'exec: apk add iperf3' in the topology YAML."
+    )
+
+
 def run_iperf3_test(
     container_prefix: str,
     server_node: str,
     client_node: str,
-    client_ip: str,
+    server_ip: str,
     duration_sec: int = 8,
+    protocol: str = "tcp",
+    udp_bandwidth_mbps: int = 300,
 ) -> float:
     """Run iperf3 throughput test between two containers.
 
@@ -350,17 +383,31 @@ def run_iperf3_test(
         container_prefix: Docker container name prefix (e.g., "clab-mylab")
         server_node: Server node name
         client_node: Client node name
-        client_ip: IP address of the server (from client's perspective)
+        server_ip: IP address of the server (where client connects)
         duration_sec: Test duration in seconds
+        protocol: Protocol to use ("tcp" or "udp")
+        udp_bandwidth_mbps: Target bandwidth for UDP tests (default: 300 Mbps)
 
     Returns:
         Measured throughput in Mbps
 
     Raises:
         RuntimeError: If iperf3 test fails
+        ValueError: If invalid protocol specified
+        subprocess.TimeoutExpired: If test doesn't complete within duration_sec + 2 seconds
     """
+    if protocol not in ["tcp", "udp"]:
+        raise ValueError(f"Invalid protocol: {protocol}. Must be 'tcp' or 'udp'")
+
     server_container = f"{container_prefix}-{server_node}"
     client_container = f"{container_prefix}-{client_node}"
+
+    # Wait for iperf3 to be available in both containers
+    # (containerlab exec commands run asynchronously)
+    print(f"Waiting for iperf3 to be available in {server_container} and {client_container}...")
+    wait_for_iperf3(server_container)
+    wait_for_iperf3(client_container)
+    print("iperf3 is available in both containers\n")
 
     # Kill any existing iperf3 processes first
     print(f"\nCleaning up any existing iperf3 processes on {server_container}...")
@@ -376,20 +423,103 @@ def run_iperf3_test(
     # Give server time to start
     time.sleep(2)
 
-    # Run iperf3 client
-    print(f"Running iperf3 client on {client_container} -> {client_ip}... (expected duration {duration_sec}s)")
-    client_cmd = (
-        f"docker exec {client_container} iperf3 -c {client_ip} "
-        f"-t {duration_sec} -J"
-    )
-    result = subprocess.run(
-        client_cmd, shell=True, capture_output=True, text=True, check=True
-    )
+    # Build client command based on protocol
+    print(f"Running iperf3 client ({protocol.upper()}) on {client_container} -> {server_ip}... "
+          f"(expected duration {duration_sec}s)")
+
+    if protocol == "udp":
+        client_cmd = (
+            f"docker exec {client_container} iperf3 -c {server_ip} "
+            f"-u -b {udp_bandwidth_mbps}M -t {duration_sec} -J"
+        )
+    else:  # tcp
+        client_cmd = (
+            f"docker exec {client_container} iperf3 -c {server_ip} "
+            f"-t {duration_sec} -J"
+        )
+
+    # Add timeout: test duration + 5 seconds grace period
+    # This accounts for:
+    # - Docker exec overhead (~1s)
+    # - iperf3 startup/shutdown (~1-2s)
+    # - JSON output generation (~1s)
+    # - Network delays and cleanup (~1s)
+    timeout_sec = duration_sec + 5
+
+    try:
+        result = subprocess.run(
+            client_cmd, shell=True, capture_output=True, text=True, check=False, timeout=timeout_sec
+        )
+    except subprocess.TimeoutExpired as e:
+        # Print debugging info before re-raising
+        print(f"\n{'='*70}")
+        print(f"IPERF3 TIMEOUT DEBUGGING")
+        print(f"{'='*70}")
+        print(f"Command: {client_cmd}")
+        print(f"Timeout: {timeout_sec}s (test duration: {duration_sec}s)")
+        print(f"\nPartial stdout: {e.stdout[:1000] if e.stdout else '(none)'}")
+        print(f"\nPartial stderr: {e.stderr[:1000] if e.stderr else '(none)'}")
+        print(f"\nChecking container status...")
+
+        # Check if containers are still running
+        container_check = subprocess.run(
+            f"docker ps --filter name={container_prefix} --format '{{{{.Names}}}} {{{{.Status}}}}'",
+            shell=True, capture_output=True, text=True
+        )
+        print(f"Running containers:\n{container_check.stdout}")
+
+        # Check iperf3 processes
+        server_ps = subprocess.run(
+            f"docker exec {server_container} ps aux | grep iperf3 || echo 'No iperf3 processes'",
+            shell=True, capture_output=True, text=True
+        )
+        print(f"\niperf3 processes on {server_container}:\n{server_ps.stdout}")
+
+        client_ps = subprocess.run(
+            f"docker exec {client_container} ps aux | grep iperf3 || echo 'No iperf3 processes'",
+            shell=True, capture_output=True, text=True
+        )
+        print(f"\niperf3 processes on {client_container}:\n{client_ps.stdout}")
+
+        # Check network connectivity
+        ping_check = subprocess.run(
+            f"docker exec {client_container} ping -c 3 -W 1 {server_ip}",
+            shell=True, capture_output=True, text=True
+        )
+        print(f"\nPing test from {client_container} to {server_ip}:")
+        print(f"Exit code: {ping_check.returncode}")
+        print(f"Output: {ping_check.stdout}")
+        print(f"{'='*70}\n")
+
+        raise
+
+    # Check if command failed
+    if result.returncode != 0:
+        # For UDP, iperf3 sometimes returns non-zero exit code even with valid results
+        # (e.g., when there's packet loss). Try to parse the output anyway.
+        if protocol == "udp" and result.stdout:
+            print(f"Warning: iperf3 exited with code {result.returncode}, attempting to parse output anyway...")
+        else:
+            # For TCP or if there's no stdout, this is a real failure
+            print(f"Error output: {result.stderr}")
+            raise subprocess.CalledProcessError(result.returncode, client_cmd, result.stdout, result.stderr)
 
     # Parse JSON output to extract throughput
     import json
-    output = json.loads(result.stdout)
-    throughput_bps = output["end"]["sum_received"]["bits_per_second"]
+    try:
+        output = json.loads(result.stdout)
+    except json.JSONDecodeError as e:
+        print(f"Failed to parse JSON output. Exit code: {result.returncode}")
+        print(f"Stdout: {result.stdout[:500]}")
+        print(f"Stderr: {result.stderr[:500]}")
+        raise RuntimeError(f"iperf3 did not produce valid JSON output: {e}")
+
+    # Different JSON paths for TCP vs UDP
+    if protocol == "udp":
+        throughput_bps = output["end"]["sum"]["bits_per_second"]
+    else:  # tcp
+        throughput_bps = output["end"]["sum_received"]["bits_per_second"]
+
     throughput_mbps = throughput_bps / 1e6
 
     print(f"Measured throughput: {throughput_mbps:.2f} Mbps\n")

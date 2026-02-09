@@ -87,7 +87,7 @@ def test_fallback_vacuum_throughput(channel_server_fallback, examples_for_tests:
             container_prefix=container_prefix,
             server_node="node2",
             client_node="node1",
-            client_ip=p2p_node_ips["node2"],
+            server_ip=p2p_node_ips["node2"],
             duration_sec=10,
         )
 

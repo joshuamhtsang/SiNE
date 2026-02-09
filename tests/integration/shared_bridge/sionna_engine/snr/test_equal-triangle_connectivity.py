@@ -103,7 +103,7 @@ def test_manet_shared_bridge_throughput(channel_server, examples_for_tests: Path
             container_prefix=container_prefix,
             server_node="node1",
             client_node="node2",
-            client_ip=bridge_node_ips["node1"],
+            server_ip=bridge_node_ips["node1"],
         )
 
         # Validate: 93-100% of ~192 Mbps (64-QAM, 80 MHz, rate-1/2)
@@ -150,7 +150,7 @@ def test_manet_shared_bridge_bidirectional_throughput(channel_server, examples_f
             container_prefix=container_prefix,
             server_node="node1",
             client_node="node2",
-            client_ip=bridge_node_ips["node1"]
+            server_ip=bridge_node_ips["node1"]
         )
 
         # Test node2 → node1
@@ -158,7 +158,7 @@ def test_manet_shared_bridge_bidirectional_throughput(channel_server, examples_f
             container_prefix=container_prefix,
             server_node="node2",
             client_node="node1",
-            client_ip=bridge_node_ips["node2"]
+            server_ip=bridge_node_ips["node2"]
         )
 
         # Both directions should be within 10% of each other

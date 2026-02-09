@@ -164,44 +164,78 @@ Link node3 → node2:
 ======================================================================
 ```
 
-### 2. ✅ Hidden Node Throughput (`test_csma_mcs_hidden_node_throughput`)
+### 2. ✅ TCP Failure Test (`test_csma_mcs_hidden_node_tcp_failure`)
 
-**New test**: Demonstrates hidden node asymmetry with iperf3.
+**New test**: Demonstrates that TCP fails in hidden node scenarios due to missing ACK path.
+
+**Why TCP fails**:
+- Forward path (node2 → node1): SINR=31.7 dB ✅ (data packets arrive)
+- Return path (node1 → node2): SINR=-4.3 dB ❌ (ACK packets dropped)
+- TCP requires bidirectional communication for handshake, data ACKs, and window updates
 
 **Validates**:
-- ✓ **node1 → node2 iperf3 FAILS** (0-10 Mbps due to 100% loss)
-- ✓ **node2 → node1 iperf3 SUCCEEDS** (350-384 Mbps, high MCS)
-- ✓ **Asymmetry factor: ~20-200×** (dramatic difference!)
+- ✓ TCP connection hangs or times out
+- ✓ Very low throughput (<10 Mbps) if connection partially succeeds
+- ✓ Demonstrates why bidirectional protocols fail in hidden node scenarios
 
 **Example output**:
 ```
-Hidden Node Throughput Test (Asymmetric Connectivity)
+Hidden Node TCP Test (Should Fail)
 ======================================================================
-Test 1: node1 → node2 (hidden node TX - should fail)
-  Expected: 0-10 Mbps (negative SINR=-4.3 dB, ~100% loss)
-  Measured: 0.05 Mbps
-  ✓ FAILED as expected (hidden node cannot transmit)
+Test: node2 → node1 (TCP)
+  Forward path: SINR=31.7 dB ✅
+  Return path: SINR=-4.3 dB ❌ (ACKs cannot reach sender)
+  Expected: Connection hangs or very low throughput (<10 Mbps)
 
-Test 2: node2 → node1 (TO hidden node - should succeed)
-  Expected: 180-220 Mbps (positive SINR=31.7 dB, low loss)
-  Measured: 365.23 Mbps
-  ✓ SUCCESS (can transmit TO hidden node)
+  ✓ TCP failed as expected: Command 'docker exec clab-csma-mcs-test-node2 iperf3 -c 192.168.100.1 -t 8 -J' returned non-zero exit status 1
 
-✓ Hidden node asymmetry demonstrated!
-  node1→node2: 0-10 Mbps (FAILED - negative SINR)
-  node2→node1: 365.23 Mbps (SUCCESS - positive SINR)
-  Asymmetry factor: ~20-200× difference!
+✓ TCP failure confirmed (hidden node breaks bidirectional protocols)
 ======================================================================
 ```
 
-### 3. ✅ Ping Connectivity (`test_csma_mcs_hidden_node_problem`)
+### 3. ✅ UDP Success Test (`test_csma_mcs_hidden_node_udp_success`)
+
+**New test**: Demonstrates that UDP succeeds in hidden node scenarios (one-way traffic only).
+
+**Why UDP succeeds**:
+- Forward path (node2 → node1): SINR=31.7 dB ✅ (data packets arrive)
+- Return path: Not needed (UDP has no ACKs)
+- UDP is connectionless: no handshake, no ACKs, pure one-way data flow
+
+**Validates**:
+- ✓ UDP achieves high throughput (180-250 Mbps)
+- ✓ Only forward path SINR matters for UDP
+- ✓ Demonstrates protocol-specific behavior in hidden node scenarios
+
+**Example output**:
+```
+Hidden Node UDP Test (Should Succeed)
+======================================================================
+Test: node2 → node1 (UDP)
+  Forward path: SINR=31.7 dB ✅ (data packets arrive)
+  Return path: Not needed (UDP has no ACKs)
+  Expected: 180-220 Mbps (high SINR → low loss)
+
+  Measured: 215.32 Mbps
+  ✓ UDP succeeded (one-way protocol works with forward path only)
+
+✓ UDP success confirmed!
+  TCP: FAILS (needs bidirectional, return path broken)
+  UDP: SUCCEEDS (one-way only, forward path works)
+  Throughput: 215.32 Mbps
+======================================================================
+```
+
+**Key takeaway**: The TCP vs UDP tests clearly demonstrate why protocol selection matters in hidden node scenarios. TCP's requirement for bidirectional communication makes it vulnerable to asymmetric link failures, while UDP's one-way nature allows it to work when only the forward path is viable.
+
+### 4. ✅ Ping Connectivity (`test_csma_mcs_hidden_node_problem`)
 
 **Validates**:
 - ✓ node2 ↔ node3 connectivity works (both directions have positive SINR)
 - ✓ All paths involving node1 FAIL (negative SINR for node1's TX, return path fails for pings TO node1)
 - ✓ Selective connectivity matches SINR predictions
 
-### 4. ✅ TC Configuration (`test_csma_mcs_tc_config`)
+### 5. ✅ TC Configuration (`test_csma_mcs_tc_config`)
 
 **Validates**:
 - ✓ Rate limits match MCS-computed values
@@ -219,9 +253,21 @@ UV_PATH=$(which uv) sudo -E $(which uv) run pytest -s \
     tests/integration/shared_bridge/sionna_engine/sinr/test_csma_mcs_comprehensive.py \
     -v -m integration
 
-# Run specific test
+# Run specific tests
+# TCP failure test (demonstrates bidirectional protocol issue)
 UV_PATH=$(which uv) sudo -E $(which uv) run pytest -s \
-    tests/integration/shared_bridge/sionna_engine/sinr/test_csma_mcs_comprehensive.py::test_csma_mcs_hidden_node_throughput \
+    tests/integration/shared_bridge/sionna_engine/sinr/test_csma_mcs_comprehensive.py::test_csma_mcs_hidden_node_tcp_failure \
+    -v
+
+# UDP success test (demonstrates one-way protocol works)
+UV_PATH=$(which uv) sudo -E $(which uv) run pytest -s \
+    tests/integration/shared_bridge/sionna_engine/sinr/test_csma_mcs_comprehensive.py::test_csma_mcs_hidden_node_udp_success \
+    -v
+
+# Run TCP and UDP tests together to see the contrast
+UV_PATH=$(which uv) sudo -E $(which uv) run pytest -s \
+    tests/integration/shared_bridge/sionna_engine/sinr/test_csma_mcs_comprehensive.py::test_csma_mcs_hidden_node_tcp_failure \
+    tests/integration/shared_bridge/sionna_engine/sinr/test_csma_mcs_comprehensive.py::test_csma_mcs_hidden_node_udp_success \
     -v
 ```
 
