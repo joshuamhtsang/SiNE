@@ -531,6 +531,230 @@ def run_iperf3_test(
     return throughput_mbps
 
 
+def run_netcat_udp_test(
+    container_prefix: str,
+    server_node: str,
+    client_node: str,
+    server_ip: str,
+    duration_sec: int = 8,
+    target_bandwidth_mbps: int = 300,
+    port: int = 5001,
+) -> float:
+    """Run one-directional UDP throughput test using netcat.
+
+    Unlike iperf3, netcat truly doesn't require bidirectional traffic - it only
+    sends data in one direction with no control channel or ACKs. This makes it
+    suitable for testing hidden node scenarios where the return path has negative SINR.
+
+    Methodology:
+    1. Start netcat UDP receiver on server (saves to /tmp/nc_received)
+    2. Send data from client using dd + nc for duration_sec seconds
+    3. Calculate throughput from received bytes
+
+    Args:
+        container_prefix: Docker container name prefix (e.g., "clab-mylab")
+        server_node: Server node name (receiver)
+        client_node: Client node name (sender)
+        server_ip: IP address of the server
+        duration_sec: Test duration in seconds (default: 8)
+        target_bandwidth_mbps: Target bandwidth to attempt (default: 300 Mbps)
+        port: UDP port to use (default: 5001)
+
+    Returns:
+        Measured throughput in Mbps (received bytes / duration)
+
+    Raises:
+        RuntimeError: If test fails or no data received
+        subprocess.TimeoutExpired: If test doesn't complete
+
+    Note:
+        - Uses BusyBox nc (Alpine Linux default)
+        - Receiver stores data to /tmp/nc_received
+        - Throughput calculated from actual bytes received
+        - No packet loss statistics available (netcat doesn't track this)
+        - Packet size fixed at 1400 bytes (typical WiFi MTU minus headers)
+
+    Example:
+        >>> throughput = run_netcat_udp_test(
+        ...     container_prefix="clab-csma-mcs-test",
+        ...     server_node="node1",
+        ...     client_node="node2",
+        ...     server_ip="192.168.100.1",
+        ...     duration_sec=8,
+        ...     target_bandwidth_mbps=300,
+        ... )
+        >>> print(f"Measured: {throughput:.2f} Mbps")
+    """
+    server_container = f"{container_prefix}-{server_node}"
+    client_container = f"{container_prefix}-{client_node}"
+
+    packet_size_bytes = 1400  # Typical WiFi MTU minus IP/UDP headers
+
+    print(f"\n{'='*70}")
+    print("One-Directional UDP Test (netcat)")
+    print(f"{'='*70}\n")
+    print(f"Server: {server_container}")
+    print(f"Client: {client_container} -> {server_ip}:{port}")
+    print(f"Duration: {duration_sec}s | Target: {target_bandwidth_mbps} Mbps")
+    print(f"Packet size: {packet_size_bytes} bytes\n")
+
+    # Clean up any previous test files
+    cleanup_cmd = f"docker exec {server_container} rm -f /tmp/nc_received"
+    subprocess.run(cleanup_cmd, shell=True)
+
+    # Kill any existing netcat processes
+    print("Cleaning up any existing netcat processes...")
+    kill_cmd_server = f"docker exec {server_container} pkill -9 nc || true"
+    kill_cmd_client = f"docker exec {client_container} pkill -9 nc || true"
+    subprocess.run(kill_cmd_server, shell=True)
+    subprocess.run(kill_cmd_client, shell=True)
+    time.sleep(0.5)
+
+    # Start netcat receiver in background
+    # BusyBox nc syntax: nc -u -l -p <port>
+    print(f"Starting netcat receiver on {server_container}...")
+    receiver_cmd = f"docker exec -d {server_container} sh -c 'nc -u -l -p {port} > /tmp/nc_received'"
+    subprocess.run(receiver_cmd, shell=True, check=True)
+
+    # Give receiver time to start
+    time.sleep(2)
+
+    # Calculate total packets to send based on target bandwidth
+    # target_bandwidth_mbps = (packets_per_sec × packet_size_bytes × 8) / 1e6
+    # packets_per_sec = (target_bandwidth_mbps × 1e6) / (packet_size_bytes × 8)
+    packets_per_sec = (target_bandwidth_mbps * 1e6) / (packet_size_bytes * 8)
+    total_packets = int(packets_per_sec * duration_sec)
+
+    print(f"Sending {total_packets:,} packets ({packet_size_bytes} bytes each)...")
+
+    # Send UDP packets using dd + nc
+    # Use -w 1 flag to make nc exit 1 second after stdin closes
+    sender_cmd = (
+        f"docker exec {client_container} sh -c '"
+        f"dd if=/dev/zero bs={packet_size_bytes} count={total_packets} 2>/dev/null | "
+        f"nc -u -w 1 {server_ip} {port}'"
+    )
+
+    # Start sender in background
+    print("Starting sender in background...")
+    sender_process = subprocess.Popen(
+        sender_cmd,
+        shell=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True
+    )
+
+    # Monitor received file size until transmission complete
+    bytes_expected = total_packets * packet_size_bytes
+    print(f"Monitoring transfer progress (expecting {bytes_expected:,} bytes)...")
+
+    check_interval_sec = 0.5  # Check every 500ms
+    max_stall_checks = 6  # No progress for 3 seconds (6 × 0.5s) → done
+    max_total_time = 120  # Overall timeout: 120 seconds
+
+    prev_size = 0
+    stall_count = 0
+    start_time = time.time()
+
+    size_cmd = f"docker exec {server_container} stat -c %s /tmp/nc_received 2>/dev/null || echo 0"
+
+    while True:
+        elapsed = time.time() - start_time
+
+        # Check file size
+        size_result = subprocess.run(size_cmd, shell=True, capture_output=True, text=True)
+        try:
+            current_size = int(size_result.stdout.strip())
+        except ValueError:
+            current_size = 0
+
+        # Print progress
+        progress_pct = (current_size / bytes_expected * 100) if bytes_expected > 0 else 0
+        print(f"  Progress: {current_size:,} / {bytes_expected:,} bytes ({progress_pct:.1f}%) | Elapsed: {elapsed:.1f}s")
+
+        # Check if transfer complete
+        if current_size >= bytes_expected:
+            print(f"✓ Transfer complete! Received all {bytes_expected:,} bytes")
+            break
+
+        # Check if size stopped changing (sender finished or stalled)
+        if current_size == prev_size:
+            stall_count += 1
+            if stall_count >= max_stall_checks:
+                print(f"✓ Transfer finished (no change for {max_stall_checks * check_interval_sec:.1f}s)")
+                break
+        else:
+            stall_count = 0  # Reset stall counter if data is flowing
+
+        prev_size = current_size
+
+        # Overall timeout check
+        if elapsed > max_total_time:
+            print(f"\nError: Transfer timeout after {max_total_time}s")
+            sender_process.kill()
+            subprocess.run(kill_cmd_server, shell=True)
+            subprocess.run(kill_cmd_client, shell=True)
+            raise RuntimeError(f"Transfer timeout: only received {current_size:,} / {bytes_expected:,} bytes")
+
+        # Check if sender process exited
+        if sender_process.poll() is not None:
+            print("Sender process exited, waiting for final data...")
+            time.sleep(1.0)  # Give receiver time to write final data
+            # Do one more size check after sender exits
+            size_result = subprocess.run(size_cmd, shell=True, capture_output=True, text=True)
+            try:
+                current_size = int(size_result.stdout.strip())
+            except ValueError:
+                current_size = prev_size
+            break
+
+        time.sleep(check_interval_sec)
+
+    # Clean up sender process if still running
+    if sender_process.poll() is None:
+        print("Terminating sender process...")
+        sender_process.terminate()
+        try:
+            sender_process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            sender_process.kill()
+
+    bytes_sent = total_packets * packet_size_bytes
+
+    # Kill receiver
+    subprocess.run(kill_cmd_server, shell=True)
+
+    # Use the current_size from monitoring loop
+    bytes_received = current_size
+    print(f"Final received: {bytes_received:,} bytes")
+
+    # Calculate throughput
+    if bytes_received == 0:
+        print("Error: No data received!")
+        raise RuntimeError(
+            "No data received - check network connectivity. "
+            "This can happen if the forward path also has negative SINR or very high loss."
+        )
+
+    # Throughput = (bytes × 8 bits/byte) / (duration × 1e6 bits/Mbit)
+    throughput_mbps = (bytes_received * 8) / (duration_sec * 1e6)
+
+    # Calculate packet loss (sent vs received)
+    bytes_sent = total_packets * packet_size_bytes
+    loss_percent = ((bytes_sent - bytes_received) / bytes_sent) * 100 if bytes_sent > 0 else 0.0
+
+    print(f"\nResults:")
+    print(f"  Bytes sent: {bytes_sent:,} ({bytes_sent / 1e6:.2f} MB)")
+    print(f"  Bytes received: {bytes_received:,} ({bytes_received / 1e6:.2f} MB)")
+    print(f"  Packet loss: {loss_percent:.2f}%")
+    print(f"  Duration: {duration_sec}s")
+    print(f"  Throughput: {throughput_mbps:.2f} Mbps")
+    print(f"{'='*70}\n")
+
+    return throughput_mbps
+
+
 def verify_ping_connectivity(container_prefix: str, node_ips: dict[str, str]) -> None:
     """Test all-to-all ping connectivity between nodes.
 
