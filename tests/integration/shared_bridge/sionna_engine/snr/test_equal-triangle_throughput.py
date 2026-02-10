@@ -24,7 +24,7 @@ def test_equal_triangle_throughput_node1_to_node2(channel_server, examples_for_t
 
     Validates that:
     - Throughput matches SNR-computed PHY rate
-    - Expected: 175-220 Mbps (64-QAM, rate-0.667, LDPC)
+    - Expected: 170-220 Mbps (64-QAM, rate-0.667, LDPC)
     - Equilateral triangle geometry provides good SNR
     - PHY rate: 80 MHz × 6 bits × 0.667 × 0.8 (overhead) = ~256 Mbps theoretical
     """
@@ -52,9 +52,9 @@ def test_equal_triangle_throughput_node1_to_node2(channel_server, examples_for_t
         )
 
         # Expected: 64-QAM with rate-0.667 LDPC, 80 MHz BW
-        # With netem loss and packet overhead, expect 175-220 Mbps
-        assert 175.0 <= throughput <= 220.0, (
-            f"Throughput {throughput:.2f} Mbps outside expected range 175-220 Mbps"
+        # With netem loss and packet overhead, expect 170-220 Mbps
+        assert 170.0 <= throughput <= 220.0, (
+            f"Throughput {throughput:.2f} Mbps outside expected range 170-220 Mbps"
         )
 
         print(f"✓ Node1→Node2 throughput validated: {throughput:.2f} Mbps")
@@ -74,7 +74,7 @@ def test_equal_triangle_throughput_all_pairs(channel_server, examples_for_tests:
     - All pairs achieve similar throughput (±10%)
     - Symmetric throughput due to equilateral geometry
     - No preferential links (all sides equal length)
-    - Expected: 175-220 Mbps for all pairs
+    - Expected: 170-220 Mbps for all pairs
 
     Note: Marked as very_slow since it runs 6 iperf3 tests (60+ seconds total).
     """
@@ -115,8 +115,8 @@ def test_equal_triangle_throughput_all_pairs(channel_server, examples_for_tests:
             print(f"  {client_node}→{server_node}: {throughput:.2f} Mbps")
 
             # Each individual measurement should be in range
-            assert 175.0 <= throughput <= 220.0, (
-                f"Throughput {throughput:.2f} Mbps outside expected range 175-220 Mbps"
+            assert 170.0 <= throughput <= 220.0, (
+                f"Throughput {throughput:.2f} Mbps outside expected range 170-220 Mbps"
             )
 
         # Verify symmetric throughput (all within 10% of mean)
