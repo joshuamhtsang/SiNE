@@ -45,7 +45,7 @@ class WaypointMobility:
 
     def __init__(
         self,
-        api_url: str = "http://localhost:8001",
+        api_url: str = "http://localhost:8002",
         update_interval_ms: int = 100,
     ):
         """
@@ -199,7 +199,7 @@ class WaypointMobility:
 async def main():
     """Run example waypoint movement."""
     mobility = WaypointMobility(
-        api_url="http://localhost:8001",
+        api_url="http://localhost:8002",
         update_interval_ms=100,
     )
 
@@ -229,7 +229,7 @@ async def main():
         print("  - As node2 moved away, path loss increased")
         print("  - Perpendicular movement had minimal link quality change")
         print("\nTry monitoring with:")
-        print("  watch -n 0.5 'curl -s http://localhost:8001/api/nodes | jq'")
+        print("  watch -n 0.5 'curl -s http://localhost:8002/api/nodes | jq'")
 
     finally:
         await mobility.close()
@@ -237,7 +237,7 @@ async def main():
 
 async def advanced_example():
     """Advanced example with multiple nodes and complex paths."""
-    mobility = WaypointMobility(api_url="http://localhost:8001", update_interval_ms=100)
+    mobility = WaypointMobility(api_url="http://localhost:8002", update_interval_ms=100)
 
     try:
         # Example: Two nodes moving independently

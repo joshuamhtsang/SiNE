@@ -1568,7 +1568,7 @@ SiNE supports real-time position updates with automatic channel recomputation, e
 ### Mobility Architecture
 
 **Polling-based updates:**
-- Mobility API runs on port 8001 (separate from channel server on port 8000)
+- Mobility API runs on port 8002 (separate from channel server on port 8000)
 - Position updates trigger channel recomputation via channel server
 - Netem parameters updated on both endpoints of affected links
 - Default poll interval: 100ms (configurable via `mobility_poll_ms` in topology YAML)
@@ -1588,14 +1588,14 @@ uv run sine channel-server
 # Deploy with mobility enabled
 UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy --enable-mobility examples/for_tests/p2p_sionna_snr_two-rooms/network.yaml
 
-# Mobility API now running on http://localhost:8001
+# Mobility API now running on http://localhost:8002
 ```
 
 ### Mobility API Endpoints
 
 **Update node position:**
 ```bash
-curl -X POST http://localhost:8001/api/mobility/update \
+curl -X POST http://localhost:8002/api/mobility/update \
      -H "Content-Type: application/json" \
      -d '{
        "node": "node2",
@@ -1607,7 +1607,7 @@ curl -X POST http://localhost:8001/api/mobility/update \
 
 **Get current positions:**
 ```bash
-curl http://localhost:8001/api/mobility/positions
+curl http://localhost:8002/api/mobility/positions
 ```
 
 **Response:**
@@ -1738,7 +1738,7 @@ For continuous channel variation, reduce poll interval or implement custom inter
 import requests
 import time
 
-API_URL = "http://localhost:8001/api/mobility/update"
+API_URL = "http://localhost:8002/api/mobility/update"
 
 # Start in room 1 (LOS blocked)
 positions = [

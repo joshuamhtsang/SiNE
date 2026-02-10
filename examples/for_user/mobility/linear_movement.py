@@ -35,7 +35,7 @@ class LinearMobility:
 
     def __init__(
         self,
-        api_url: str = "http://localhost:8001",
+        api_url: str = "http://localhost:8002",
         update_interval_ms: int = 100,
     ):
         """
@@ -188,7 +188,7 @@ async def main():
         sys.exit(1)
 
     mobility = LinearMobility(
-        api_url="http://localhost:8001",
+        api_url="http://localhost:8002",
         update_interval_ms=100,  # Update every 100ms
     )
 
@@ -203,7 +203,7 @@ async def main():
         print("\nMovement complete! Check iperf3 throughput at different distances.")
         print("To observe link quality changes:")
         print("  - Watch netem: watch -n 0.5 './CLAUDE_RESOURCES/check_netem.sh'")
-        print("  - Monitor positions: watch -n 0.5 'curl -s http://localhost:8001/api/nodes | jq'")
+        print("  - Monitor positions: watch -n 0.5 'curl -s http://localhost:8002/api/nodes | jq'")
 
     finally:
         await mobility.close()
