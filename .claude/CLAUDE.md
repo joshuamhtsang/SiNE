@@ -1,5 +1,32 @@
 # Claude Agent Instructions
 
+# ⚠️ CRITICAL COMMAND PATTERNS - READ FIRST
+
+## Sudo Commands (ALWAYS use this exact pattern)
+```bash
+# CORRECT ✅
+UV_PATH=$(which uv) sudo -E $(which uv) run <command>
+
+# WRONG ❌ (will fail with "sudo: uv: command not found")
+UV_PATH=$(which uv) sudo -E uv run <command>
+```
+
+**Why:** `sudo` doesn't have `uv` in its PATH. Must use `$(which uv)` AFTER `sudo -E`.
+
+**Examples:**
+```bash
+# Deploy topology
+UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy examples/vacuum_20m/network.yaml
+
+# Run integration tests
+UV_PATH=$(which uv) sudo -E $(which uv) run pytest -s tests/integration/point_to_point/fallback_engine/snr/ -v
+
+# Destroy topology
+UV_PATH=$(which uv) sudo -E $(which uv) run sine destroy examples/vacuum_20m/network.yaml
+```
+
+---
+
 ## Running Commands with sudo
 
 When a command requires `sudo` privileges:

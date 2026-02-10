@@ -7,12 +7,14 @@ SINR values suitable for reliable packet delivery.
 import pytest
 from pathlib import Path
 from tests.integration.fixtures import (
+    bridge_node_ips,
     channel_server,
     deploy_topology,
     destroy_topology,
+    extract_container_prefix,
+    run_iperf3_test,
     stop_deployment_process,
     verify_ping_connectivity,
-    run_iperf3_test,
 )
 
 
@@ -44,7 +46,7 @@ def test_sinr_asymmetric_connectivity(channel_server, examples_for_tests: Path):
     - node1↔node2: Good connectivity (positive SINR)
     - node3 links: NO CONNECTIVITY (negative SINR, interference >> signal)
     """
-    yaml_path = examples_for_tests / "shared_sionna_sinr_asymmetric" / "network.yaml"
+    yaml_path = examples_for_tests / "shared_sionna_sinr_asym-triangle" / "network.yaml"
 
     if not yaml_path.exists():
         pytest.skip(f"Example not found: {yaml_path}")
@@ -54,6 +56,9 @@ def test_sinr_asymmetric_connectivity(channel_server, examples_for_tests: Path):
     deploy_process = None
     try:
         deploy_process = deploy_topology(str(yaml_path))
+
+        # Get container prefix from topology
+        container_prefix = extract_container_prefix(str(yaml_path))
 
         # Only test node1↔node2 connectivity (positive SINR ~9-10 dB)
         # node3 links have negative SINR and will NOT work
@@ -65,7 +70,7 @@ def test_sinr_asymmetric_connectivity(channel_server, examples_for_tests: Path):
 
         # Test node1 -> node2
         print("Ping node1 -> node2 (192.168.100.2)...", end=" ")
-        cmd = "docker exec clab-manet-asymmetric-sinr-node1 ping -c 5 -W 2 192.168.100.2"
+        cmd = f"docker exec {container_prefix}-node1 ping -c 5 -W 2 192.168.100.2"
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
         if result.returncode == 0:
             print("✓ SUCCESS")
@@ -78,7 +83,7 @@ def test_sinr_asymmetric_connectivity(channel_server, examples_for_tests: Path):
 
         # Test node2 -> node1
         print("Ping node2 -> node1 (192.168.100.1)...", end=" ")
-        cmd = "docker exec clab-manet-asymmetric-sinr-node2 ping -c 5 -W 2 192.168.100.1"
+        cmd = f"docker exec {container_prefix}-node2 ping -c 5 -W 2 192.168.100.1"
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
         if result.returncode == 0:
             print("✓ SUCCESS")
@@ -102,7 +107,7 @@ def test_sinr_asymmetric_connectivity(channel_server, examples_for_tests: Path):
 @pytest.mark.integration
 @pytest.mark.very_slow
 @pytest.mark.sionna
-def test_sinr_asymmetric_throughput(channel_server, examples_for_tests: Path):
+def test_sinr_asymmetric_throughput(channel_server, examples_for_tests: Path, bridge_node_ips: dict):
     """Test throughput with asymmetric geometry (high-SINR link).
 
     Tests the node1→node2 link which has good SINR (~8-9 dB) due to
@@ -114,7 +119,7 @@ def test_sinr_asymmetric_throughput(channel_server, examples_for_tests: Path):
     - With protocol overhead: ~50-64 Mbps
     - With SINR ~8-9 dB: Good packet delivery, minimal loss
     """
-    yaml_path = examples_for_tests / "shared_sionna_sinr_asymmetric" / "network.yaml"
+    yaml_path = examples_for_tests / "shared_sionna_sinr_asym-triangle" / "network.yaml"
 
     if not yaml_path.exists():
         pytest.skip(f"Example not found: {yaml_path}")
@@ -125,13 +130,16 @@ def test_sinr_asymmetric_throughput(channel_server, examples_for_tests: Path):
     try:
         deploy_process = deploy_topology(str(yaml_path))
 
+        # Get container prefix from topology
+        container_prefix = extract_container_prefix(str(yaml_path))
+
         # Run throughput test: node1 -> node2 (high-SINR link)
         # Expected: ~50-64 Mbps (QPSK, rate-0.5 LDPC, 80 MHz BW)
         throughput_mbps = run_iperf3_test(
-            container_prefix="clab-manet-asymmetric-sinr",
+            container_prefix=container_prefix,
             server_node="node2",
             client_node="node1",
-            client_ip="192.168.100.2",
+            server_ip=bridge_node_ips["node2"],
             duration_sec=10,
         )
 
@@ -163,7 +171,7 @@ def test_sinr_asymmetric_negative_sinr_no_connectivity(channel_server, examples_
     - Ping should fail with 100% packet loss
     - This explicitly validates that negative SINR prevents connectivity
     """
-    yaml_path = examples_for_tests / "shared_sionna_sinr_asymmetric" / "network.yaml"
+    yaml_path = examples_for_tests / "shared_sionna_sinr_asym-triangle" / "network.yaml"
 
     if not yaml_path.exists():
         pytest.skip(f"Example not found: {yaml_path}")

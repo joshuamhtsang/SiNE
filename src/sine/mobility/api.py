@@ -10,7 +10,7 @@ Example usage:
     uv run sine mobility-server --topology examples/vacuum_20m/network.yaml
 
     # Update position via HTTP
-    curl -X POST http://localhost:8001/api/mobility/update \
+    curl -X POST http://localhost:8002/api/mobility/update \
          -H "Content-Type: application/json" \
          -d '{"node": "node1", "x": 10.0, "y": 5.0, "z": 1.5}'
 """
@@ -203,13 +203,13 @@ class MobilityAPIServer:
                             break  # Only add each node once (using first wireless interface)
             return {"nodes": nodes}
 
-    async def start(self, host: str = "0.0.0.0", port: int = 8001) -> None:
+    async def start(self, host: str = "0.0.0.0", port: int = 8002) -> None:
         """
         Start the mobility API server and emulation.
 
         Args:
             host: Host to bind to (default: 0.0.0.0)
-            port: Port to bind to (default: 8001)
+            port: Port to bind to (default: 8002)
         """
         logger.info(f"Starting mobility API server on {host}:{port}")
 
@@ -235,7 +235,7 @@ class MobilityAPIServer:
 
 
 async def run_mobility_server(
-    topology_path: Path, host: str = "0.0.0.0", port: int = 8001
+    topology_path: Path, host: str = "0.0.0.0", port: int = 8002
 ) -> None:
     """
     Run the mobility API server.

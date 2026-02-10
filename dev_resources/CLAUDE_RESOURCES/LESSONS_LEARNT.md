@@ -240,3 +240,12 @@ Wireless parameters (position, frequency, power, antenna) are already per-interf
 Each interface can have different MCS tables, modulation schemes
 Position is per-interface (supports antenna arrays at different physical locations)
 ~~~
+
+## Lesson Learned 6 - Use grep yourself to help Claude
+
+Claude itself uses grep copiously, to find places where code changes are needed, and to verify that code changes have been completed. Some top grep tips:
+
+- `$ grep def *.py`: Find all python function definitions in all python scripts in current directory
+- `$ grep "node.*:.*192.168.0" *.py`: See the use of `.*` as a wildcard.  In this case, find lines where a node to IP address dictionary might be in python scripts.
+- grep is so good it is sometimes better than explicitly opening the file in VS Code. Say you want to know how a fixture function in fixture.py is used in a pytest script, but grep for that function call in the scripts!
+

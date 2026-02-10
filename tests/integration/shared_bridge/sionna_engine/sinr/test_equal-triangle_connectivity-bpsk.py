@@ -9,12 +9,14 @@ import tempfile
 import yaml
 from pathlib import Path
 from tests.integration.fixtures import (
+    bridge_node_ips,
     channel_server,
     deploy_topology,
     destroy_topology,
+    extract_container_prefix,
+    modify_topology_mcs,
     stop_deployment_process,
     verify_ping_connectivity,
-    modify_topology_mcs,
 )
 
 
@@ -25,7 +27,7 @@ from tests.integration.fixtures import (
     reason="Even BPSK cannot handle SINR = 0 dB. Effective SNR with LDPC = 6.5 dB, "
            "BER ≈ 0.0014, PER ≈ 100% for 12000-bit packets. Need SINR ≥ 5-10 dB minimum."
 )
-def test_sinr_triangle_connectivity_bpsk(channel_server, examples_for_tests: Path):
+def test_sinr_triangle_connectivity_bpsk(channel_server, examples_for_tests: Path, bridge_node_ips: dict):
     """Test all-to-all ping connectivity with BPSK in low-SINR scenario.
 
     **EXPECTED TO FAIL**: Uses the equilateral triangle topology with co-channel
@@ -46,7 +48,7 @@ def test_sinr_triangle_connectivity_bpsk(channel_server, examples_for_tests: Pat
     - SINR ≈ 0 dB (worst-case: signal = interference)
     - Modulation: BPSK with LDPC rate-1/2
     """
-    source_yaml = examples_for_tests / "shared_sionna_sinr_triangle" / "network.yaml"
+    source_yaml = examples_for_tests / "shared_sionna_sinr_equal-triangle" / "network.yaml"
 
     if not source_yaml.exists():
         pytest.skip(f"Example not found: {source_yaml}")
@@ -69,14 +71,11 @@ def test_sinr_triangle_connectivity_bpsk(channel_server, examples_for_tests: Pat
         # Deploy with BPSK topology
         deploy_process = deploy_topology(str(temp_yaml))
 
-        node_ips = {
-            "node1": "192.168.100.1",
-            "node2": "192.168.100.2",
-            "node3": "192.168.100.3",
-        }
+        # Get container prefix from topology
+        container_prefix = extract_container_prefix(str(temp_yaml))
 
         # Verify connectivity works with BPSK
-        verify_ping_connectivity("clab-manet-triangle-shared-sinr", node_ips)
+        verify_ping_connectivity(container_prefix, bridge_node_ips)
 
     finally:
         stop_deployment_process(deploy_process)
@@ -90,7 +89,7 @@ def test_sinr_triangle_connectivity_bpsk(channel_server, examples_for_tests: Pat
 @pytest.mark.xfail(
     reason="QPSK also cannot handle SINR = 0 dB. Need SINR ≥ 8-12 dB for QPSK."
 )
-def test_sinr_triangle_connectivity_qpsk(channel_server, examples_for_tests: Path):
+def test_sinr_triangle_connectivity_qpsk(channel_server, examples_for_tests: Path, bridge_node_ips: dict):
     """Test all-to-all ping connectivity with QPSK in low-SINR scenario.
 
     **EXPECTED TO FAIL**: Uses QPSK as a middle ground between BPSK and 64-QAM,
@@ -99,7 +98,7 @@ def test_sinr_triangle_connectivity_qpsk(channel_server, examples_for_tests: Pat
     Expected: QPSK should handle low SINR better than 64-QAM but worse than BPSK.
     However, SINR = 0 dB is too low for any practical modulation.
     """
-    source_yaml = examples_for_tests / "shared_sionna_sinr_triangle" / "network.yaml"
+    source_yaml = examples_for_tests / "shared_sionna_sinr_equal-triangle" / "network.yaml"
 
     if not source_yaml.exists():
         pytest.skip(f"Example not found: {source_yaml}")
@@ -122,14 +121,11 @@ def test_sinr_triangle_connectivity_qpsk(channel_server, examples_for_tests: Pat
         # Deploy with QPSK topology
         deploy_process = deploy_topology(str(temp_yaml))
 
-        node_ips = {
-            "node1": "192.168.100.1",
-            "node2": "192.168.100.2",
-            "node3": "192.168.100.3",
-        }
+        # Get container prefix from topology
+        container_prefix = extract_container_prefix(str(temp_yaml))
 
         # Verify connectivity
-        verify_ping_connectivity("clab-manet-triangle-shared-sinr", node_ips)
+        verify_ping_connectivity(container_prefix, bridge_node_ips)
 
     finally:
         stop_deployment_process(deploy_process)

@@ -37,10 +37,10 @@ sudo $(which uv) run sine deploy examples/vacuum_20m/network.yaml
 
 # 3. Test connectivity with iperf3
 # Terminal 1 (node1 server):
-docker exec -it clab-vacuum-20m-node1 iperf3 -s
+docker exec -it clab-p2p-fb-snr-vacuum-node1 iperf3 -s
 
 # Terminal 2 (node2 client):
-docker exec -it clab-vacuum-20m-node2 iperf3 -c 192.168.1.1
+docker exec -it clab-p2p-fb-snr-vacuum-node2 iperf3 -c 192.168.1.1
 
 # 4. Cleanup
 sudo $(which uv) run sine destroy examples/vacuum_20m/network.yaml

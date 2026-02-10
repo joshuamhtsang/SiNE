@@ -7,7 +7,7 @@
 # - Equal throughput per node (1/N of total)
 # - Simple configuration (no explicit slot map needed)
 
-name: sinr-tdma-roundrobin
+name: sh-sio-sinr-tdma-rr
 
 topology:
   enable_sinr: true  # Explicit SINR computation with interference

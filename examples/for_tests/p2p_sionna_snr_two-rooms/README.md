@@ -53,28 +53,28 @@ The scene (`scenes/two_rooms.xml`) consists of:
 
 ## RF Configuration
 
-### WiFi 6 with 256-QAM Modulation
+### WiFi 6 with QPSK Modulation
 
-Both nodes use high-order modulation that is sensitive to low SNR:
+Both nodes use QPSK modulation that provides reliable connectivity in NLOS conditions:
 
 | Parameter | Value | Notes |
 |-----------|-------|-------|
 | **Frequency** | 5.18 GHz | WiFi 6 channel 36 |
 | **Bandwidth** | 80 MHz | Wide channel |
-| **Modulation** | 256-QAM | 8 bits/symbol, high spectral efficiency |
+| **Modulation** | QPSK | 2 bits/symbol, robust modulation |
 | **FEC** | LDPC | Low-density parity-check coding |
-| **Code rate** | 0.75 | 3/4 rate |
+| **Code rate** | 0.5 | 1/2 rate (more robust) |
 | **TX Power** | 20 dBm | Typical WiFi 6 transmit power |
-| **Antenna gain** | 2 dBi | Antenna pattern selection (NOT added to link budget) |
-| **Min SNR** | ~29 dB (uncoded) | ~22.5 dB with LDPC coding gain (6.5 dB) |
+| **Antenna gain** | 2 dBi | Custom omnidirectional antenna |
+| **Min SNR** | ~8 dB (uncoded) | ~1.5 dB with LDPC coding gain (6.5 dB) |
 
 **Expected behavior:**
-- **Theoretical rate**: 80 MHz × 8 bits × 0.75 × 0.8 = **384 Mbps**
+- **Theoretical rate**: 80 MHz × 2 bits × 0.5 × 0.8 = **64 Mbps**
 - **Wall attenuation**: Concrete wall adds ~20-30 dB path loss
 - **Doorway propagation**: Primary path via reflections through doorway
 - **Multipath effects**: Multiple reflections from walls create delay spread
-- **SNR degradation**: Through-wall path may drop below 29 dB (uncoded) / 22.5 dB (coded) threshold
-- **Packet loss**: Expected if SNR < 22.5 dB (256-QAM with LDPC fails to demodulate)
+- **SNR margin**: Expected ~20-30 dB SNR provides 12-22 dB margin over 8 dB threshold
+- **Reliable connectivity**: QPSK works well despite NLOS conditions
 
 ## Deployment and Testing
 
@@ -115,17 +115,17 @@ sudo $(which uv) run sine deploy --enable-mobility examples/two_rooms/network.ya
 - Sionna loads the two-room scene
 - Ray tracing computes propagation paths through doorway
 - Netem parameters applied based on computed SNR and packet loss
-- Mobility API server starts on port 8001
+- Mobility API server starts on port 8002
 
 **Expected output:**
 ```
 Deployed Containers:
-  clab-two-rooms-node1 (sine-node:latest)
+  clab-p2p-sio-snr-two-rooms-node1 (sine-node:latest)
     PID: 12345
     Interfaces:
       - eth1 @ position (10.0, 10.0, 1.0)
 
-  clab-two-rooms-node2 (sine-node:latest)
+  clab-p2p-sio-snr-two-rooms-node2 (sine-node:latest)
     PID: 12346
     Interfaces:
       - eth1 @ position (30.0, 10.0, 1.0)
@@ -139,25 +139,25 @@ Link Parameters:
 
 ```bash
 # Verify connectivity (IPs already configured automatically)
-docker exec clab-two-rooms-node2 ping -c 3 18.0.0.1
+docker exec clab-p2p-sio-snr-two-rooms-node2 ping -c 3 10.0.0.1
 ```
 
 #### 4. Test Throughput (Terminal 4)
 
 ```bash
 # Start iperf3 server on node1
-docker exec -it clab-two-rooms-node1 iperf3 -s
+docker exec -it clab-p2p-sio-snr-two-rooms-node1 iperf3 -s
 ```
 
 **In another terminal (Terminal 5):**
 ```bash
 # Run iperf3 client on node2
-docker exec -it clab-two-rooms-node2 iperf3 -c 18.0.0.1 -t 10
+docker exec -it clab-p2p-sio-snr-two-rooms-node2 iperf3 -c 10.0.0.1 -t 10
 ```
 
 **Expected results:**
-- Throughput likely **lower than 384 Mbps** theoretical rate
-- Packet loss may occur if SNR < 22.5 dB (256-QAM with LDPC coding threshold)
+- Throughput: **50-64 Mbps** (close to theoretical 64 Mbps with QPSK)
+- Low packet loss due to sufficient SNR margin (20-30 dB >> 8 dB threshold)
 - Higher delay and jitter compared to free-space due to multipath
 - Check deployment output for actual netem parameters
 
@@ -201,8 +201,8 @@ As `node2` moves from (30, 10, 1) to (30, 30, 1):
 **Key observations:**
 1. **Best throughput at y=20m** when node2 aligns with doorway center
 2. **SNR decreases** as node2 moves away from doorway alignment
-3. **Packet loss increases** when off-axis (multipath becomes weaker)
-4. **256-QAM may fail** at extreme positions if SNR < 22.5 dB (with LDPC coding)
+3. **QPSK remains reliable** even off-axis (sufficient SNR margin)
+4. **Throughput stays near 64 Mbps** across most positions (QPSK is robust)
 
 ### Monitoring During Mobility
 
@@ -213,7 +213,7 @@ As `node2` moves from (30, 10, 1) to (30, 30, 1):
 # Terminal 4: iperf3 server already running
 # Terminal 5: Continuous throughput tests
 while true; do
-    docker exec clab-two-rooms-node2 iperf3 -c 18.0.0.1 -t 2
+    docker exec clab-p2p-sio-snr-two-rooms-node2 iperf3 -c 18.0.0.1 -t 2
     sleep 1
 done
 ```
@@ -233,7 +233,7 @@ uv run python examples/mobility/linear_movement.py node2 30.0 10.0 1.0 30.0 30.0
 
 ```bash
 # Watch netem configuration update
-watch -n 0.5 'docker exec clab-two-rooms-node1 tc -s qdisc show dev eth1'
+watch -n 0.5 'docker exec clab-p2p-sio-snr-two-rooms-node1 tc -s qdisc show dev eth1'
 ```
 
 Look for:
@@ -244,7 +244,7 @@ Look for:
 
 ```bash
 # Watch position updates
-watch -n 0.5 'curl -s http://localhost:8001/api/nodes | jq'
+watch -n 0.5 'curl -s http://localhost:8002/api/nodes | jq'
 ```
 
 #### Option 4: Debug Ray Tracing
@@ -305,7 +305,7 @@ import asyncio
 from examples.mobility.linear_movement import LinearMobility
 
 async def circle_room2():
-    mobility = LinearMobility(api_url="http://localhost:8001")
+    mobility = LinearMobility(api_url="http://localhost:8002")
 
     # Square path around Room 2 (clockwise from south)
     await mobility.move_linear("node2", (30, 10, 1), (30, 30, 1), 1.0)  # North
@@ -361,14 +361,15 @@ scene.render(paths=paths, show_devices=True)
 **Problem**: iperf3 shows very low throughput or high packet loss.
 
 **Possible causes:**
-1. **SNR below 256-QAM threshold**: Through-wall path loss is too high
+1. **Scene loading issues**: Verify two_rooms.xml loaded correctly
 2. **Multipath interference**: Destructive interference at certain positions
+3. **Unexpected blockage**: No propagation path through doorway
 
 **Solutions:**
 - Check deployment output for actual SNR and packet loss
-- Try lower-order modulation (64-QAM or 16-QAM) in `network.yaml`
-- Increase TX power (`rf_power_dbm`)
-- Move nodes closer to doorway alignment
+- Verify scene loaded: check for "Loaded scene: scenes/two_rooms.xml" in logs
+- Test with debug/paths endpoint to verify propagation paths exist
+- QPSK should work reliably with ~20-30 dB SNR in this scenario
 
 ### No Connectivity
 
@@ -410,14 +411,15 @@ sudo $(which uv) run sine deploy --enable-mobility examples/two_rooms/network.ya
 
 Test how different modulation schemes handle indoor propagation:
 
-1. **256-QAM** (current): High rate, fragile to low SNR
-2. **64-QAM**: Lower rate, more robust
-3. **16-QAM**: Even lower rate, very robust
+1. **QPSK** (current): 64 Mbps, very robust (~8 dB SNR required)
+2. **16-QAM**: Higher rate (~100 Mbps), requires ~14 dB SNR
+3. **64-QAM**: Even higher rate (~192 Mbps), requires ~20 dB SNR
+4. **256-QAM**: Highest rate (~384 Mbps), requires ~29 dB SNR (may fail in NLOS)
 
 Edit `network.yaml` and change:
 ```yaml
-modulation: 64qam      # Instead of 256qam
-fec_code_rate: 0.5     # Instead of 0.75
+modulation: 64qam      # Try higher-order modulation
+fec_code_rate: 0.667   # Adjust code rate
 ```
 
 ### Add Third Node in Doorway

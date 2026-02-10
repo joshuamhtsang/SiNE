@@ -211,13 +211,13 @@ def main(verbose: bool) -> None:
 @click.option(
     "--enable-mobility",
     is_flag=True,
-    help="Start mobility API server on port 8001 for dynamic position updates",
+    help="Start mobility API server on port 8002 for dynamic position updates",
 )
 @click.option(
     "--mobility-port",
-    default=8001,
+    default=8002,
     type=int,
-    help="Port for mobility API server (default: 8001)",
+    help="Port for mobility API server (default: 8002)",
 )
 def deploy(topology: Path, channel_server: str, enable_mobility: bool, mobility_port: int) -> None:
     """Deploy wireless network emulation from topology file.
@@ -238,7 +238,8 @@ def deploy(topology: Path, channel_server: str, enable_mobility: bool, mobility_
     if enable_mobility:
         console.print(f"[dim]Mobility API will be available on port {mobility_port}[/]")
 
-    controller = EmulationController(topology)
+    # Pass channel_server URL to override YAML config if specified
+    controller = EmulationController(topology, channel_server_url=channel_server)
 
     async def run_emulation() -> None:
         try:
@@ -279,8 +280,8 @@ def deploy(topology: Path, channel_server: str, enable_mobility: bool, mobility_
         from sine.mobility.api import MobilityAPIServer
 
         async def run_with_mobility() -> None:
-            # Start emulation controller
-            controller_obj = EmulationController(topology)
+            # Start emulation controller with channel_server override if specified
+            controller_obj = EmulationController(topology, channel_server_url=channel_server)
             await controller_obj.start()
 
             console.print("[bold green]Emulation deployed successfully![/]")
@@ -453,7 +454,7 @@ def channel_server(host: str, port: int, reload: bool, force_fallback: bool) -> 
 @main.command("mobility-server")
 @click.argument("topology", type=click.Path(exists=True, path_type=Path))
 @click.option("--host", default="0.0.0.0", help="Host to bind to")
-@click.option("-p", "--port", default=8001, type=int, help="Port to listen on")
+@click.option("-p", "--port", default=8002, type=int, help="Port to listen on")
 def mobility_server(topology: Path, host: str, port: int) -> None:
     """Start the mobility API server with emulation.
 
@@ -465,7 +466,7 @@ def mobility_server(topology: Path, host: str, port: int) -> None:
         uv run sine mobility-server examples/vacuum_20m/network.yaml
 
         # Update position (in another terminal)
-        curl -X POST http://localhost:8001/api/mobility/update \\
+        curl -X POST http://localhost:8002/api/mobility/update \\
              -H "Content-Type: application/json" \\
              -d '{"node": "node1", "x": 10.0, "y": 5.0, "z": 1.5}'
     """

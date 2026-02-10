@@ -30,15 +30,15 @@
 #
 #   3. Test connectivity with iperf3:
 #      Terminal 1 (node1 server):
-#        docker exec -it clab-vacuum-20m-node1 iperf3 -s
+#        docker exec -it clab-fallback-vacuum-node1 iperf3 -s
 #
 #      Terminal 2 (node2 client):
-#        docker exec -it clab-vacuum-20m-node2 iperf3 -c 192.168.1.1
+#        docker exec -it clab-fallback-vacuum-node2 iperf3 -c 10.0.0.1
 #
 #   4. Cleanup:
 #      sudo $(which uv) run sine destroy examples/vacuum_20m/network.yaml
 
-name: vacuum-20m
+name: p2p-fb-snr-vacuum
 prefix: clab
 
 topology:
@@ -57,7 +57,7 @@ topology:
         - apk add --no-cache iproute2 iputils iperf3
       interfaces:
         eth1:
-          ip_address: 192.168.1.1/24
+          ip_address: 10.0.0.1/24
           wireless:
             rf_power_dbm: 20.0          # Standard transmit power
             rx_sensitivity_dbm: -80.0   # WiFi 6 receiver sensitivity (minimum detectable signal)
@@ -81,7 +81,7 @@ topology:
         - apk add --no-cache iproute2 iputils iperf3
       interfaces:
         eth1:
-          ip_address: 192.168.1.2/24
+          ip_address: 10.0.0.2/24
           wireless:
             rf_power_dbm: 20.0          # Same transmit power
             rx_sensitivity_dbm: -80.0   # WiFi 6 receiver sensitivity (minimum detectable signal)
@@ -103,7 +103,8 @@ topology:
     - endpoints: [node1:eth1, node2:eth1]
 
   # Channel computation server URL
-  channel_server: "http://localhost:8000"
+  # Fallback tests use port 8001 (channel_server_fallback fixture)
+  channel_server: "http://localhost:8001"
 
   # Mobility polling interval (milliseconds)
   mobility_poll_ms: 100

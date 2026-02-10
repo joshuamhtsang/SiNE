@@ -80,14 +80,14 @@ Link: node1→node2 [wireless, CSMA model]
 
 ```bash
 # Configure IP addresses
-docker exec clab-sinr-csma-wifi6-node1 ip addr add 192.168.100.1/24 dev eth1
-docker exec clab-sinr-csma-wifi6-node2 ip addr add 192.168.100.2/24 dev eth1
+docker exec clab-sh-sio-sinr-csma-node1 ip addr add 192.168.100.1/24 dev eth1
+docker exec clab-sh-sio-sinr-csma-node2 ip addr add 192.168.100.2/24 dev eth1
 
 # Start iperf3 server
-docker exec clab-sinr-csma-wifi6-node1 iperf3 -s &
+docker exec clab-sh-sio-sinr-csma-node1 iperf3 -s &
 
 # Run iperf3 client
-docker exec clab-sinr-csma-wifi6-node2 iperf3 -c 192.168.100.1 -t 30
+docker exec clab-sh-sio-sinr-csma-node2 iperf3 -c 192.168.100.1 -t 30
 
 # Expected: ~400-450 Mbps (80-90% of 480 Mbps theoretical)
 # Reason: High spatial reuse, nodes defer when others transmit

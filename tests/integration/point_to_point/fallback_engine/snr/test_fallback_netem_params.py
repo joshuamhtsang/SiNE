@@ -15,56 +15,17 @@ from pathlib import Path
 import pytest
 
 from tests.integration.fixtures import (
+    channel_server_fallback,
     get_uv_path,
     stop_deployment_process,
     destroy_topology,
 )
 
 
-def start_channel_server_fallback(port: int = 8000) -> subprocess.Popen:
-    """Start channel server in force-fallback mode.
-
-    Returns:
-        subprocess.Popen: Channel server process
-    """
-    uv_path = get_uv_path()
-    process = subprocess.Popen(
-        [uv_path, "run", "sine", "channel-server", "--force-fallback", "--port", str(port)],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1,
-    )
-
-    # Wait for server to start
-    assert process.stdout is not None
-    for line in process.stdout:
-        print(f"[channel-server] {line}", end="")
-        if "Uvicorn running" in line or "Application startup complete" in line:
-            break
-        if process.poll() is not None:
-            raise RuntimeError(f"Channel server failed to start (exit code {process.returncode})")
-
-    # Give server a moment to be fully ready
-    time.sleep(1)
-    return process
-
-
-def stop_channel_server(process: subprocess.Popen) -> None:
-    """Stop channel server process."""
-    if process.poll() is None:  # Still running
-        process.terminate()
-        try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait()
-
-
 class TestFallbackNetemParameters:
     """Test netem parameter validation for fallback engine."""
 
-    def test_fallback_netem_parameters(self, examples_for_tests, tmp_path):
+    def test_fallback_netem_parameters(self, channel_server_fallback, examples_for_tests, tmp_path):
         """Verify netem parameters are correctly configured with fallback engine."""
         yaml_path = examples_for_tests / "p2p_fallback_snr_vacuum" / "network.yaml"
 
@@ -75,17 +36,13 @@ class TestFallbackNetemParameters:
         with open(temp_yaml, "w", encoding="utf-8") as f:
             f.write(content)
 
-        channel_server = None
         deploy_process = None
         try:
-            # Start channel server in fallback mode
-            print("\nStarting channel server in fallback mode...")
-            channel_server = start_channel_server_fallback()
-
-            # Deploy with fallback
+            # Deploy with fallback (channel_server_fallback fixture ensures server is running)
             uv_path = get_uv_path()
             deploy_process = subprocess.Popen(
-                ["sudo", uv_path, "run", "sine", "deploy", str(temp_yaml)],
+                ["sudo", uv_path, "run", "sine", "deploy", str(temp_yaml),
+                 "--channel-server", channel_server_fallback],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -127,8 +84,6 @@ class TestFallbackNetemParameters:
             if deploy_process is not None:
                 stop_deployment_process(deploy_process)
             destroy_topology(str(temp_yaml))
-            if channel_server is not None:
-                stop_channel_server(channel_server)
 
 
 if __name__ == "__main__":

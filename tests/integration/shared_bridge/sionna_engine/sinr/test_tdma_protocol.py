@@ -14,6 +14,8 @@ from tests.integration.fixtures import (
     verify_ping_connectivity,
     verify_route_to_cidr,
     verify_tc_config,
+    extract_container_prefix,
+    bridge_node_ips,
 )
 from sine.config.loader import load_topology
 
@@ -21,7 +23,7 @@ from sine.config.loader import load_topology
 @pytest.mark.integration
 @pytest.mark.slow
 @pytest.mark.sionna
-def test_tdma_fixed_connectivity(channel_server, examples_for_tests: Path):
+def test_tdma_fixed_connectivity(channel_server, examples_for_tests: Path, bridge_node_ips: dict):
     """Test connectivity with fixed TDMA slot assignment.
 
     Validates that:
@@ -44,13 +46,10 @@ def test_tdma_fixed_connectivity(channel_server, examples_for_tests: Path):
     try:
         deploy_process = deploy_topology(str(yaml_path))
 
-        node_ips = {
-            "node1": "192.168.100.1",
-            "node2": "192.168.100.2",
-            "node3": "192.168.100.3",
-        }
+        # Extract container prefix from YAML
+        container_prefix = extract_container_prefix(yaml_path)
 
-        verify_ping_connectivity("clab-sinr-tdma-fixed", node_ips)
+        verify_ping_connectivity(container_prefix, bridge_node_ips)
 
     finally:
         stop_deployment_process(deploy_process)
@@ -78,9 +77,12 @@ def test_tdma_fixed_routing(channel_server, examples_for_tests: Path):
     try:
         deploy_process = deploy_topology(str(yaml_path))
 
+        # Extract container prefix from YAML
+        container_prefix = extract_container_prefix(yaml_path)
+
         for node in ["node1", "node2", "node3"]:
             verify_route_to_cidr(
-                "clab-sinr-tdma-fixed",
+                container_prefix,
                 node,
                 "192.168.100.0/24",
                 "eth1"
@@ -94,7 +96,7 @@ def test_tdma_fixed_routing(channel_server, examples_for_tests: Path):
 @pytest.mark.integration
 @pytest.mark.slow
 @pytest.mark.sionna
-def test_tdma_fixed_tc_config(channel_server, examples_for_tests: Path):
+def test_tdma_fixed_tc_config(channel_server, examples_for_tests: Path, bridge_node_ips: dict):
     """Validate TC config with fixed TDMA slots.
 
     Validates that:
@@ -115,12 +117,15 @@ def test_tdma_fixed_tc_config(channel_server, examples_for_tests: Path):
     try:
         deploy_process = deploy_topology(str(yaml_path))
 
+        # Extract container prefix from YAML
+        container_prefix = extract_container_prefix(yaml_path)
+
         # Test node1 -> node2 link
         result = verify_tc_config(
-            container_prefix="clab-sinr-tdma-fixed",
+            container_prefix=container_prefix,
             node="node1",
             interface="eth1",
-            dst_node_ip="192.168.100.2",
+            dst_node_ip=bridge_node_ips["node2"],
             rate_tolerance_mbps=50.0,  # Wide tolerance (depends on slot ownership)
         )
 
@@ -135,7 +140,7 @@ def test_tdma_fixed_tc_config(channel_server, examples_for_tests: Path):
 @pytest.mark.integration
 @pytest.mark.slow
 @pytest.mark.sionna
-def test_tdma_roundrobin_connectivity(channel_server, examples_for_tests: Path):
+def test_tdma_roundrobin_connectivity(channel_server, examples_for_tests: Path, bridge_node_ips: dict):
     """Test connectivity with round-robin TDMA.
 
     Validates that:
@@ -158,13 +163,10 @@ def test_tdma_roundrobin_connectivity(channel_server, examples_for_tests: Path):
     try:
         deploy_process = deploy_topology(str(yaml_path))
 
-        node_ips = {
-            "node1": "192.168.100.1",
-            "node2": "192.168.100.2",
-            "node3": "192.168.100.3",
-        }
+        # Extract container prefix from YAML
+        container_prefix = extract_container_prefix(yaml_path)
 
-        verify_ping_connectivity("clab-sinr-tdma-roundrobin", node_ips)
+        verify_ping_connectivity(container_prefix, bridge_node_ips)
 
     finally:
         stop_deployment_process(deploy_process)
@@ -192,9 +194,12 @@ def test_tdma_roundrobin_routing(channel_server, examples_for_tests: Path):
     try:
         deploy_process = deploy_topology(str(yaml_path))
 
+        # Extract container prefix from YAML
+        container_prefix = extract_container_prefix(yaml_path)
+
         for node in ["node1", "node2", "node3"]:
             verify_route_to_cidr(
-                "clab-sinr-tdma-roundrobin",
+                container_prefix,
                 node,
                 "192.168.100.0/24",
                 "eth1"
@@ -208,7 +213,7 @@ def test_tdma_roundrobin_routing(channel_server, examples_for_tests: Path):
 @pytest.mark.integration
 @pytest.mark.slow
 @pytest.mark.sionna
-def test_tdma_roundrobin_tc_config(channel_server, examples_for_tests: Path):
+def test_tdma_roundrobin_tc_config(channel_server, examples_for_tests: Path, bridge_node_ips: dict):
     """Validate TC config with round-robin TDMA.
 
     Validates that:
@@ -229,12 +234,15 @@ def test_tdma_roundrobin_tc_config(channel_server, examples_for_tests: Path):
     try:
         deploy_process = deploy_topology(str(yaml_path))
 
+        # Extract container prefix from YAML
+        container_prefix = extract_container_prefix(yaml_path)
+
         # Test node1 -> node2 link
         result = verify_tc_config(
-            container_prefix="clab-sinr-tdma-roundrobin",
+            container_prefix=container_prefix,
             node="node1",
             interface="eth1",
-            dst_node_ip="192.168.100.2",
+            dst_node_ip=bridge_node_ips["node2"],
             rate_tolerance_mbps=50.0,  # Wide tolerance
         )
 

@@ -42,7 +42,7 @@ def test_sinr_without_mac_model(channel_server, examples_for_tests: Path):
     - All interferers assumed to have tx_probability=1.0 (worst-case)
     - Deployment succeeds with SINR enabled and no MAC model
     """
-    yaml_path = examples_for_tests / "shared_sionna_sinr_triangle" / "network.yaml"
+    yaml_path = examples_for_tests / "shared_sionna_sinr_equal-triangle" / "network.yaml"
 
     if not yaml_path.exists():
         pytest.skip(f"Example not found: {yaml_path}")

@@ -381,7 +381,7 @@ Monitor running emulations with live channel metrics and 3D visualization:
 uv run sine channel-server
 
 # 2. Deploy emulation
-sudo $(which uv) run sine deploy examples/two_rooms/network.yaml
+sudo $(which uv) run sine deploy examples/for_tests/p2p_sionna_snr_two-rooms/network.yaml
 
 # 3. Open live viewer (browser-based Jupyter)
 uv run --with jupyter jupyter notebook scenes/viewer_live.ipynb
@@ -428,7 +428,7 @@ Analyze network topologies and compute spectral efficiency metrics for each wire
 uv run sine channel-server
 
 # 2. Run spectral efficiency calculator
-uv run python utilities/calc_spectralefficiency.py examples/vacuum_20m/network.yaml
+uv run python utilities/calc_spectralefficiency.py examples/for_tests/p2p_fallback_snr_vacuum/network.yaml
 
 # Example output:
 # ╭────────────────────────────────────────────────────────╮
@@ -515,10 +515,10 @@ uv sync --extra dev
 uv run pytest tests/unit/ -s
 
 # Run integration tests (requires sudo)
-uv run pytest tests/integration/ -s
+UV_PATH=$(which uv) sudo -E $(which uv) run pytest tests/integration/ -s
 
-# Run all tests
-uv run pytest -s
+# Run all tests (integration tests require sudo)
+UV_PATH=$(which uv) sudo -E $(which uv) run pytest -s
 ```
 
 ## Troubleshooting
@@ -563,8 +563,8 @@ sudo chmod 0440 /etc/sudoers.d/sine
 ### Shared bridge TC filter issues
 
 For shared bridge mode troubleshooting (flower filters, HTB, per-destination netem), see:
-- [examples/manet_triangle_shared/TESTING.md](examples/manet_triangle_shared/TESTING.md)
-- Test scripts in `examples/manet_triangle_shared/`
+- [examples/for_tests/shared_sionna_snr_equal-triangle/TESTING.md](examples/for_tests/shared_sionna_snr_equal-triangle/TESTING.md)
+- Test scripts in `examples/for_tests/shared_sionna_snr_equal-triangle/`
 
 ## Debugging and Inspection
 
@@ -596,13 +596,13 @@ This file contains the topology after stripping all SiNE-specific wireless and n
 **Example**:
 ```bash
 # Deploy network
-sudo $(which uv) run sine deploy examples/vacuum_20m/network.yaml
+sudo $(which uv) run sine deploy examples/for_tests/p2p_fallback_snr_vacuum/network.yaml
 
 # Inspect generated containerlab topology
-cat examples/vacuum_20m/.sine_clab_topology.yaml
+cat examples/for_tests/p2p_fallback_snr_vacuum/.sine_clab_topology.yaml
 
 # File will exist until you destroy
-uv run sine destroy examples/vacuum_20m/network.yaml
+uv run sine destroy examples/for_tests/p2p_fallback_snr_vacuum/network.yaml
 ```
 
 ## 🤝 Collaboration

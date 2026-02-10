@@ -21,7 +21,7 @@
 # - Use for validating SINR computation correctness only
 # - For connectivity tests, see: shared_sionna_sinr_asymmetric/
 
-name: manet-triangle-shared-sinr
+name: sh-sio-sinr-equal-triangle
 
 topology:
   enable_sinr: true  # Enable SINR computation with interference from all nodes

@@ -10,6 +10,7 @@ from tests.integration.fixtures import (
     channel_server,
     deploy_topology,
     destroy_topology,
+    extract_container_prefix,
     stop_deployment_process,
     verify_tc_config,
 )
@@ -32,7 +33,7 @@ def test_asymmetric_nf_tc_config(channel_server, examples_for_tests: Path):
     - Rates depend on SNR-based MCS selection (may be symmetric or asymmetric)
     - Loss rates may differ if SNR difference crosses BER threshold
     """
-    yaml_path = examples_for_tests / "shared_sionna_snr_asymmetric-nf" / "network.yaml"
+    yaml_path = examples_for_tests / "shared_sionna_snr_equal-triangle-varied-nf" / "network.yaml"
 
     if not yaml_path.exists():
         pytest.skip(f"Example not found: {yaml_path}")
@@ -43,9 +44,12 @@ def test_asymmetric_nf_tc_config(channel_server, examples_for_tests: Path):
     try:
         deploy_process = deploy_topology(str(yaml_path))
 
+        # Get container prefix from topology
+        container_prefix = extract_container_prefix(str(yaml_path))
+
         # Test node1 -> node2 (uses node2's NF = 10 dB, worse receiver)
         result_12 = verify_tc_config(
-            container_prefix="clab-manet-triangle-shared-asymmetric-nf",
+            container_prefix=container_prefix,
             node="node1",
             interface="eth1",
             dst_node_ip="192.168.100.2",
@@ -60,7 +64,7 @@ def test_asymmetric_nf_tc_config(channel_server, examples_for_tests: Path):
 
         # Test node2 -> node1 (uses node1's NF = 7 dB, better receiver)
         result_21 = verify_tc_config(
-            container_prefix="clab-manet-triangle-shared-asymmetric-nf",
+            container_prefix=container_prefix,
             node="node2",
             interface="eth1",
             dst_node_ip="192.168.100.1",
@@ -93,7 +97,7 @@ def test_asymmetric_nf_multiple_links(channel_server, examples_for_tests: Path):
     - node3→node1 uses node1's NF (7 dB, medium receiver)
     - All links have valid per-destination filters
     """
-    yaml_path = examples_for_tests / "shared_sionna_snr_asymmetric-nf" / "network.yaml"
+    yaml_path = examples_for_tests / "shared_sionna_snr_equal-triangle-varied-nf" / "network.yaml"
 
     if not yaml_path.exists():
         pytest.skip(f"Example not found: {yaml_path}")
@@ -104,9 +108,12 @@ def test_asymmetric_nf_multiple_links(channel_server, examples_for_tests: Path):
     try:
         deploy_process = deploy_topology(str(yaml_path))
 
+        # Get container prefix from topology
+        container_prefix = extract_container_prefix(str(yaml_path))
+
         # Test node1 -> node3 (uses node3's NF = 5 dB, best receiver)
         result_13 = verify_tc_config(
-            container_prefix="clab-manet-triangle-shared-asymmetric-nf",
+            container_prefix=container_prefix,
             node="node1",
             interface="eth1",
             dst_node_ip="192.168.100.3",
@@ -117,7 +124,7 @@ def test_asymmetric_nf_multiple_links(channel_server, examples_for_tests: Path):
 
         # Test node3 -> node1 (uses node1's NF = 7 dB)
         result_31 = verify_tc_config(
-            container_prefix="clab-manet-triangle-shared-asymmetric-nf",
+            container_prefix=container_prefix,
             node="node3",
             interface="eth1",
             dst_node_ip="192.168.100.1",

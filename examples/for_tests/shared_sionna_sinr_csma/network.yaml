@@ -7,7 +7,7 @@
 # - Spatial reuse: Nodes beyond CS range can transmit concurrently
 # - Hidden node modeling: Nodes beyond CS range may collide
 
-name: sinr-csma-wifi6
+name: sh-sio-sinr-csma
 
 topology:
   enable_sinr: true  # Explicit SINR computation with interference

@@ -21,6 +21,7 @@ from tests.integration.fixtures import (
     channel_server,
     deploy_topology,
     destroy_topology,
+    extract_container_prefix,
     stop_deployment_process,
     verify_route_to_cidr,
 )
@@ -39,7 +40,7 @@ def test_manet_shared_bridge_routing(channel_server, examples_for_tests: Path):
 
     Expected: All nodes have routes to the bridge subnet (192.168.100.0/24) on eth1.
     """
-    yaml_path = examples_for_tests / "shared_sionna_snr_triangle" / "network.yaml"
+    yaml_path = examples_for_tests / "shared_sionna_snr_equal-triangle" / "network.yaml"
 
     if not yaml_path.exists():
         pytest.skip(f"Example not found: {yaml_path}")
@@ -52,10 +53,13 @@ def test_manet_shared_bridge_routing(channel_server, examples_for_tests: Path):
         # Deploy (returns background process)
         deploy_process = deploy_topology(str(yaml_path))
 
+        # Get container prefix from topology
+        container_prefix = extract_container_prefix(str(yaml_path))
+
         # Verify routing for all nodes
         for node in ["node1", "node2", "node3"]:
             verify_route_to_cidr(
-                "clab-manet-triangle-shared",
+                container_prefix,
                 node,
                 "192.168.100.0/24",
                 "eth1"

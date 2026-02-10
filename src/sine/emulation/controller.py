@@ -18,7 +18,7 @@ from pathlib import Path
 import httpx
 
 from sine.config.loader import TopologyLoader
-from sine.config.schema import NetworkTopology, parse_endpoint
+from sine.config.schema import NetworkTopology, WirelessParams, parse_endpoint
 from sine.emulation.cleanup import CleanupGenerator
 from sine.scene.builder import SceneBuilder
 from sine.topology.manager import ContainerlabManager
@@ -37,12 +37,13 @@ class EmulationError(Exception):
 class EmulationController:
     """Main SiNE emulation controller."""
 
-    def __init__(self, topology_path: str | Path):
+    def __init__(self, topology_path: str | Path, channel_server_url: str | None = None):
         """
         Initialize controller with path to topology file.
 
         Args:
             topology_path: Path to network.yaml file
+            channel_server_url: Optional channel server URL to override YAML config
         """
         self.topology_path = Path(topology_path)
         self.loader = TopologyLoader(topology_path)
@@ -51,6 +52,7 @@ class EmulationController:
         self.netem_config = NetemConfigurator()
         self.scene_builder = SceneBuilder()
         self.channel_server_url: str = "http://localhost:8000"
+        self._channel_server_override: str | None = channel_server_url  # CLI override
         self._running = False
         self._link_states: dict[tuple[str, str], dict] = {}  # Stores netem and RF metrics
         self._link_mcs_info: dict[tuple[str, str], dict] = {}  # MCS info for each link
@@ -108,7 +110,13 @@ class EmulationController:
             logger.error(f"Failed to load topology: {e}")
             raise EmulationError(f"Failed to load topology: {e}") from e
 
-        self.channel_server_url = self.config.topology.channel_server
+        # Use CLI override if provided, otherwise use YAML config
+        if self._channel_server_override:
+            self.channel_server_url = self._channel_server_override
+            logger.info(f"Using channel server from CLI: {self.channel_server_url}")
+        else:
+            self.channel_server_url = self.config.topology.channel_server
+            logger.info(f"Using channel server from YAML: {self.channel_server_url}")
 
         # Load scene (only required if there are wireless links)
         if self._has_wireless_links():
@@ -302,65 +310,12 @@ class EmulationController:
             tx_params = link_info["tx_params"]
             rx_params = link_info["rx_params"]
 
-            request = {
-                "tx_node": link_info["tx_node"],
-                "rx_node": link_info["rx_node"],
-                "tx_position": {
-                    "x": tx_params.position.x,
-                    "y": tx_params.position.y,
-                    "z": tx_params.position.z,
-                },
-                "rx_position": {
-                    "x": rx_params.position.x,
-                    "y": rx_params.position.y,
-                    "z": rx_params.position.z,
-                },
-                "tx_power_dbm": tx_params.rf_power_dbm,
-                "tx_gain_dbi": tx_params.antenna_gain_dbi if tx_params.antenna_gain_dbi is not None else 0.0,
-                "rx_gain_dbi": rx_params.antenna_gain_dbi if rx_params.antenna_gain_dbi is not None else 0.0,
-                "antenna_pattern": tx_params.antenna_pattern,
-                "polarization": tx_params.polarization,
-                "frequency_hz": tx_params.frequency_hz,  # TX frequency
-                "bandwidth_hz": tx_params.bandwidth_hz,
-                "rx_frequency_hz": rx_params.frequency_hz,  # RX frequency (for ACLR)
-                "rx_bandwidth_hz": rx_params.bandwidth_hz,  # RX bandwidth (for ACLR)
-                "noise_figure_db": rx_params.noise_figure_db,
-                "modulation": (
-                    tx_params.modulation if not tx_params.uses_adaptive_mcs else None
-                ),
-                "fec_type": (
-                    tx_params.fec_type if not tx_params.uses_adaptive_mcs else None
-                ),
-                "fec_code_rate": (
-                    tx_params.fec_code_rate if not tx_params.uses_adaptive_mcs else None
-                ),
-                "mcs_table_path": tx_params.mcs_table if tx_params.uses_adaptive_mcs else None,
-                "mcs_hysteresis_db": (
-                    tx_params.mcs_hysteresis_db if tx_params.uses_adaptive_mcs else 2.0
-                ),
-            }
-
-            # Add MAC model configuration (CSMA or TDMA) - same as point-to-point mode
-            mac_model = None
-            if tx_params.csma and tx_params.csma.enabled:
-                mac_model = {
-                    "type": "csma",
-                    "carrier_sense_range_multiplier": tx_params.csma.carrier_sense_range_multiplier,
-                    "traffic_load": tx_params.csma.traffic_load,
-                    "communication_range_snr_threshold_db": tx_params.csma.communication_range_snr_threshold_db,
-                }
-            elif tx_params.tdma and tx_params.tdma.enabled:
-                mac_model = {
-                    "type": "tdma",
-                    "frame_duration_ms": tx_params.tdma.frame_duration_ms,
-                    "num_slots": tx_params.tdma.num_slots,
-                    "slot_assignment_mode": tx_params.tdma.slot_assignment_mode,
-                    "fixed_slot_map": tx_params.tdma.fixed_slot_map,
-                    "slot_probability": tx_params.tdma.slot_probability,
-                }
-
-            if mac_model:
-                request["mac_model"] = mac_model
+            request = self._build_channel_request(
+                tx_node=link_info["tx_node"],
+                rx_node=link_info["rx_node"],
+                tx_params=tx_params,
+                rx_params=rx_params,
+            )
 
             link_requests.append(request)
 
@@ -536,120 +491,22 @@ class EmulationController:
             # Compute both directions independently with correct receiver NF
 
             # Direction 1: node1 → node2 (uses node2's RX noise figure)
-            request_12 = {
-                "tx_node": node1_name,
-                "rx_node": node2_name,
-                "tx_position": {
-                    "x": wireless1.position.x,
-                    "y": wireless1.position.y,
-                    "z": wireless1.position.z,
-                },
-                "rx_position": {
-                    "x": wireless2.position.x,
-                    "y": wireless2.position.y,
-                    "z": wireless2.position.z,
-                },
-                "tx_power_dbm": wireless1.rf_power_dbm,
-                "tx_gain_dbi": wireless1.antenna_gain_dbi if wireless1.antenna_gain_dbi is not None else 0.0,
-                "rx_gain_dbi": wireless2.antenna_gain_dbi if wireless2.antenna_gain_dbi is not None else 0.0,
-                "antenna_pattern": wireless1.antenna_pattern.value,
-                "polarization": wireless1.polarization.value,
-                "frequency_hz": wireless1.frequency_hz,  # TX frequency
-                "bandwidth_hz": wireless1.bandwidth_hz,
-                "rx_frequency_hz": wireless2.frequency_hz,  # RX frequency (for ACLR)
-                "rx_bandwidth_hz": wireless2.bandwidth_hz,  # RX bandwidth (for ACLR)
-                "noise_figure_db": wireless2.noise_figure_db,  # Receiver's NF
-            }
-
-            # Add MCS table or fixed modulation parameters (from node1/wireless1)
-            if wireless1.uses_adaptive_mcs:
-                request_12["mcs_table_path"] = wireless1.mcs_table
-                request_12["mcs_hysteresis_db"] = wireless1.mcs_hysteresis_db
-            else:
-                request_12["modulation"] = wireless1.modulation.value if wireless1.modulation else None
-                request_12["fec_type"] = wireless1.fec_type.value if wireless1.fec_type else None
-                request_12["fec_code_rate"] = wireless1.fec_code_rate
-
-            # Add MAC model configuration (CSMA or TDMA) from wireless1
-            mac_model = None
-            if wireless1.csma and wireless1.csma.enabled:
-                mac_model = {
-                    "type": "csma",
-                    "carrier_sense_range_multiplier": wireless1.csma.carrier_sense_range_multiplier,
-                    "traffic_load": wireless1.csma.traffic_load,
-                    "communication_range_snr_threshold_db": wireless1.csma.communication_range_snr_threshold_db,
-                }
-            elif wireless1.tdma and wireless1.tdma.enabled:
-                mac_model = {
-                    "type": "tdma",
-                    "frame_duration_ms": wireless1.tdma.frame_duration_ms,
-                    "num_slots": wireless1.tdma.num_slots,
-                    "slot_assignment_mode": wireless1.tdma.slot_assignment_mode,
-                    "fixed_slot_map": wireless1.tdma.fixed_slot_map,
-                    "slot_probability": wireless1.tdma.slot_probability,
-                }
-
-            if mac_model:
-                request_12["mac_model"] = mac_model
+            request_12 = self._build_channel_request(
+                tx_node=node1_name,
+                rx_node=node2_name,
+                tx_params=wireless1,
+                rx_params=wireless2,
+            )
 
             link_requests.append(request_12)
 
             # Direction 2: node2 → node1 (uses node1's RX noise figure)
-            request_21 = {
-                "tx_node": node2_name,
-                "rx_node": node1_name,
-                "tx_position": {
-                    "x": wireless2.position.x,
-                    "y": wireless2.position.y,
-                    "z": wireless2.position.z,
-                },
-                "rx_position": {
-                    "x": wireless1.position.x,
-                    "y": wireless1.position.y,
-                    "z": wireless1.position.z,
-                },
-                "tx_power_dbm": wireless2.rf_power_dbm,
-                "tx_gain_dbi": wireless2.antenna_gain_dbi if wireless2.antenna_gain_dbi is not None else 0.0,
-                "rx_gain_dbi": wireless1.antenna_gain_dbi if wireless1.antenna_gain_dbi is not None else 0.0,
-                "antenna_pattern": wireless2.antenna_pattern.value,
-                "polarization": wireless2.polarization.value,
-                "frequency_hz": wireless2.frequency_hz,  # TX frequency
-                "bandwidth_hz": wireless2.bandwidth_hz,
-                "rx_frequency_hz": wireless1.frequency_hz,  # RX frequency (for ACLR)
-                "rx_bandwidth_hz": wireless1.bandwidth_hz,  # RX bandwidth (for ACLR)
-                "noise_figure_db": wireless1.noise_figure_db,  # Receiver's NF
-            }
-
-            # Add MCS table or fixed modulation parameters (from node2/wireless2)
-            if wireless2.uses_adaptive_mcs:
-                request_21["mcs_table_path"] = wireless2.mcs_table
-                request_21["mcs_hysteresis_db"] = wireless2.mcs_hysteresis_db
-            else:
-                request_21["modulation"] = wireless2.modulation.value if wireless2.modulation else None
-                request_21["fec_type"] = wireless2.fec_type.value if wireless2.fec_type else None
-                request_21["fec_code_rate"] = wireless2.fec_code_rate
-
-            # Add MAC model configuration from wireless2
-            mac_model_21 = None
-            if wireless2.csma and wireless2.csma.enabled:
-                mac_model_21 = {
-                    "type": "csma",
-                    "carrier_sense_range_multiplier": wireless2.csma.carrier_sense_range_multiplier,
-                    "traffic_load": wireless2.csma.traffic_load,
-                    "communication_range_snr_threshold_db": wireless2.csma.communication_range_snr_threshold_db,
-                }
-            elif wireless2.tdma and wireless2.tdma.enabled:
-                mac_model_21 = {
-                    "type": "tdma",
-                    "frame_duration_ms": wireless2.tdma.frame_duration_ms,
-                    "num_slots": wireless2.tdma.num_slots,
-                    "slot_assignment_mode": wireless2.tdma.slot_assignment_mode,
-                    "fixed_slot_map": wireless2.tdma.fixed_slot_map,
-                    "slot_probability": wireless2.tdma.slot_probability,
-                }
-
-            if mac_model_21:
-                request_21["mac_model"] = mac_model_21
+            request_21 = self._build_channel_request(
+                tx_node=node2_name,
+                rx_node=node1_name,
+                tx_params=wireless2,
+                rx_params=wireless1,
+            )
 
             link_requests.append(request_21)
 
@@ -701,6 +558,107 @@ class EmulationController:
                         key = f"{node_name}:{iface_name}"
                         active_states[key] = iface_config.wireless.is_active
         return active_states
+
+    def _build_channel_request(
+        self,
+        tx_node: str,
+        rx_node: str,
+        tx_params: WirelessParams,
+        rx_params: WirelessParams,
+    ) -> dict:
+        """
+        Build a channel computation request dictionary for the batch compute endpoint.
+
+        Args:
+            tx_node: Transmitter node name
+            rx_node: Receiver node name
+            tx_params: Wireless configuration for transmitter interface
+            rx_params: Wireless configuration for receiver interface
+
+        Returns:
+            Dictionary with all fields required by the channel server's /compute/batch endpoint,
+            including:
+            - Core link parameters (positions, power, gains, antenna config, frequencies)
+            - Either adaptive MCS (mcs_table_path, mcs_hysteresis_db) OR
+              fixed modulation (modulation, fec_type, fec_code_rate)
+            - Optional MAC model configuration (CSMA or TDMA)
+
+        Note:
+            - Antenna gain defaults to 0.0 if not specified
+            - Antenna pattern defaults to "iso" if not specified
+            - Polarization defaults to "V" if not specified
+            - Uses transmitter's frequency/bandwidth and receiver's noise figure
+        """
+        # Build core request fields
+        request = {
+            "tx_node": tx_node,
+            "rx_node": rx_node,
+            "tx_position": {
+                "x": tx_params.position.x,
+                "y": tx_params.position.y,
+                "z": tx_params.position.z,
+            },
+            "rx_position": {
+                "x": rx_params.position.x,
+                "y": rx_params.position.y,
+                "z": rx_params.position.z,
+            },
+            "tx_power_dbm": tx_params.rf_power_dbm,
+            "tx_gain_dbi": (
+                tx_params.antenna_gain_dbi if tx_params.antenna_gain_dbi is not None else 0.0
+            ),
+            "rx_gain_dbi": (
+                rx_params.antenna_gain_dbi if rx_params.antenna_gain_dbi is not None else 0.0
+            ),
+            "antenna_pattern": (
+                tx_params.antenna_pattern.value if tx_params.antenna_pattern else "iso"
+            ),
+            "polarization": (
+                tx_params.polarization.value if tx_params.polarization else "V"
+            ),
+            "frequency_hz": tx_params.frequency_hz,
+            "bandwidth_hz": tx_params.bandwidth_hz,
+            "rx_frequency_hz": rx_params.frequency_hz,
+            "rx_bandwidth_hz": rx_params.bandwidth_hz,
+            "noise_figure_db": rx_params.noise_figure_db,
+        }
+
+        # Add MCS table OR fixed modulation parameters
+        if tx_params.uses_adaptive_mcs:
+            request["mcs_table_path"] = tx_params.mcs_table
+            request["mcs_hysteresis_db"] = tx_params.mcs_hysteresis_db
+        else:
+            request["modulation"] = (
+                tx_params.modulation.value if tx_params.modulation else None
+            )
+            request["fec_type"] = (
+                tx_params.fec_type.value if tx_params.fec_type else None
+            )
+            request["fec_code_rate"] = tx_params.fec_code_rate
+
+        # Add MAC model configuration (CSMA or TDMA)
+        mac_model = None
+        if tx_params.csma and tx_params.csma.enabled:
+            mac_model = {
+                "type": "csma",
+                "carrier_sense_range_multiplier": tx_params.csma.carrier_sense_range_multiplier,
+                "traffic_load": tx_params.csma.traffic_load,
+                "communication_range_snr_threshold_db": tx_params.csma.communication_range_snr_threshold_db,
+            }
+        elif tx_params.tdma and tx_params.tdma.enabled:
+            mac_model = {
+                "type": "tdma",
+                "frame_duration_ms": tx_params.tdma.frame_duration_ms,
+                "num_slots": tx_params.tdma.num_slots,
+                "slot_assignment_mode": tx_params.tdma.slot_assignment_mode,
+                "fixed_slot_map": tx_params.tdma.fixed_slot_map,
+                "slot_probability": tx_params.tdma.slot_probability,
+            }
+
+        if mac_model:
+            request["mac_model"] = mac_model
+
+        return request
 
     async def _apply_fixed_link(self, link) -> None:
         """Apply fixed netem parameters for a link."""
