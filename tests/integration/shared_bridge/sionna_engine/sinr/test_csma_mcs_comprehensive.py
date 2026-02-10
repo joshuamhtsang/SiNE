@@ -115,7 +115,7 @@ def test_csma_mcs_index_validation(channel_server, examples_for_tests: Path, bri
         api_ready = False
         for _ in range(max_retries):
             try:
-                with urllib.request.urlopen("http://localhost:8001/api/emulation/summary", timeout=1) as response:
+                with urllib.request.urlopen("http://localhost:8002/api/emulation/summary", timeout=1) as response:
                     if response.status == 200:
                         api_ready = True
                         break
@@ -126,7 +126,7 @@ def test_csma_mcs_index_validation(channel_server, examples_for_tests: Path, bri
             raise RuntimeError("Mobility API did not become ready in time")
 
         # Query deployment summary to extract MCS index and SINR
-        with urllib.request.urlopen("http://localhost:8001/api/emulation/summary") as response:
+        with urllib.request.urlopen("http://localhost:8002/api/emulation/summary") as response:
             summary = json.loads(response.read())
 
         # Validate node2 → node3 link

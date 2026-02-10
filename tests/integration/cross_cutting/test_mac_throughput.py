@@ -303,7 +303,7 @@ def test_csma_mcs_uses_sinr(mobility_deployment):
     import urllib.request
 
     print("\nQuerying emulation API for deployment summary...")
-    with urllib.request.urlopen("http://localhost:8001/api/emulation/summary") as response:
+    with urllib.request.urlopen("http://localhost:8002/api/emulation/summary") as response:
         summary = json.loads(response.read())
 
     # Find link node2 -> node3 (primary test link with interference from node1)
