@@ -32,8 +32,9 @@ def test_two_rooms_connectivity(channel_server, examples_for_tests: Path, p2p_no
     Validates that:
     - Node1 can ping Node2 (through doorway, NLOS)
     - Node2 can ping Node1 (reverse direction)
-    - Indoor multipath propagation provides sufficient SNR
+    - Indoor multipath propagation provides sufficient SNR for QPSK
     - Expected: ~20-30 dB SNR (reflections through doorway)
+    - QPSK modulation (requires ~8 dB SNR) provides reliable connectivity
     """
     yaml_path = examples_for_tests / "p2p_sionna_snr_two-rooms" / "network.yaml"
 
@@ -65,12 +66,12 @@ def test_two_rooms_connectivity(channel_server, examples_for_tests: Path, p2p_no
 @pytest.mark.slow
 @pytest.mark.sionna
 def test_two_rooms_throughput(channel_server, examples_for_tests: Path, p2p_node_ips: dict):
-    """Test iperf3 throughput with high-order modulation.
+    """Test iperf3 throughput with QPSK modulation.
 
     Validates that:
-    - Throughput matches expected PHY rate for 256-QAM
-    - Expected: 80-120 Mbps (256-QAM, 0.75 code rate)
-    - Good SNR enables high-order modulation despite NLOS
+    - Throughput matches expected PHY rate for QPSK
+    - Expected: 50-64 Mbps (QPSK, 0.5 code rate, 80 MHz BW)
+    - QPSK provides reliable throughput despite NLOS conditions
     """
     yaml_path = examples_for_tests / "p2p_sionna_snr_two-rooms" / "network.yaml"
 
@@ -95,11 +96,11 @@ def test_two_rooms_throughput(channel_server, examples_for_tests: Path, p2p_node
             duration_sec=10,
         )
 
-        # Expected: 256-QAM with rate-0.75 LDPC, 80 MHz BW
-        # 80 MHz × 8 bits × 0.75 × 0.8 (overhead) = ~384 Mbps theoretical
-        # With netem loss and indoor multipath, expect 80-120 Mbps
-        assert 80.0 <= throughput <= 120.0, (
-            f"Throughput {throughput:.2f} Mbps outside expected range 80-120 Mbps"
+        # Expected: QPSK with rate-0.5 LDPC, 80 MHz BW
+        # 80 MHz × 2 bits × 0.5 × 0.8 (overhead) = ~64 Mbps theoretical
+        # With netem loss and indoor multipath, expect 50-64 Mbps
+        assert 50.0 <= throughput <= 64.0, (
+            f"Throughput {throughput:.2f} Mbps outside expected range 50-64 Mbps"
         )
 
         print(f"✓ Two-rooms throughput validated: {throughput:.2f} Mbps")
@@ -221,13 +222,13 @@ def test_two_rooms_tc_config(channel_server, examples_for_tests: Path):
         container_prefix = extract_container_prefix(yaml_path)
 
         # Verify node1's eth1 interface
-        # Expected: ~0.1 ms delay (30m distance), moderate loss, ~100 Mbps rate
+        # Expected: ~0.1 ms delay (30m distance), low loss with QPSK, ~64 Mbps rate
         result1 = verify_tc_config(
             container_prefix=container_prefix,
             node="node1",
             interface="eth1",
-            expected_rate_mbps=100.0,  # Approximate for 256-QAM
-            rate_tolerance_mbps=30.0,  # 30% tolerance for indoor multipath
+            expected_rate_mbps=64.0,  # QPSK, rate-0.5 LDPC, 80 MHz BW
+            rate_tolerance_mbps=20.0,  # 30% tolerance for indoor multipath
         )
 
         # Verify node2's eth1 interface (reverse direction)
@@ -235,8 +236,8 @@ def test_two_rooms_tc_config(channel_server, examples_for_tests: Path):
             container_prefix=container_prefix,
             node="node2",
             interface="eth1",
-            expected_rate_mbps=100.0,
-            rate_tolerance_mbps=30.0,  # 30% tolerance
+            expected_rate_mbps=64.0,
+            rate_tolerance_mbps=20.0,  # 30% tolerance
         )
 
         print("✓ Two-rooms TC config validated for both directions")

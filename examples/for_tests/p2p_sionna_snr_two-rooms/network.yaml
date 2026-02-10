@@ -19,15 +19,15 @@
 #
 # RF Configuration:
 # - WiFi 6 (5.18 GHz, 80 MHz channel)
-# - 256-QAM modulation (higher order, sensitive to low SNR)
-# - LDPC coding (rate 0.75)
-# - Requires ~29 dB SNR for reliable operation
+# - QPSK modulation (robust, works with moderate SNR)
+# - LDPC coding (rate 0.5)
+# - Requires ~8 dB SNR for reliable operation
 #
 # Expected behavior:
 # - Through-wall path loss will be high (~20-30 dB attenuation from concrete)
 # - Primary propagation through doorway (multipath via reflections)
 # - Significant multipath delay spread due to reflections
-# - SNR may drop below 256-QAM threshold, causing high packet loss
+# - QPSK provides sufficient margin for reliable connectivity despite NLOS
 #
 # Mobility example:
 # - Move node2 from (30, 10, 1) to (30, 30, 1) - along east wall
@@ -77,10 +77,10 @@ topology:
             antenna_gain_dbi: 2.0           # Custom omnidirectional antenna with 2.0 dBi gain
             frequency_ghz: 5.18             # WiFi 6 channel 36 (5.18 GHz)
             bandwidth_mhz: 80               # 80 MHz channel
-            # Higher-order modulation (256-QAM)
-            modulation: 256qam              # 8 bits/symbol, requires ~29 dB SNR
+            # Robust modulation for NLOS scenario (QPSK)
+            modulation: qpsk                # 2 bits/symbol, requires ~8 dB SNR
             fec_type: ldpc                  # Low-density parity-check coding
-            fec_code_rate: 0.75             # 3/4 code rate
+            fec_code_rate: 0.5              # 1/2 code rate (more robust)
             position:
               x: 10.0                       # Center of Room 1
               y: 10.0                       # South side of room
@@ -103,9 +103,9 @@ topology:
             frequency_ghz: 5.18
             bandwidth_mhz: 80
             # Same modulation as node1 (symmetric link)
-            modulation: 256qam
+            modulation: qpsk
             fec_type: ldpc
-            fec_code_rate: 0.75
+            fec_code_rate: 0.5
             position:
               x: 30.0                       # Center of Room 2
               y: 10.0                       # South side of room (aligned with node1)

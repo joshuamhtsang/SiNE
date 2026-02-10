@@ -324,10 +324,18 @@ class EmulationController:
                     "z": rx_params.position.z,
                 },
                 "tx_power_dbm": tx_params.rf_power_dbm,
-                "tx_gain_dbi": tx_params.antenna_gain_dbi if tx_params.antenna_gain_dbi is not None else 0.0,
-                "rx_gain_dbi": rx_params.antenna_gain_dbi if rx_params.antenna_gain_dbi is not None else 0.0,
-                "antenna_pattern": tx_params.antenna_pattern,
-                "polarization": tx_params.polarization,
+                "tx_gain_dbi": (
+                    tx_params.antenna_gain_dbi if tx_params.antenna_gain_dbi is not None else 0.0
+                ),
+                "rx_gain_dbi": (
+                    rx_params.antenna_gain_dbi if rx_params.antenna_gain_dbi is not None else 0.0
+                ),
+                "antenna_pattern": (
+                    tx_params.antenna_pattern.value if tx_params.antenna_pattern else "iso"
+                ),
+                "polarization": (
+                    tx_params.polarization.value if tx_params.polarization else "V"
+                ),
                 "frequency_hz": tx_params.frequency_hz,  # TX frequency
                 "bandwidth_hz": tx_params.bandwidth_hz,
                 "rx_frequency_hz": rx_params.frequency_hz,  # RX frequency (for ACLR)
@@ -558,10 +566,18 @@ class EmulationController:
                     "z": wireless2.position.z,
                 },
                 "tx_power_dbm": wireless1.rf_power_dbm,
-                "tx_gain_dbi": wireless1.antenna_gain_dbi if wireless1.antenna_gain_dbi is not None else 0.0,
-                "rx_gain_dbi": wireless2.antenna_gain_dbi if wireless2.antenna_gain_dbi is not None else 0.0,
-                "antenna_pattern": wireless1.antenna_pattern.value,
-                "polarization": wireless1.polarization.value,
+                "tx_gain_dbi": (
+                    wireless1.antenna_gain_dbi if wireless1.antenna_gain_dbi is not None else 0.0
+                ),
+                "rx_gain_dbi": (
+                    wireless2.antenna_gain_dbi if wireless2.antenna_gain_dbi is not None else 0.0
+                ),
+                "antenna_pattern": (
+                    wireless1.antenna_pattern.value if wireless1.antenna_pattern else "iso"
+                ),
+                "polarization": (
+                    wireless1.polarization.value if wireless1.polarization else "V"
+                ),
                 "frequency_hz": wireless1.frequency_hz,  # TX frequency
                 "bandwidth_hz": wireless1.bandwidth_hz,
                 "rx_frequency_hz": wireless2.frequency_hz,  # RX frequency (for ACLR)
@@ -617,10 +633,18 @@ class EmulationController:
                     "z": wireless1.position.z,
                 },
                 "tx_power_dbm": wireless2.rf_power_dbm,
-                "tx_gain_dbi": wireless2.antenna_gain_dbi if wireless2.antenna_gain_dbi is not None else 0.0,
-                "rx_gain_dbi": wireless1.antenna_gain_dbi if wireless1.antenna_gain_dbi is not None else 0.0,
-                "antenna_pattern": wireless2.antenna_pattern.value,
-                "polarization": wireless2.polarization.value,
+                "tx_gain_dbi": (
+                    wireless2.antenna_gain_dbi if wireless2.antenna_gain_dbi is not None else 0.0
+                ),
+                "rx_gain_dbi": (
+                    wireless1.antenna_gain_dbi if wireless1.antenna_gain_dbi is not None else 0.0
+                ),
+                "antenna_pattern": (
+                    wireless2.antenna_pattern.value if wireless2.antenna_pattern else "iso"
+                ),
+                "polarization": (
+                    wireless2.polarization.value if wireless2.polarization else "V"
+                ),
                 "frequency_hz": wireless2.frequency_hz,  # TX frequency
                 "bandwidth_hz": wireless2.bandwidth_hz,
                 "rx_frequency_hz": wireless1.frequency_hz,  # RX frequency (for ACLR)

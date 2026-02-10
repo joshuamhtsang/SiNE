@@ -263,21 +263,54 @@ def deploy_topology(yaml_path: str, enable_mobility: bool = False, channel_serve
     # Wait for deployment to complete (read stdout until success message)
     print("Waiting for deployment to complete...")
     deployment_ready = False
+    output_lines = []  # Capture all output for error reporting
 
     # Type assertion: stdout is guaranteed to be available since we passed PIPE
     assert process.stdout is not None, "stdout should not be None when PIPE is used"
 
     for line in process.stdout:
+        output_lines.append(line)
         print(line, end="")
         if "Emulation deployed successfully!" in line:
             deployment_ready = True
             break
         if process.poll() is not None:
-            raise RuntimeError(f"Deployment failed (exit code {process.returncode})")
+            # Process exited - capture remaining output and report error
+            remaining = process.stdout.read()
+            if remaining:
+                output_lines.append(remaining)
+                print(remaining, end="")
+
+            full_output = ''.join(output_lines)
+            raise RuntimeError(
+                f"Deployment failed (exit code {process.returncode})\n\n"
+                f"{'='*70}\n"
+                f"DEPLOYMENT OUTPUT:\n"
+                f"{'='*70}\n"
+                f"{full_output}\n"
+                f"{'='*70}"
+            )
 
     if not deployment_ready:
+        # Read any remaining output
+        try:
+            remaining = process.stdout.read()
+            if remaining:
+                output_lines.append(remaining)
+                print(remaining, end="")
+        except Exception:
+            pass
+
         process.terminate()
-        raise RuntimeError("Deployment did not complete successfully")
+        full_output = ''.join(output_lines)
+        raise RuntimeError(
+            f"Deployment did not complete successfully\n\n"
+            f"{'='*70}\n"
+            f"DEPLOYMENT OUTPUT:\n"
+            f"{'='*70}\n"
+            f"{full_output}\n"
+            f"{'='*70}"
+        )
 
     print("\n" + "="*70)
     print("Deployment complete!")
