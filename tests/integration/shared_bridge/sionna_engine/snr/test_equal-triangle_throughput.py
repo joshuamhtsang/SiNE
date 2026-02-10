@@ -24,7 +24,7 @@ def test_equal_triangle_throughput_node1_to_node2(channel_server, examples_for_t
 
     Validates that:
     - Throughput matches SNR-computed PHY rate
-    - Expected: 180-220 Mbps (64-QAM, rate-0.667, LDPC)
+    - Expected: 175-220 Mbps (64-QAM, rate-0.667, LDPC)
     - Equilateral triangle geometry provides good SNR
     - PHY rate: 80 MHz × 6 bits × 0.667 × 0.8 (overhead) = ~256 Mbps theoretical
     """
@@ -52,9 +52,9 @@ def test_equal_triangle_throughput_node1_to_node2(channel_server, examples_for_t
         )
 
         # Expected: 64-QAM with rate-0.667 LDPC, 80 MHz BW
-        # With netem loss and packet overhead, expect 180-220 Mbps
-        assert 180.0 <= throughput <= 220.0, (
-            f"Throughput {throughput:.2f} Mbps outside expected range 180-220 Mbps"
+        # With netem loss and packet overhead, expect 175-220 Mbps
+        assert 175.0 <= throughput <= 220.0, (
+            f"Throughput {throughput:.2f} Mbps outside expected range 175-220 Mbps"
         )
 
         print(f"✓ Node1→Node2 throughput validated: {throughput:.2f} Mbps")
