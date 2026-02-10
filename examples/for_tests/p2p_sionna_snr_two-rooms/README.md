@@ -115,17 +115,17 @@ sudo $(which uv) run sine deploy --enable-mobility examples/two_rooms/network.ya
 - Sionna loads the two-room scene
 - Ray tracing computes propagation paths through doorway
 - Netem parameters applied based on computed SNR and packet loss
-- Mobility API server starts on port 8001
+- Mobility API server starts on port 8002
 
 **Expected output:**
 ```
 Deployed Containers:
-  clab-two-rooms-node1 (sine-node:latest)
+  clab-p2p-sio-snr-two-rooms-node1 (sine-node:latest)
     PID: 12345
     Interfaces:
       - eth1 @ position (10.0, 10.0, 1.0)
 
-  clab-two-rooms-node2 (sine-node:latest)
+  clab-p2p-sio-snr-two-rooms-node2 (sine-node:latest)
     PID: 12346
     Interfaces:
       - eth1 @ position (30.0, 10.0, 1.0)
@@ -139,20 +139,20 @@ Link Parameters:
 
 ```bash
 # Verify connectivity (IPs already configured automatically)
-docker exec clab-two-rooms-node2 ping -c 3 10.0.0.1
+docker exec clab-p2p-sio-snr-two-rooms-node2 ping -c 3 10.0.0.1
 ```
 
 #### 4. Test Throughput (Terminal 4)
 
 ```bash
 # Start iperf3 server on node1
-docker exec -it clab-two-rooms-node1 iperf3 -s
+docker exec -it clab-p2p-sio-snr-two-rooms-node1 iperf3 -s
 ```
 
 **In another terminal (Terminal 5):**
 ```bash
 # Run iperf3 client on node2
-docker exec -it clab-two-rooms-node2 iperf3 -c 10.0.0.1 -t 10
+docker exec -it clab-p2p-sio-snr-two-rooms-node2 iperf3 -c 10.0.0.1 -t 10
 ```
 
 **Expected results:**
@@ -213,7 +213,7 @@ As `node2` moves from (30, 10, 1) to (30, 30, 1):
 # Terminal 4: iperf3 server already running
 # Terminal 5: Continuous throughput tests
 while true; do
-    docker exec clab-two-rooms-node2 iperf3 -c 18.0.0.1 -t 2
+    docker exec clab-p2p-sio-snr-two-rooms-node2 iperf3 -c 18.0.0.1 -t 2
     sleep 1
 done
 ```
@@ -233,7 +233,7 @@ uv run python examples/mobility/linear_movement.py node2 30.0 10.0 1.0 30.0 30.0
 
 ```bash
 # Watch netem configuration update
-watch -n 0.5 'docker exec clab-two-rooms-node1 tc -s qdisc show dev eth1'
+watch -n 0.5 'docker exec clab-p2p-sio-snr-two-rooms-node1 tc -s qdisc show dev eth1'
 ```
 
 Look for:
@@ -244,7 +244,7 @@ Look for:
 
 ```bash
 # Watch position updates
-watch -n 0.5 'curl -s http://localhost:8001/api/nodes | jq'
+watch -n 0.5 'curl -s http://localhost:8002/api/nodes | jq'
 ```
 
 #### Option 4: Debug Ray Tracing
@@ -305,7 +305,7 @@ import asyncio
 from examples.mobility.linear_movement import LinearMobility
 
 async def circle_room2():
-    mobility = LinearMobility(api_url="http://localhost:8001")
+    mobility = LinearMobility(api_url="http://localhost:8002")
 
     # Square path around Room 2 (clockwise from south)
     await mobility.move_linear("node2", (30, 10, 1), (30, 30, 1), 1.0)  # North

@@ -52,7 +52,7 @@
 #   5. Cleanup:
 #      sudo $(which uv) run sine destroy examples/two_rooms/network.yaml
 
-name: two-rooms
+name: p2p-sio-snr-two-rooms
 prefix: clab
 
 topology:

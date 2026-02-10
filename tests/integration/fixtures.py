@@ -1202,12 +1202,69 @@ def verify_tc_config(
 # =============================================================================
 
 
-def wait_for_port_available(port: int, timeout_seconds: int = 10) -> None:
+def force_kill_port_occupants(port: int) -> bool:
+    """Forcibly kill any processes using the specified port.
+
+    Args:
+        port: Port number to free
+
+    Returns:
+        True if any processes were killed, False if port was already free
+    """
+    import shutil
+
+    # Check if lsof is available
+    if not shutil.which("lsof"):
+        print(f"Warning: lsof not found, cannot force-kill port {port} occupants")
+        return False
+
+    try:
+        # Find PIDs using the port
+        result = subprocess.run(
+            ["lsof", "-ti", f":{port}"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+
+        if result.returncode == 0 and result.stdout.strip():
+            pids = result.stdout.strip().split("\n")
+            print(f"Found {len(pids)} process(es) using port {port}: {', '.join(pids)}")
+
+            # Kill each PID
+            for pid in pids:
+                try:
+                    subprocess.run(["kill", "-9", pid], timeout=2)
+                    print(f"  ✓ Killed PID {pid}")
+                except subprocess.TimeoutExpired:
+                    print(f"  ✗ Failed to kill PID {pid} (timeout)")
+                except subprocess.CalledProcessError as e:
+                    print(f"  ✗ Failed to kill PID {pid}: {e}")
+
+            # Wait a moment for ports to be released
+            time.sleep(0.5)
+            return True
+        else:
+            # No processes found or lsof returned error (port likely free)
+            return False
+
+    except subprocess.TimeoutExpired:
+        print(f"Warning: lsof timed out while checking port {port}")
+        return False
+    except Exception as e:
+        print(f"Warning: Error while force-killing port {port} occupants: {e}")
+        return False
+
+
+def wait_for_port_available(
+    port: int, timeout_seconds: int = 10, force_kill: bool = False
+) -> None:
     """Wait for a port to become available.
 
     Args:
         port: Port number to check
         timeout_seconds: Maximum time to wait in seconds
+        force_kill: If True, attempt to kill processes using the port before waiting
 
     Raises:
         RuntimeError: If port is still in use after timeout
@@ -1215,6 +1272,14 @@ def wait_for_port_available(port: int, timeout_seconds: int = 10) -> None:
     import socket
 
     print(f"Waiting for port {port} to be available...")
+
+    # Optionally force-kill processes on the port first
+    if force_kill:
+        print(f"Attempting to force-kill processes on port {port}...")
+        killed = force_kill_port_occupants(port)
+        if killed:
+            print(f"Force-killed processes on port {port}, waiting for port release...")
+            time.sleep(1)  # Give OS time to release the port
 
     for attempt in range(timeout_seconds):
         try:
@@ -1275,7 +1340,7 @@ def channel_server():
     print("CHANNEL SERVER STARTUP (session-scoped fixture)")
     print(f"DEBUG: Starting new server at {time.time()}")
     print("="*70 + "\n")
-    wait_for_port_available(8000, timeout_seconds=10)
+    wait_for_port_available(8000, timeout_seconds=15, force_kill=True)
     print()
 
     # Start channel server in background
@@ -1331,9 +1396,13 @@ def channel_server():
                 process.wait()
                 print("✓ Channel server killed")
 
+        # Force-kill any lingering processes on port 8000
+        print("Checking for lingering processes on port 8000...")
+        force_kill_port_occupants(8000)
+
         # Wait for port to be released (important for next test session)
         print("Waiting for port 8000 to be released...")
-        wait_for_port_available(8000, timeout_seconds=10)
+        wait_for_port_available(8000, timeout_seconds=15, force_kill=True)
         print("✓ Port 8000 is now available")
 
         # Clear tracking (already cleaned up)
@@ -1352,11 +1421,16 @@ def channel_server_fallback():
     """
     uv_path = get_uv_path()
 
-    # Start channel server in background with --force-fallback
-    logger.info("Starting channel server in fallback mode...")
+    # Wait for port 8001 to be available (from previous run shutdown)
     print("\n" + "="*70)
     print("CHANNEL SERVER STARTUP (FALLBACK MODE)")
+    print(f"DEBUG: Starting fallback server at {time.time()}")
     print("="*70 + "\n")
+    wait_for_port_available(8001, timeout_seconds=15, force_kill=True)
+    print()
+
+    # Start channel server in background with --force-fallback
+    logger.info("Starting channel server in fallback mode...")
 
     process = subprocess.Popen(
         [uv_path, "run", "sine", "channel-server", "--force-fallback", "--port", "8001"],
@@ -1388,18 +1462,31 @@ def channel_server_fallback():
     logger.info("Stopping channel server (fallback mode)...")
     print("\n" + "="*70)
     print("Stopping channel server (fallback mode)...")
+    print(f"DEBUG: Fixture cleanup being called at {time.time()}")
+    print(f"DEBUG: process.poll() = {process.poll()}")
     print("="*70 + "\n")
 
-    process.terminate()
-    try:
-        process.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait()
+    # Check if process is still running before attempting termination
+    if process.poll() is None:  # Still running
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+            print("✓ Channel server (fallback) stopped gracefully")
+        except subprocess.TimeoutExpired:
+            print("Channel server (fallback) didn't stop gracefully, killing...")
+            process.kill()
+            process.wait()
+            print("✓ Channel server (fallback) killed")
+    else:
+        print("Channel server (fallback) already stopped")
 
-    # Wait for port to be released
+    # Force-kill any lingering processes on port 8001 (e.g., mobility API from tests)
+    print("Checking for lingering processes on port 8001...")
+    force_kill_port_occupants(8001)
+
+    # Wait for port to be released (important for next test session)
     print("Waiting for port 8001 to be released...")
-    wait_for_port_available(8001, timeout_seconds=10)
+    wait_for_port_available(8001, timeout_seconds=15, force_kill=True)
     print("✓ Port 8001 is now available")
 
 

@@ -1,4 +1,4 @@
-name: manet-triangle-shared-asymmetric-nf
+name: sh-sio-snr-equal-triangle-varied-nf
 topology:
   nodes:
     node1:

@@ -31,7 +31,7 @@
 #   - SINR = Signal / (Noise + Interference)
 #   - SINR ≈ 9-10 dB (suitable for QPSK with LDPC)
 
-name: manet-asymmetric-sinr
+name: sh-sio-sinr-asym-triangle
 
 topology:
   enable_sinr: true  # Enable SINR computation with interference

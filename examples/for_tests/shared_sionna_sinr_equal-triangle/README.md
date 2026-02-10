@@ -110,12 +110,12 @@ uv run sine channel-server
 sudo $(which uv) run sine deploy examples/manet_triangle_shared_sinr/network.yaml
 
 # Test connectivity
-docker exec clab-manet-triangle-shared-sinr-node1 ping -c 3 192.168.100.2
-docker exec clab-manet-triangle-shared-sinr-node1 ping -c 3 192.168.100.3
+docker exec clab-sh-sio-sinr-equal-triangle-node1 ping -c 3 192.168.100.2
+docker exec clab-sh-sio-sinr-equal-triangle-node1 ping -c 3 192.168.100.3
 
 # Test throughput (node1 → node2)
-docker exec -d clab-manet-triangle-shared-sinr-node1 iperf3 -s
-docker exec clab-manet-triangle-shared-sinr-node2 iperf3 -c 192.168.100.1 -t 10
+docker exec -d clab-sh-sio-sinr-equal-triangle-node1 iperf3 -s
+docker exec clab-sh-sio-sinr-equal-triangle-node2 iperf3 -c 192.168.100.1 -t 10
 
 # Cleanup
 sudo $(which uv) run sine destroy examples/manet_triangle_shared_sinr/network.yaml

@@ -392,7 +392,7 @@ def test_example_connectivity(channel_server, examples_for_tests: Path, bridge_n
 ❌ **Hardcoded container prefixes:**
 ```python
 # BAD
-container_prefix = "clab-manet-triangle-shared"
+container_prefix = "clab-sh-sio-snr-equal-triangle"
 ```
 
 ✅ **Dynamic extraction:**

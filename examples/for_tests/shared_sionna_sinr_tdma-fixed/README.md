@@ -90,14 +90,14 @@ Link: node1→node2 [wireless, TDMA fixed]
 
 ```bash
 # Configure IPs
-docker exec clab-sinr-tdma-fixed-node1 ip addr add 192.168.100.1/24 dev eth1
-docker exec clab-sinr-tdma-fixed-node2 ip addr add 192.168.100.2/24 dev eth1
+docker exec clab-sh-sio-sinr-tdma-fixed-node1 ip addr add 192.168.100.1/24 dev eth1
+docker exec clab-sh-sio-sinr-tdma-fixed-node2 ip addr add 192.168.100.2/24 dev eth1
 
 # Start server
-docker exec clab-sinr-tdma-fixed-node1 iperf3 -s &
+docker exec clab-sh-sio-sinr-tdma-fixed-node1 iperf3 -s &
 
 # Run client (30 sec test)
-docker exec clab-sinr-tdma-fixed-node2 iperf3 -c 192.168.100.1 -t 30
+docker exec clab-sh-sio-sinr-tdma-fixed-node2 iperf3 -c 192.168.100.1 -t 30
 
 # Expected: ~90-95 Mbps (95-99% of 96 Mbps theoretical)
 # Protocol overhead accounts for 1-5% loss

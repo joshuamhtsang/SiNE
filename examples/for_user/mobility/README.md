@@ -35,25 +35,25 @@ INFO:     Uvicorn running on http://0.0.0.0:8000
 Deploy the emulation with mobility API enabled (Terminal 2):
 
 ```bash
-sudo $(which uv) run sine deploy --enable-mobility examples/vacuum_20m/network.yaml
+sudo $(which uv) run sine deploy --enable-mobility examples/for_tests/p2p_fallback_snr_vacuum/network.yaml
 ```
 
 **What this does:**
 - Creates Docker containers via Containerlab
 - Computes initial channel conditions via ray tracing
 - Applies netem to container interfaces
-- **Starts mobility API server on port 8001**
+- **Starts mobility API server on port 8002**
 - Keeps running to accept position updates
 
 **Expected output:**
 ```
 Deployed Containers:
-  clab-vacuum-20m-node1 (sine-node:latest)
+  clab-p2p-fb-snr-vacuum-node1 (sine-node:latest)
     PID: 12345
     Interfaces:
       - eth1 @ position (0.0, 0.0, 1.0)
 
-  clab-vacuum-20m-node2 (sine-node:latest)
+  clab-p2p-fb-snr-vacuum-node2 (sine-node:latest)
     PID: 12346
     Interfaces:
       - eth1 @ position (20.0, 0.0, 1.0)
@@ -62,7 +62,7 @@ Link Parameters:
   node1:eth1 ↔ node2:eth1 [wireless]
     Delay: 0.07 ms | Jitter: 0.00 ms | Loss: 0.00% | Rate: 192.0 Mbps
 
-INFO:     Uvicorn running on http://0.0.0.0:8001 (Press CTRL+C to quit)
+INFO:     Uvicorn running on http://0.0.0.0:8002 (Press CTRL+C to quit)
 ```
 
 ### Step 4: Configure IP Addresses
@@ -70,11 +70,11 @@ INFO:     Uvicorn running on http://0.0.0.0:8001 (Press CTRL+C to quit)
 Containers start with no IP addresses. Assign them (Terminal 3):
 
 ```bash
-docker exec -it clab-vacuum-20m-node1 ip addr add 18.0.0.1/24 dev eth1
-docker exec -it clab-vacuum-20m-node2 ip addr add 18.0.0.2/24 dev eth1
+docker exec -it clab-p2p-fb-snr-vacuum-node1 ip addr add 18.0.0.1/24 dev eth1
+docker exec -it clab-p2p-fb-snr-vacuum-node2 ip addr add 18.0.0.2/24 dev eth1
 
 # Verify connectivity
-docker exec clab-vacuum-20m-node2 ping -c 3 18.0.0.1
+docker exec clab-p2p-fb-snr-vacuum-node2 ping -c 3 18.0.0.1
 ```
 
 ### Step 5: Start iperf3 Monitoring
@@ -82,14 +82,14 @@ docker exec clab-vacuum-20m-node2 ping -c 3 18.0.0.1
 Start iperf3 server on node1 (Terminal 4):
 
 ```bash
-docker exec -it clab-vacuum-20m-node1 iperf3 -s
+docker exec -it clab-p2p-fb-snr-vacuum-node1 iperf3 -s
 ```
 
 Run continuous throughput tests from node2 (Terminal 5):
 
 ```bash
 while true; do
-    docker exec clab-vacuum-20m-node2 iperf3 -c 18.0.0.1 -t 2
+    docker exec clab-p2p-fb-snr-vacuum-node2 iperf3 -c 18.0.0.1 -t 2
     sleep 1
 done
 ```
@@ -112,7 +112,7 @@ uv run python examples/mobility/linear_movement.py node2 20.0 0.0 1.0 300.0 0.0 
 When done, destroy the emulation:
 
 ```bash
-sudo $(which uv) run sine destroy examples/vacuum_20m/network.yaml
+sudo $(which uv) run sine destroy examples/for_tests/p2p_fallback_snr_vacuum/network.yaml
 ```
 
 ## Prerequisites Summary
@@ -124,7 +124,7 @@ sudo $(which uv) run sine destroy examples/vacuum_20m/network.yaml
 
 2. **Emulation with Mobility API** - Deploy with `--enable-mobility` (Terminal 2):
    ```bash
-   sudo $(which uv) run sine deploy --enable-mobility examples/vacuum_20m/network.yaml
+   sudo $(which uv) run sine deploy --enable-mobility examples/for_tests/p2p_fallback_snr_vacuum/network.yaml
    ```
 
 3. **Python dependencies** - Installed automatically via `uv sync`:
@@ -198,24 +198,24 @@ The mobility server exposes these REST endpoints:
 
 ### Update Position
 ```bash
-curl -X POST http://localhost:8001/api/mobility/update \
+curl -X POST http://localhost:8002/api/mobility/update \
      -H "Content-Type: application/json" \
      -d '{"node": "node2", "x": 10.0, "y": 5.0, "z": 1.5}'
 ```
 
 ### Get Position
 ```bash
-curl http://localhost:8001/api/mobility/position/node2
+curl http://localhost:8002/api/mobility/position/node2
 ```
 
 ### List All Nodes
 ```bash
-curl http://localhost:8001/api/nodes | jq
+curl http://localhost:8002/api/nodes | jq
 ```
 
 ### Health Check
 ```bash
-curl http://localhost:8001/health
+curl http://localhost:8002/health
 ```
 
 ## Monitoring Link Quality During Movement
@@ -227,18 +227,18 @@ While running mobility scripts, you can monitor the changing link conditions in 
 **Setup** (run once after deployment):
 ```bash
 # Configure IP addresses
-docker exec -it clab-vacuum-20m-node1 ip addr add 18.0.0.1/24 dev eth1
-docker exec -it clab-vacuum-20m-node2 ip addr add 18.0.0.2/24 dev eth1
+docker exec -it clab-p2p-fb-snr-vacuum-node1 ip addr add 18.0.0.1/24 dev eth1
+docker exec -it clab-p2p-fb-snr-vacuum-node2 ip addr add 18.0.0.2/24 dev eth1
 
 # Start iperf3 server on node1 (Terminal 1)
-docker exec -it clab-vacuum-20m-node1 iperf3 -s
+docker exec -it clab-p2p-fb-snr-vacuum-node1 iperf3 -s
 ```
 
 **Continuous monitoring** (Terminal 2):
 ```bash
 # Run continuous 2-second iperf3 tests
 while true; do
-    docker exec clab-vacuum-20m-node2 iperf3 -c 18.0.0.1 -t 2
+    docker exec clab-p2p-fb-snr-vacuum-node2 iperf3 -c 18.0.0.1 -t 2
     sleep 1
 done
 ```
@@ -263,10 +263,10 @@ done
 ### Option 2: Query Positions via API
 ```bash
 # Watch node positions update
-watch -n 0.5 'curl -s http://localhost:8001/api/nodes | jq'
+watch -n 0.5 'curl -s http://localhost:8002/api/nodes | jq'
 
 # Get single node position
-curl -s http://localhost:8001/api/mobility/position/node2 | jq
+curl -s http://localhost:8002/api/mobility/position/node2 | jq
 ```
 
 **Example output:**
@@ -288,7 +288,7 @@ curl -s http://localhost:8001/api/mobility/position/node2 | jq
 ### Option 3: Check Netem Configuration
 ```bash
 # Watch netem parameters update in real-time
-watch -n 0.5 'docker exec clab-vacuum-20m-node1 tc -s qdisc show dev eth1'
+watch -n 0.5 'docker exec clab-p2p-fb-snr-vacuum-node1 tc -s qdisc show dev eth1'
 
 # OR use the check script
 cd examples/vacuum_20m
@@ -352,7 +352,7 @@ import asyncio
 from examples.mobility.linear_movement import LinearMobility
 
 async def my_custom_pattern():
-    mobility = LinearMobility(api_url="http://localhost:8001")
+    mobility = LinearMobility(api_url="http://localhost:8002")
 
     # Your custom movement logic here
     # ...
@@ -368,7 +368,7 @@ asyncio.run(my_custom_pattern())
 
 **Solution**: Make sure you deployed with the `--enable-mobility` flag:
 ```bash
-sudo $(which uv) run sine deploy --enable-mobility examples/vacuum_20m/network.yaml
+sudo $(which uv) run sine deploy --enable-mobility examples/for_tests/p2p_fallback_snr_vacuum/network.yaml
 ```
 
 ---
@@ -383,7 +383,7 @@ sudo $(which uv) run sine deploy --enable-mobility examples/vacuum_20m/network.y
 
 **Solution**: Check that the node name exists and has wireless capability:
 ```bash
-curl http://localhost:8001/api/nodes
+curl http://localhost:8002/api/nodes
 ```
 
 ---
@@ -465,4 +465,4 @@ Smaller packets improve reliability but increase protocol overhead.
 For more information, see:
 - [Main README.md](../../README.md) - SiNE overview
 - [CLAUDE.md](../../CLAUDE.md) - Developer documentation
-- Mobility API: http://localhost:8001/docs (when server running)
+- Mobility API: http://localhost:8002/docs (when server running)

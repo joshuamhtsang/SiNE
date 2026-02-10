@@ -90,10 +90,10 @@ Note that this example spins up 4 containers in total: 3 for the wireless nodes 
 ~~~
 $ docker ps
 CONTAINER ID   IMAGE           COMMAND     CREATED         STATUS         PORTS     NAMES
-ef17147914d9   alpine:latest   "/bin/sh"   9 seconds ago   Up 9 seconds             clab-manet-triangle-shared-node3
-840027edada3   alpine:latest   "/bin/sh"   9 seconds ago   Up 9 seconds             clab-manet-triangle-shared-node2
-275864d888ca   alpine:latest   "/bin/sh"   9 seconds ago   Up 9 seconds             clab-manet-triangle-shared-bridge-host
-c6ec82e03169   alpine:latest   "/bin/sh"   9 seconds ago   Up 9 seconds             clab-manet-triangle-shared-node1
+ef17147914d9   alpine:latest   "/bin/sh"   9 seconds ago   Up 9 seconds             clab-sh-sio-snr-equal-triangle-node3
+840027edada3   alpine:latest   "/bin/sh"   9 seconds ago   Up 9 seconds             clab-sh-sio-snr-equal-triangle-node2
+275864d888ca   alpine:latest   "/bin/sh"   9 seconds ago   Up 9 seconds             clab-sh-sio-snr-equal-triangle-bridge-host
+c6ec82e03169   alpine:latest   "/bin/sh"   9 seconds ago   Up 9 seconds             clab-sh-sio-snr-equal-triangle-node1
 ~~~
 
 ## Comparison with Point-to-Point

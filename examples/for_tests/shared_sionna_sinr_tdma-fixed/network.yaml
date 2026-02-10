@@ -7,7 +7,7 @@
 # - Throughput reduction: Rate limited by slot ownership fraction
 # - Zero interference: SINR = SNR (orthogonal time slots)
 
-name: sinr-tdma-fixed
+name: sh-sio-sinr-tdma-fixed
 
 topology:
   enable_sinr: true  # Explicit SINR computation with interference

@@ -39,7 +39,7 @@
 #
 # All nodes co-channel (5.18 GHz), all transmit with CSMA model
 
-name: csma-mcs-test
+name: sh-sio-sinr-csma-mcs
 
 topology:
   # Enable SINR computation (interference modeling)

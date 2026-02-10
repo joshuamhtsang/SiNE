@@ -38,7 +38,7 @@
 #   4. Cleanup:
 #      sudo $(which uv) run sine destroy examples/vacuum_20m/network.yaml
 
-name: fallback-vacuum
+name: p2p-fb-snr-vacuum
 prefix: clab
 
 topology:

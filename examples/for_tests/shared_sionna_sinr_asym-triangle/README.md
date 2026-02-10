@@ -64,10 +64,10 @@ sudo $(which uv) run sine deploy examples/for_tests/shared_sionna_sinr_asymmetri
 
 ```bash
 # Good connectivity expected (SINR ~9-10 dB)
-docker exec clab-manet-asymmetric-sinr-node1 ping -c 10 192.168.100.2
+docker exec clab-sh-sio-sinr-asym-triangle-node1 ping -c 10 192.168.100.2
 
 # NO connectivity expected (SINR ~-3 to -4 dB, 100% loss)
-docker exec clab-manet-asymmetric-sinr-node1 ping -c 10 192.168.100.3
+docker exec clab-sh-sio-sinr-asym-triangle-node1 ping -c 10 192.168.100.3
 # Expected: 100% packet loss
 ```
 
@@ -75,13 +75,13 @@ docker exec clab-manet-asymmetric-sinr-node1 ping -c 10 192.168.100.3
 
 ```bash
 # High-SINR link (node1→node2) - Works!
-docker exec -d clab-manet-asymmetric-sinr-node2 iperf3 -s
-docker exec clab-manet-asymmetric-sinr-node1 iperf3 -c 192.168.100.2 -t 10
+docker exec -d clab-sh-sio-sinr-asym-triangle-node2 iperf3 -s
+docker exec clab-sh-sio-sinr-asym-triangle-node1 iperf3 -c 192.168.100.2 -t 10
 # Expected: 50-64 Mbps
 
 # Negative-SINR link (node1→node3) - Fails!
-docker exec -d clab-manet-asymmetric-sinr-node3 iperf3 -s
-docker exec clab-manet-asymmetric-sinr-node1 iperf3 -c 192.168.100.3 -t 10
+docker exec -d clab-sh-sio-sinr-asym-triangle-node3 iperf3 -s
+docker exec clab-sh-sio-sinr-asym-triangle-node1 iperf3 -c 192.168.100.3 -t 10
 # Expected: 0 Mbps (100% packet loss, no connectivity)
 ```
 
