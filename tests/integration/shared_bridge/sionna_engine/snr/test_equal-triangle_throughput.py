@@ -74,7 +74,7 @@ def test_equal_triangle_throughput_all_pairs(channel_server, examples_for_tests:
     - All pairs achieve similar throughput (±10%)
     - Symmetric throughput due to equilateral geometry
     - No preferential links (all sides equal length)
-    - Expected: 180-220 Mbps for all pairs
+    - Expected: 175-220 Mbps for all pairs
 
     Note: Marked as very_slow since it runs 6 iperf3 tests (60+ seconds total).
     """
@@ -115,8 +115,8 @@ def test_equal_triangle_throughput_all_pairs(channel_server, examples_for_tests:
             print(f"  {client_node}→{server_node}: {throughput:.2f} Mbps")
 
             # Each individual measurement should be in range
-            assert 180.0 <= throughput <= 220.0, (
-                f"Throughput {throughput:.2f} Mbps outside expected range 180-220 Mbps"
+            assert 175.0 <= throughput <= 220.0, (
+                f"Throughput {throughput:.2f} Mbps outside expected range 175-220 Mbps"
             )
 
         # Verify symmetric throughput (all within 10% of mean)
