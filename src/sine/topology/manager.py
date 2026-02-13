@@ -357,6 +357,18 @@ class ContainerlabManager:
         # Get all unique subnets for routing
         bridge_subnets = self._get_bridge_subnets(sine_config, bridge_config)
 
+        # Build per-node map of subnets that are directly connected
+        # (i.e., the node has an interface with an IP on that subnet).
+        # Used to avoid adding explicit routes that conflict with kernel
+        # connected routes created by `ip addr add`.
+        node_connected_subnets: dict[str, set[str]] = {}
+        for n_name, i_name in bridge_interfaces:
+            iface_cfg = topology_def["nodes"][n_name]["interfaces"][i_name]
+            ip_cidr = iface_cfg.get("ip_address")
+            if ip_cidr:
+                subnet = str(ipaddress.ip_network(ip_cidr, strict=False))
+                node_connected_subnets.setdefault(n_name, set()).add(subnet)
+
         ip_assignments: dict[str, dict[str, str]] = {}
 
         for node_name, iface_name in bridge_interfaces:
@@ -409,8 +421,21 @@ class ContainerlabManager:
                     logger.error(f"Failed to apply IP to {node_name}:{iface_name}: {result.stderr}")
                     continue
 
-                # 2. Add routes for all bridge subnets via this interface
+                # 2. Add routes for bridge subnets this node is NOT directly
+                #    connected to.  Directly-connected subnets already have
+                #    kernel routes created by `ip addr add` above, so adding
+                #    an explicit route would either conflict or, worse, pin
+                #    the subnet to the wrong interface (e.g. 5 GHz eth1 gets
+                #    an explicit route for the 2.4 GHz subnet before eth2's
+                #    connected route is created).
+                connected = node_connected_subnets.get(node_name, set())
                 for bridge_subnet in bridge_subnets:
+                    if bridge_subnet in connected:
+                        logger.debug(
+                            f"Skipping route {bridge_subnet} on {node_name}:{iface_name} "
+                            f"(directly connected on another interface)"
+                        )
+                        continue
                     result = subprocess.run(
                         [
                             "sudo",
