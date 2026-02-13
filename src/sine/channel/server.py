@@ -136,6 +136,14 @@ class WirelessLinkRequest(BaseModel):
 
     tx_node: str = Field(..., description="Transmitter node name")
     rx_node: str = Field(..., description="Receiver node name")
+    tx_interface: str | None = Field(
+        default=None,
+        description="TX interface name for interface-level SINR identity (e.g., 'eth1')"
+    )
+    rx_interface: str | None = Field(
+        default=None,
+        description="RX interface name for interface-level SINR identity (e.g., 'eth1')"
+    )
     tx_position: Position
     rx_position: Position
     tx_power_dbm: float = Field(default=20.0, description="Transmit power in dBm")
@@ -164,6 +172,18 @@ class WirelessLinkRequest(BaseModel):
     packet_size_bits: int = Field(default=12000, description="Packet size in bits")
     # MAC layer model
     mac_model: MACModel | None = Field(default=None, description="MAC layer model (CSMA or TDMA)")
+
+    def iface_key(self) -> str:
+        """Return interface-level key ('node:iface') or node-level key ('node') for identification."""
+        if self.tx_interface:
+            return f"{self.tx_node}:{self.tx_interface}"
+        return self.tx_node
+
+    def rx_iface_key(self) -> str:
+        """Return RX interface-level key ('node:iface') or node-level key ('node')."""
+        if self.rx_interface:
+            return f"{self.rx_node}:{self.rx_interface}"
+        return self.rx_node
 
 
 class ChannelResponse(BaseModel):
@@ -655,6 +675,33 @@ def estimate_communication_range(
     return communication_range_m
 
 
+def _is_iface_active(
+    iface_key: str, active_states: dict[str, bool]
+) -> bool:
+    """Check if an interface is active.
+
+    Args:
+        iface_key: Interface key ("node:iface" or "node").
+        active_states: Map of "node:interface" -> is_active.
+
+    Returns:
+        True if active (defaults to True if not in active_states).
+    """
+    if not active_states:
+        return True
+    # Direct match (e.g., "node1:eth1")
+    if iface_key in active_states:
+        return active_states[iface_key]
+    # If key is just a node name, check if any interface is active
+    matching = [
+        v for k, v in active_states.items()
+        if k.startswith(f"{iface_key}:")
+    ]
+    if matching:
+        return any(matching)
+    return True  # No info, assume active
+
+
 async def _compute_batch_with_sinr(
     links: list[WirelessLinkRequest],
     mac_model_config: MACModel | None,
@@ -698,32 +745,42 @@ async def _compute_batch_with_sinr(
     if _sinr_calculator is None:
         _sinr_calculator = SINRCalculator()
 
-    # Collect all unique node positions and info
-    node_positions: dict[str, tuple[float, float, float]] = {}
-    node_powers: dict[str, float] = {}
-    node_gains: dict[str, float] = {}
-    # Track TX frequency per node (from links where node is transmitter)
-    # LIMITATION: Assumes one frequency per node. Multi-interface nodes with different
-    # frequencies would require tracking (node, interface) tuples, which requires
-    # extending the batch API to include interface information.
-    node_tx_frequencies: dict[str, float] = {}
-    node_tx_bandwidths: dict[str, float] = {}
-    node_antenna_patterns: dict[str, str] = {}  # Track antenna patterns per node
-    node_polarizations: dict[str, str] = {}     # Track polarizations per node
+    # Detect interface-level mode (multi-interface nodes on shared bridge)
+    has_interface_info = any(link.tx_interface is not None for link in links)
+
+    # Collect positions, powers, gains, frequencies keyed by interface key.
+    # When interface info is available: key = "node:iface" (e.g., "node1:eth1")
+    # When not available (backward compat): key = "node" (e.g., "node1")
+    iface_positions: dict[str, tuple[float, float, float]] = {}
+    iface_powers: dict[str, float] = {}
+    iface_gains: dict[str, float] = {}
+    iface_tx_frequencies: dict[str, float] = {}
+    iface_tx_bandwidths: dict[str, float] = {}
+    iface_antenna_patterns: dict[str, str] = {}
+    iface_polarizations: dict[str, str] = {}
+    # Map interface key -> node name (for same-node exclusion)
+    iface_to_node: dict[str, str] = {}
+    all_iface_keys: set[str] = set()
+    # Keep track of all node names too (for MAC models and backward compat)
     all_nodes: set[str] = set()
 
     for link in links:
-        node_positions[link.tx_node] = link.tx_position.as_tuple()
-        node_positions[link.rx_node] = link.rx_position.as_tuple()
-        node_powers[link.tx_node] = link.tx_power_dbm
-        node_gains[link.tx_node] = link.tx_gain_dbi
-        node_gains[link.rx_node] = link.rx_gain_dbi
-        # Track TX frequency when this node is a transmitter
-        node_tx_frequencies[link.tx_node] = link.frequency_hz
-        node_tx_bandwidths[link.tx_node] = link.bandwidth_hz
-        # Track antenna patterns and polarizations (for SINR computation)
-        node_antenna_patterns[link.tx_node] = link.antenna_pattern
-        node_polarizations[link.tx_node] = link.polarization
+        tx_key = link.iface_key()
+        rx_key = link.rx_iface_key()
+
+        iface_positions[tx_key] = link.tx_position.as_tuple()
+        iface_positions[rx_key] = link.rx_position.as_tuple()
+        iface_powers[tx_key] = link.tx_power_dbm
+        iface_gains[tx_key] = link.tx_gain_dbi
+        iface_gains[rx_key] = link.rx_gain_dbi
+        iface_tx_frequencies[tx_key] = link.frequency_hz
+        iface_tx_bandwidths[tx_key] = link.bandwidth_hz
+        iface_antenna_patterns[tx_key] = link.antenna_pattern
+        iface_polarizations[tx_key] = link.polarization
+        iface_to_node[tx_key] = link.tx_node
+        iface_to_node[rx_key] = link.rx_node
+        all_iface_keys.add(tx_key)
+        all_iface_keys.add(rx_key)
         all_nodes.add(link.tx_node)
         all_nodes.add(link.rx_node)
 
@@ -803,29 +860,27 @@ async def _compute_batch_with_sinr(
                 noise_figure_db=link.noise_figure_db,
             )
 
-            # Compute interference probabilities using MAC model (if configured)
-            interferer_nodes = [n for n in all_nodes if n not in (link.tx_node, link.rx_node)]
+            # Identify interferers: exclude TX/RX and same-node interfaces
+            # (same-node cross-band coupling handled by controller's
+            # self_isolation_db model, not ray tracing)
+            tx_key = link.iface_key()
+            rx_key = link.rx_iface_key()
+            active_interferer_keys = [
+                k for k in all_iface_keys
+                if k != tx_key
+                and k != rx_key
+                and iface_to_node[k] != link.tx_node
+                and iface_to_node[k] != link.rx_node
+                and _is_iface_active(k, active_states)
+            ]
 
-            # Filter inactive nodes from interferers
-            # Check if ANY interface on the node is active
-            def is_node_active(node_name: str, active_states: dict[str, bool]) -> bool:
-                """Check if any interface on the node is active."""
-                # If no active_states provided, assume active
-                if not active_states:
-                    return True
-                # Check if any interface on this node is active
-                node_interfaces = [k for k in active_states.keys() if k.startswith(f"{node_name}:")]
-                if not node_interfaces:
-                    return True  # No info, assume active
-                return any(active_states.get(iface, True) for iface in node_interfaces)
-
-            active_interferer_nodes = [n for n in interferer_nodes if is_node_active(n, active_states)]
+            # Node names for MAC models
+            active_interferer_nodes = list({
+                iface_to_node[k] for k in active_interferer_keys
+            })
 
             if mac_model_config is not None:
-                # Use MAC model to compute tx_probability
                 if mac_model_config.type == "csma":
-                    # CSMA: Estimate communication range from link budget
-                    # Use configured SNR threshold from network.yaml
                     communication_range = estimate_communication_range(
                         tx_power_dbm=link.tx_power_dbm,
                         frequency_hz=link.frequency_hz,
@@ -835,7 +890,11 @@ async def _compute_batch_with_sinr(
                         min_snr_db=mac_model_config.communication_range_snr_threshold_db,
                         noise_figure_db=7.0,
                     )
-
+                    # MAC models use node-level positions
+                    node_positions = {
+                        iface_to_node[k]: iface_positions[k]
+                        for k in iface_positions
+                    }
                     interference_probs = mac_model.compute_interference_probabilities(
                         tx_node=link.tx_node,
                         rx_node=link.rx_node,
@@ -854,41 +913,44 @@ async def _compute_batch_with_sinr(
                 else:
                     interference_probs = {}
             else:
-                # No MAC model: worst-case scenario (all interferers transmit continuously)
-                interference_probs = {node: 1.0 for node in active_interferer_nodes}
+                interference_probs = {
+                    iface_to_node[k]: 1.0
+                    for k in active_interferer_keys
+                }
                 logger.debug(
-                    f"No MAC model configured. Using worst-case tx_probability=1.0 "
-                    f"for {len(active_interferer_nodes)} active interferers."
+                    "No MAC model. Worst-case tx_probability=1.0 "
+                    "for %d active interferers.",
+                    len(active_interferer_keys),
                 )
 
-            # Build interference terms for SINR calculator
-            # Compute actual interference power from each active interferer using InterferenceEngine
+            # Build TransmitterInfo list from active interferer keys
             interferer_infos = []
-            for interferer_name in active_interferer_nodes:
-                if interferer_name in node_positions and interferer_name in node_powers:
-                    # Use interferer's own TX frequency (not receiver's frequency)
-                    interferer_freq = node_tx_frequencies.get(interferer_name, link.frequency_hz)
-                    interferer_bw = node_tx_bandwidths.get(interferer_name, link.bandwidth_hz)
-                    # Use interferer's antenna pattern and polarization
-                    interferer_pattern = node_antenna_patterns.get(interferer_name, "iso")
-                    interferer_polar = node_polarizations.get(interferer_name, "V")
-
+            for ikey in active_interferer_keys:
+                if ikey in iface_positions and ikey in iface_powers:
                     interferer_infos.append(
                         TransmitterInfo(
-                            node_name=interferer_name,
-                            position=node_positions[interferer_name],
-                            tx_power_dbm=node_powers[interferer_name],
-                            antenna_pattern=interferer_pattern,  # FIX: Pass antenna pattern
-                            polarization=interferer_polar,       # FIX: Pass polarization
-                            frequency_hz=interferer_freq,
-                            bandwidth_hz=interferer_bw,
+                            node_name=iface_to_node[ikey],
+                            position=iface_positions[ikey],
+                            tx_power_dbm=iface_powers[ikey],
+                            antenna_pattern=iface_antenna_patterns.get(
+                                ikey, "iso"
+                            ),
+                            polarization=iface_polarizations.get(
+                                ikey, "V"
+                            ),
+                            frequency_hz=iface_tx_frequencies.get(
+                                ikey, link.frequency_hz
+                            ),
+                            bandwidth_hz=iface_tx_bandwidths.get(
+                                ikey, link.bandwidth_hz
+                            ),
                         )
                     )
 
-            # Compute interference at RX using InterferenceEngine
-            # Build node-level active states from interface-level active_states
-            node_active_states = {
-                name: is_node_active(name, active_states) for name in active_interferer_nodes
+            # Active states for interference engine
+            iface_active_states = {
+                iface_to_node[k]: True
+                for k in active_interferer_keys
             }
 
             # Use RX frequency for ACLR calculation (defaults to TX frequency if not specified)
@@ -900,7 +962,7 @@ async def _compute_batch_with_sinr(
                 rx_antenna_gain_dbi=link.rx_gain_dbi,
                 rx_node=link.rx_node,
                 interferers=interferer_infos,
-                active_states=node_active_states,
+                active_states=iface_active_states,
                 rx_frequency_hz=rx_freq_hz,
                 rx_bandwidth_hz=rx_bw_hz,
                 rx_antenna_pattern=link.antenna_pattern,  # FIX: Pass RX antenna pattern
