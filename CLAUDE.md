@@ -197,16 +197,16 @@ uv run sine channel-server
 # Deploy emulation (prints deployment summary with containers, interfaces, netem params)
 # NOTE: Requires sudo for netem (network emulation) configuration
 # CRITICAL: MUST use full pattern - UV_PATH=$(which uv) sudo -E $(which uv) run ...
-UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy examples/vacuum_20m/network.yaml
+UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy examples/for_user/adaptive_mcs_wifi6/network.yaml
 
 # Deploy with mobility API enabled (for dynamic position updates)
-UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy --enable-mobility examples/vacuum_20m/network.yaml
+UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy --enable-mobility examples/for_tests/p2p_sionna_snr_two-rooms/network.yaml
 
 # Validate topology
-uv run sine validate examples/vacuum_20m/network.yaml
+uv run sine validate examples/for_user/adaptive_mcs_wifi6/network.yaml
 
 # Render scene to image (does NOT require channel server)
-uv run sine render examples/vacuum_20m/network.yaml -o scene.png
+uv run sine render examples/for_tests/p2p_sionna_snr_two-rooms/network.yaml -o scene.png
 
 # Check system info
 uv run sine info
@@ -215,7 +215,7 @@ uv run sine info
 uv run sine status
 
 # Destroy emulation
-UV_PATH=$(which uv) sudo -E $(which uv) run sine destroy examples/vacuum_20m/network.yaml
+UV_PATH=$(which uv) sudo -E $(which uv) run sine destroy examples/for_user/adaptive_mcs_wifi6/network.yaml
 
 # Interactive scene viewer (Jupyter notebook)
 uv run --with jupyter jupyter notebook scenes/viewer.ipynb
@@ -247,46 +247,45 @@ uv run ruff check src/sine
 
 Example topologies are provided in `examples/`:
 
-### Basic Examples
+### User Examples (`examples/for_user/`)
 
 | Example | Description | Link Type | Scene |
 |---------|-------------|-----------|-------|
-| `vacuum_20m/` | Baseline free-space wireless (2 nodes, 20m) | wireless | `vacuum.xml` |
+| `adaptive_mcs_wifi6/` | WiFi 6 MCS selection (2 nodes) | wireless | `vacuum.xml` |
 | `fixed_link/` | Fixed netem parameters (no RF) | fixed_netem | (none) |
-| `two_rooms/` | Indoor multipath (2 rooms with doorway) | wireless | `two_rooms.xml` |
+| `mobility/` | Movement scripts and API examples | wireless | Various |
 
-### Adaptive MCS Examples
+### Test Examples (Integration Testing)
+
+Available in `examples/for_tests/` with flat naming pattern:
 
 | Example | Description | MAC Protocol | Features |
 |---------|-------------|--------------|----------|
-| `adaptive_mcs_wifi6/` | WiFi 6 MCS selection (2 nodes) | N/A | SNR-based adaptive modulation |
-| `csma_mcs_test/` | CSMA/CA with adaptive MCS | CSMA/CA | Carrier sensing, MCS adaptation |
-| `sinr_csma/` | CSMA with SINR (3+ nodes) | CSMA/CA | Interference-aware MCS |
+| `p2p_fallback_snr_vacuum/` | Free-space (2 nodes, 20m) | N/A | Baseline, fallback engine |
+| `p2p_sionna_snr_two-rooms/` | Indoor multipath | N/A | 2 rooms with doorway |
+| `shared_sionna_sinr_csma-mcs/` | CSMA/CA with adaptive MCS | CSMA/CA | Carrier sensing, SINR, MCS adaptation |
 
-### SINR/Interference Examples
+### SINR/Interference Test Examples
 
 | Example | Description | MAC Protocol | Interference Model |
 |---------|-------------|--------------|-------------------|
-| `manet_triangle_shared/` | 3-node MANET, shared bridge | N/A | Point-to-point links |
-| `manet_triangle_shared_sinr/` | 3-node MANET with SINR | N/A | Co-channel interference |
-| `sinr_tdma_roundrobin/` | Round-robin TDMA (equal slots) | TDMA | Probability-weighted (20% each) |
-| `sinr_tdma_fixed/` | Fixed TDMA schedule | TDMA | Per-node slot assignments |
-
-### Mobility Examples
-
-| Example | Description | Features |
-|---------|-------------|----------|
-| `mobility/` | Movement scripts and API examples | Dynamic position updates, API endpoints |
+| `shared_sionna_snr_equal-triangle/` | 3-node MANET, shared bridge | N/A | SNR only (no interference) |
+| `shared_sionna_sinr_equal-triangle/` | 3-node MANET with SINR | N/A | Co-channel interference |
+| `shared_sionna_sinr_asym-triangle/` | Asymmetric 3-node MANET | N/A | Variable link quality, SINR |
+| `shared_sionna_sinr_tdma-rr/` | Round-robin TDMA (equal slots) | TDMA | Probability-weighted (20% each) |
+| `shared_sionna_sinr_tdma-fixed/` | Fixed TDMA schedule | TDMA | Per-node slot assignments |
+| `shared_sionna_snr_dual-band/` | Dual-band (2.4 GHz + 5 GHz) | N/A | Multi-interface per node |
 
 The examples demonstrate:
-- **Free-space propagation** (`vacuum_20m/`)
-- **Indoor multipath** (`two_rooms/`)
-- **Adaptive modulation** (`adaptive_mcs_wifi6/`, `csma_mcs_test/`)
-- **MANET broadcast domains** (`manet_triangle_shared/`)
-- **Fixed link emulation** (`fixed_link/`)
-- **Node mobility** (`mobility/`)
-- **SINR computation** (`manet_triangle_shared_sinr/`, `sinr_csma/`, `sinr_tdma_*`)
+- **Free-space propagation** (`p2p_fallback_snr_vacuum/`)
+- **Indoor multipath** (`p2p_sionna_snr_two-rooms/`)
+- **Adaptive modulation** (`for_user/adaptive_mcs_wifi6/`, `for_tests/shared_sionna_sinr_csma-mcs/`)
+- **MANET broadcast domains** (`shared_sionna_snr_equal-triangle/`)
+- **Fixed link emulation** (`for_user/fixed_link/`)
+- **Node mobility** (`for_user/mobility/`)
+- **SINR computation** (`shared_sionna_sinr_*`)
 - **MAC protocols** (CSMA/CA, TDMA)
+- **Multi-radio nodes** (`shared_sionna_snr_dual-band/`)
 
 ## Channel Server API
 
@@ -731,7 +730,7 @@ Monitor running emulations in real-time with cached channel metrics and 3D path 
 uv run sine channel-server
 
 # 2. Deploy emulation
-UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy examples/two_rooms/network.yaml
+UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy examples/for_tests/p2p_sionna_snr_two-rooms/network.yaml
 
 # 3. Open live viewer (browser-based Jupyter)
 uv run --with jupyter jupyter notebook scenes/viewer_live.ipynb
@@ -776,22 +775,9 @@ Options: `--camera-position X,Y,Z`, `--look-at X,Y,Z`, `--clip-at Z`, `--resolut
 
 Mitsuba XML scenes can be created with:
 
-1. **Scene Generator Script** (`scenes/generate_room.py`) - Generate two-room layouts:
-   ```bash
-   # Default 5x4x2.5m rooms
-   uv run python scenes/generate_room.py -o scenes/my_scene.xml
+1. **Blender + Mitsuba add-on** - Model interactively, export to XML
 
-   # Custom sizes
-   uv run python scenes/generate_room.py -o scenes/large.xml \
-       --room1-size 10,8,3 --room2-size 10,8,3 --door-width 1.5
-
-   # See all options
-   uv run python scenes/generate_room.py --help
-   ```
-
-2. **Blender + Mitsuba add-on** - Model interactively, export to XML
-
-3. **Hand-edit XML** - For simple modifications or custom geometries
+2. **Hand-edit XML** - For simple modifications or custom geometries (see `scenes/vacuum.xml` and `scenes/two_rooms.xml` for examples)
 
 Key requirement: Material names must use `itu_` prefix (e.g., `itu_concrete`, `itu_glass`)
 
@@ -886,7 +872,7 @@ Specify one, but not both.
 
 #### Example Migration
 
-**Before** (manet_triangle_shared/network.yaml):
+**Before** (old network.yaml format):
 ```yaml
 wireless:
   antenna_pattern: dipole
@@ -959,8 +945,10 @@ nodes:
 #### Examples Affected
 
 All SINR examples have been updated:
-- `shared_sionna_sinr_triangle/`
+- `shared_sionna_sinr_equal-triangle/`
+- `shared_sionna_sinr_asym-triangle/`
 - `shared_sionna_sinr_csma/`
+- `shared_sionna_sinr_csma-mcs/`
 - `shared_sionna_sinr_tdma-rr/`
 - `shared_sionna_sinr_tdma-fixed/`
 
@@ -1167,13 +1155,14 @@ For topologies with 3+ nodes, SiNE tracks which interface connects to which peer
 
 ### MANET Examples
 
-- **Shared bridge**: `examples/manet_triangle_shared/` (broadcast domain with per-destination tc filters)
-- **Shared bridge + SINR**: `examples/manet_triangle_shared_sinr/` (with interference modeling)
+- **Shared bridge (SNR)**: `examples/for_tests/shared_sionna_snr_equal-triangle/` (broadcast domain with per-destination tc filters)
+- **Shared bridge (SINR)**: `examples/for_tests/shared_sionna_sinr_equal-triangle/` (with interference modeling)
+- **Multi-radio**: `examples/for_tests/shared_sionna_snr_dual-band/` (dual-band 2.4 GHz + 5 GHz per node)
 
 ### Shared Bridge Model (Implemented)
 
 The shared bridge model provides a true broadcast medium:
-- Single interface per node (like real MANETs)
+- Supports multiple interfaces per node (e.g., dual-band radios) as of Feb 2026
 - All nodes "hear" all transmissions
 - Per-destination tc flower filters apply channel-specific netem rules
 - Supports hidden node modeling
@@ -1235,7 +1224,7 @@ topology:
 
 ### Example
 
-See `examples/fixed_link/network.yaml` for a complete fixed netem example.
+See `examples/for_user/fixed_link/network.yaml` for a complete fixed netem example.
 
 ## Adaptive MCS Selection
 
@@ -1286,7 +1275,7 @@ nodes:
     interfaces:
       eth1:
         wireless:
-          mcs_table: examples/wifi6_adaptive/data/wifi6_mcs.csv
+          mcs_table: examples/common_data/wifi6_mcs.csv
           mcs_hysteresis_db: 2.0    # Optional, default: 2.0 dB
           rf_power_dbm: 20.0
           frequency_ghz: 5.18
@@ -1339,7 +1328,7 @@ Link Parameters:
 
 ### Example
 
-See `examples/adaptive_mcs_wifi6/` for a complete example with deployment and throughput testing instructions.
+See `examples/for_user/adaptive_mcs_wifi6/` for a complete example with deployment and throughput testing instructions.
 
 ### Data Rate Calculation with MCS
 
@@ -1441,8 +1430,8 @@ nodes:
 - Carrier sense range computed from communication range and multiplier
 
 **Examples**:
-- `shared_sionna_sinr_csma-mcs/`: CSMA/CA with adaptive MCS (SINR mode, hidden node test)
-- `shared_sionna_sinr_csma/`: CSMA with interference-aware MCS (SINR mode)
+- `examples/for_tests/shared_sionna_sinr_csma-mcs/`: CSMA/CA with adaptive MCS (SINR mode, hidden node test)
+- `examples/for_tests/shared_sionna_sinr_csma/`: CSMA with SINR (SINR mode)
 
 **Considerations**:
 - Hidden node problem: Adjacent-channel interferers may not be detected by carrier sensing
@@ -1869,8 +1858,8 @@ Integration tests use `examples/for_tests/` with flat naming:
 Examples:
 - `p2p_fallback_snr_vacuum/` - Point-to-point, fallback, SNR, free space
 - `p2p_sionna_snr_two-rooms/` - Point-to-point, Sionna, SNR, indoor
-- `shared_sionna_snr_triangle/` - Shared bridge, Sionna, SNR, 3-node
-- `shared_sionna_sinr_triangle/` - Shared bridge, Sionna, SINR, interference
+- `shared_sionna_snr_equal-triangle/` - Shared bridge, Sionna, SNR, 3-node
+- `shared_sionna_sinr_equal-triangle/` - Shared bridge, Sionna, SINR, interference
 
 **Benefits:**
 - Grep-friendly: `grep -r "p2p_sionna" tests/`
@@ -1888,9 +1877,10 @@ Examples:
 **Examples**:
 - `p2p_fallback_snr_vacuum/` - Point-to-point, fallback engine, SNR, free space
 - `p2p_sionna_snr_two-rooms/` - Point-to-point, Sionna, SNR, indoor
-- `shared_sionna_snr_triangle/` - Shared bridge, Sionna, SNR, 3-node
-- `shared_sionna_sinr_triangle/` - Shared bridge, Sionna, SINR, equilateral triangle
-- `shared_sionna_sinr_asymmetric/` - Shared bridge, Sionna, SINR, asymmetric triangle
+- `shared_sionna_snr_equal-triangle/` - Shared bridge, Sionna, SNR, 3-node
+- `shared_sionna_sinr_equal-triangle/` - Shared bridge, Sionna, SINR, equilateral triangle
+- `shared_sionna_sinr_asym-triangle/` - Shared bridge, Sionna, SINR, asymmetric triangle
+- `shared_sionna_snr_dual-band/` - Shared bridge, dual-band (2.4 GHz + 5 GHz) per node
 
 **Benefits**:
 - Grep-friendly: `grep -r "p2p_sionna" examples/for_tests/`
@@ -2027,10 +2017,12 @@ assert response.status_code == 200
 
 ### Deployment
 - `src/sine/emulation/controller.py`: Main deployment orchestrator
-- `src/sine/topology/containerlab.py`: Containerlab integration
-- `src/sine/topology/netem.py`: Network emulation configuration
+- `src/sine/topology/manager.py`: ContainerlabManager - Containerlab integration
+- `src/sine/topology/netem.py`: Network emulation configuration (point-to-point)
+- `src/sine/topology/shared_netem.py`: Shared bridge netem configuration
 
 ### Tests
-- `tests/channel/`: Unit tests for channel computation
+- `tests/unit/channel/`: Unit tests for channel computation
+- `tests/unit/protocols/`: Unit tests for MAC protocols (SINR, TDMA, CSMA)
 - `tests/integration/`: Full deployment tests (require sudo)
 - `tests/conftest.py`: Shared fixtures (project_root, examples_dir, etc.)
