@@ -86,7 +86,6 @@ def test_snr_with_tdma_throughput_applied(channel_server, examples_for_tests: Pa
                 "enabled": True,
                 "name": "test-br0",
                 "nodes": ["node1", "node2"],
-                "interface_name": "eth1",
             },
             "nodes": {
                 "node1": {
@@ -185,7 +184,6 @@ def test_inactive_interface_excluded(channel_server, examples_for_tests: Path, t
                 "enabled": True,
                 "name": "test-br0",
                 "nodes": ["node1", "node2", "node3"],
-                "interface_name": "eth1",
             },
             "nodes": {
                 "node1": {
