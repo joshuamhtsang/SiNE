@@ -75,74 +75,24 @@ def test_snr_with_tdma_throughput_applied(channel_server, examples_for_tests: Pa
     - enable_sinr=false → SNR computed (no interference)
     - TDMA slot multiplier still applied to throughput
     - Warning logged about interference disabled (visible in test output)
+
+    Based on: shared_sionna_sinr_tdma-rr example with enable_sinr flipped to false.
     """
-    # Create test topology: 2 nodes, enable_sinr=false, TDMA with 3/10 slots
-    topology_yaml = {
-        "name": "test-snr-tdma-throughput",
-        "topology": {
-            "enable_sinr": False,  # Explicitly disabled
-            "scene": {"file": "scenes/vacuum.xml"},
-            "shared_bridge": {
-                "enabled": True,
-                "name": "test-br0",
-                "nodes": ["node1", "node2"],
-            },
-            "nodes": {
-                "node1": {
-                    "kind": "linux",
-                    "image": "alpine:latest",
-                    "interfaces": {
-                        "eth1": {
-                            "ip_address": "192.168.100.1/24",
-                            "wireless": {
-                                "position": {"x": 0.0, "y": 0.0, "z": 1.0},
-                                "frequency_ghz": 5.18,
-                                "rf_power_dbm": 20.0,
-                                "bandwidth_mhz": 80.0,
-                                "antenna_pattern": "hw_dipole",
-                                "polarization": "V",
-                                "modulation": "64qam",
-                                "fec_type": "ldpc",
-                                "fec_code_rate": 0.5,
-                                "tdma": {
-                                    "enabled": True,
-                                    "fixed_slot_map": {"node1": [0, 1, 2]},  # 3 out of 10 slots
-                                },
-                            }
-                        }
-                    },
-                },
-                "node2": {
-                    "kind": "linux",
-                    "image": "alpine:latest",
-                    "interfaces": {
-                        "eth1": {
-                            "ip_address": "192.168.100.2/24",
-                            "wireless": {
-                                "position": {"x": 20.0, "y": 0.0, "z": 1.0},
-                                "frequency_ghz": 5.18,
-                                "rf_power_dbm": 20.0,
-                                "bandwidth_mhz": 80.0,
-                                "antenna_pattern": "hw_dipole",
-                                "polarization": "V",
-                                "modulation": "64qam",
-                                "fec_type": "ldpc",
-                                "fec_code_rate": 0.5,
-                                "tdma": {
-                                    "enabled": True,
-                                    "fixed_slot_map": {"node2": [3, 4, 5, 6]},  # 4 out of 10 slots
-                                },
-                            }
-                        }
-                    },
-                },
-            },
-        },
-    }
+    # Load the TDMA round-robin example and disable SINR
+    source_yaml = examples_for_tests / "shared_sionna_sinr_tdma-rr" / "network.yaml"
+    if not source_yaml.exists():
+        pytest.skip(f"Example not found: {source_yaml}")
+
+    with open(source_yaml, "r") as f:
+        config = yaml.safe_load(f)
+
+    # Targeted modifications: disable SINR, unique name to avoid containerlab conflicts
+    config["name"] = "test-snr-tdma-throughput"
+    config["topology"]["enable_sinr"] = False
 
     yaml_path = tmp_path / "network.yaml"
     with open(yaml_path, "w") as f:
-        yaml.dump(topology_yaml, f)
+        yaml.dump(config, f)
 
     deploy_process = None
     try:
@@ -173,89 +123,24 @@ def test_inactive_interface_excluded(channel_server, examples_for_tests: Path, t
     Verifies:
     - Inactive interfaces do NOT contribute to interference
     - Deployment succeeds with inactive interfaces
+
+    Based on: shared_sionna_sinr_equal-triangle example with node3 set to inactive.
     """
-    # Create 3-node triangle: node1, node2 (active), node3 (inactive)
-    topology_yaml = {
-        "name": "test-interference-inactive",
-        "topology": {
-            "enable_sinr": True,
-            "scene": {"file": "scenes/vacuum.xml"},
-            "shared_bridge": {
-                "enabled": True,
-                "name": "test-br0",
-                "nodes": ["node1", "node2", "node3"],
-            },
-            "nodes": {
-                "node1": {
-                    "kind": "linux",
-                    "image": "alpine:latest",
-                    "interfaces": {
-                        "eth1": {
-                            "ip_address": "192.168.100.1/24",
-                            "wireless": {
-                                "position": {"x": 0.0, "y": 0.0, "z": 1.0},
-                                "frequency_ghz": 5.18,
-                                "rf_power_dbm": 20.0,
-                                "bandwidth_mhz": 80.0,
-                                "antenna_pattern": "hw_dipole",
-                                "polarization": "V",
-                                "modulation": "64qam",
-                                "fec_type": "ldpc",
-                                "fec_code_rate": 0.5,
-                                "is_active": True,
-                            }
-                        }
-                    },
-                },
-                "node2": {
-                    "kind": "linux",
-                    "image": "alpine:latest",
-                    "interfaces": {
-                        "eth1": {
-                            "ip_address": "192.168.100.2/24",
-                            "wireless": {
-                                "position": {"x": 20.0, "y": 0.0, "z": 1.0},
-                                "frequency_ghz": 5.18,
-                                "rf_power_dbm": 20.0,
-                                "bandwidth_mhz": 80.0,
-                                "antenna_pattern": "hw_dipole",
-                                "polarization": "V",
-                                "modulation": "64qam",
-                                "fec_type": "ldpc",
-                                "fec_code_rate": 0.5,
-                                "is_active": True,
-                            }
-                        }
-                    },
-                },
-                "node3": {
-                    "kind": "linux",
-                    "image": "alpine:latest",
-                    "interfaces": {
-                        "eth1": {
-                            "ip_address": "192.168.100.3/24",
-                            "wireless": {
-                                "position": {"x": 10.0, "y": 17.3, "z": 1.0},
-                                "frequency_ghz": 5.18,
-                                "rf_power_dbm": 20.0,
-                                "bandwidth_mhz": 80.0,
-                                "antenna_pattern": "hw_dipole",
-                                "polarization": "V",
-                                "modulation": "64qam",
-                                "fec_type": "ldpc",
-                                "fec_code_rate": 0.5,
-                                "is_active": False,  # Inactive
-                            }
-                        }
-                    },
-                },
-            },
-        },
-    }
+    # Load the SINR equal-triangle example and set node3 to inactive
+    source_yaml = examples_for_tests / "shared_sionna_sinr_equal-triangle" / "network.yaml"
+    if not source_yaml.exists():
+        pytest.skip(f"Example not found: {source_yaml}")
+
+    with open(source_yaml, "r") as f:
+        config = yaml.safe_load(f)
+
+    # Targeted modifications: unique name, set node3 to inactive
+    config["name"] = "test-interference-inactive"
+    config["topology"]["nodes"]["node3"]["interfaces"]["eth1"]["wireless"]["is_active"] = False
 
     yaml_path = tmp_path / "network.yaml"
     with open(yaml_path, "w") as f:
-        yaml.dump(topology_yaml, f)
+        yaml.dump(config, f)
 
     deploy_process = None
     try:
