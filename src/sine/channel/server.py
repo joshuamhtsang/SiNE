@@ -46,6 +46,7 @@ _force_fallback_mode = False  # CLI flag: force fallback-only mode (disable Sion
 
 # Global interference engine (for SINR computation)
 _interference_engine: InterferenceEngine | None = None
+_interference_engine_scene_key: tuple | None = None  # (scene_file, freq_hz, bw_hz)
 
 # Global SINR calculator
 _sinr_calculator: SINRCalculator | None = None
@@ -732,14 +733,26 @@ async def _compute_batch_with_sinr(
     else:
         logger.info(f"Computing {len(links)} links with SINR (no MAC model, worst-case tx_probability=1.0)")
 
-    # Initialize interference engine if needed
+    # Clear MCS hysteresis state to prevent stale per-link MCS history from
+    # previous deployments affecting new computations. Without this, a prior
+    # test that set MCS to a low value could prevent upgrades due to hysteresis.
+    for mcs_table in _mcs_tables.values():
+        mcs_table.reset_hysteresis()
+
+    # Initialize interference engine, reloading scene only when config changes.
+    # Avoids expensive Sionna scene parsing on every batch while still handling
+    # different deployments (e.g., different test topologies sharing the same
+    # channel server process).
+    scene_key = (scene_config.scene_file, scene_config.frequency_hz, scene_config.bandwidth_hz)
     if _interference_engine is None:
         _interference_engine = InterferenceEngine()
+    if scene_key != _interference_engine_scene_key:
         _interference_engine.load_scene(
             scene_path=scene_config.scene_file,
             frequency_hz=scene_config.frequency_hz,
             bandwidth_hz=scene_config.bandwidth_hz,
         )
+        _interference_engine_scene_key = scene_key
 
     # Initialize SINR calculator if needed
     if _sinr_calculator is None:
@@ -887,7 +900,7 @@ async def _compute_batch_with_sinr(
                         bandwidth_hz=link.bandwidth_hz,
                         tx_gain_dbi=link.tx_gain_dbi,
                         rx_gain_dbi=link.rx_gain_dbi,
-                        min_snr_db=mac_model_config.communication_range_snr_threshold_db,
+                        min_snr_db=mac_model_config.communication_range_snr_threshold_db or 20.0,
                         noise_figure_db=7.0,
                     )
                     # MAC models use node-level positions
@@ -902,6 +915,14 @@ async def _compute_batch_with_sinr(
                         positions=node_positions,
                         communication_range=communication_range,
                         traffic_load=mac_model_config.traffic_load,
+                    )
+                    logger.info(
+                        "CSMA %s→%s: comm_range=%.1fm, cs_range=%.1fm, "
+                        "interference_probs=%s",
+                        link.tx_node, link.rx_node,
+                        communication_range,
+                        communication_range * (mac_model_config.carrier_sense_range_multiplier or 2.5),
+                        {k: f"{v:.2f}" for k, v in interference_probs.items()},
                     )
                 elif mac_model_config.type == "tdma":
                     interference_probs = mac_model.compute_interference_probabilities(

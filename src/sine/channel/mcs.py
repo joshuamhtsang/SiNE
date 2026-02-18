@@ -91,6 +91,10 @@ class MCSTable:
         if not self.entries:
             raise ValueError("MCS table must have at least one entry")
 
+    def reset_hysteresis(self) -> None:
+        """Clear per-link MCS hysteresis history."""
+        self._current_mcs.clear()
+
     @classmethod
     def from_csv(cls, csv_path: str | Path, hysteresis_db: float = 2.0) -> "MCSTable":
         """
