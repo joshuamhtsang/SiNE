@@ -30,20 +30,20 @@ INFO:     Application startup complete.
 INFO:     Uvicorn running on http://0.0.0.0:8000
 ```
 
-### Step 3: Deploy with Mobility API
+### Step 3: Deploy with Control API
 
-Deploy the emulation with mobility API enabled (Terminal 2):
+Deploy the emulation with control API enabled (Terminal 2):
 
 ```bash
-sudo $(which uv) run sine deploy --enable-mobility examples/for_tests/p2p_fallback_snr_vacuum/network.yaml
+sudo $(which uv) run sine deploy --enable-control examples/for_tests/p2p_fallback_snr_vacuum/network.yaml
 ```
 
 **What this does:**
 - Creates Docker containers via Containerlab
 - Computes initial channel conditions via ray tracing
 - Applies netem to container interfaces
-- **Starts mobility API server on port 8002**
-- Keeps running to accept position updates
+- **Starts control API server on port 8002**
+- Keeps running to accept position updates and other control operations
 
 **Expected output:**
 ```
@@ -122,9 +122,9 @@ sudo $(which uv) run sine destroy examples/for_tests/p2p_fallback_snr_vacuum/net
    uv run sine channel-server
    ```
 
-2. **Emulation with Mobility API** - Deploy with `--enable-mobility` (Terminal 2):
+2. **Emulation with Control API** - Deploy with `--enable-control` (Terminal 2):
    ```bash
-   sudo $(which uv) run sine deploy --enable-mobility examples/for_tests/p2p_fallback_snr_vacuum/network.yaml
+   sudo $(which uv) run sine deploy --enable-control examples/for_tests/p2p_fallback_snr_vacuum/network.yaml
    ```
 
 3. **Python dependencies** - Installed automatically via `uv sync`:
@@ -192,20 +192,20 @@ await mobility.follow_waypoints(
 )
 ```
 
-## Mobility API Endpoints
+## Control API Endpoints
 
-The mobility server exposes these REST endpoints:
+The control server exposes these REST endpoints:
 
 ### Update Position
 ```bash
-curl -X POST http://localhost:8002/api/mobility/update \
+curl -X POST http://localhost:8002/api/control/update \
      -H "Content-Type: application/json" \
      -d '{"node": "node2", "x": 10.0, "y": 5.0, "z": 1.5}'
 ```
 
 ### Get Position
 ```bash
-curl http://localhost:8002/api/mobility/position/node2
+curl http://localhost:8002/api/control/position/node2
 ```
 
 ### List All Nodes
@@ -266,7 +266,7 @@ done
 watch -n 0.5 'curl -s http://localhost:8002/api/nodes | jq'
 
 # Get single node position
-curl -s http://localhost:8002/api/mobility/position/node2 | jq
+curl -s http://localhost:8002/api/control/position/node2 | jq
 ```
 
 **Example output:**
@@ -366,9 +366,9 @@ asyncio.run(my_custom_pattern())
 
 **Problem**: `Connection refused` error
 
-**Solution**: Make sure you deployed with the `--enable-mobility` flag:
+**Solution**: Make sure you deployed with the `--enable-control` flag:
 ```bash
-sudo $(which uv) run sine deploy --enable-mobility examples/for_tests/p2p_fallback_snr_vacuum/network.yaml
+sudo $(which uv) run sine deploy --enable-control examples/for_tests/p2p_fallback_snr_vacuum/network.yaml
 ```
 
 ---
@@ -390,7 +390,7 @@ curl http://localhost:8002/api/nodes
 
 **Problem**: `503 Service Unavailable`
 
-**Solution**: Emulation may have stopped. Restart deployment with `--enable-mobility`.
+**Solution**: Emulation may have stopped. Restart deployment with `--enable-control`.
 
 ---
 
@@ -465,4 +465,4 @@ Smaller packets improve reliability but increase protocol overhead.
 For more information, see:
 - [Main README.md](../../README.md) - SiNE overview
 - [CLAUDE.md](../../CLAUDE.md) - Developer documentation
-- Mobility API: http://localhost:8002/docs (when server running)
+- Control API: http://localhost:8002/docs (when server running)

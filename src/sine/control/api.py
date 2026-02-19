@@ -1,16 +1,16 @@
 """
-Mobility API Server for SiNE.
+Control API Server for SiNE.
 
-Provides REST API endpoints for updating node positions during emulation.
-This allows external mobility drivers, scripts, or interactive tools to
-control node movement in real-time.
+Provides REST API endpoints for controlling the emulation at runtime.
+This allows external tools, scripts, or interactive interfaces to
+control node positions and other emulation parameters in real-time.
 
 Example usage:
-    # Start the mobility API server
-    uv run sine mobility-server --topology examples/vacuum_20m/network.yaml
+    # Start the control API server
+    uv run sine control-server --topology examples/vacuum_20m/network.yaml
 
     # Update position via HTTP
-    curl -X POST http://localhost:8002/api/mobility/update \
+    curl -X POST http://localhost:8002/api/control/update \
          -H "Content-Type: application/json" \
          -d '{"node": "node1", "x": 10.0, "y": 5.0, "z": 1.5}'
 """
@@ -47,16 +47,17 @@ class PositionResponse(BaseModel):
     message: Optional[str] = None
 
 
-class MobilityAPIServer:
+class ControlAPIServer:
     """
-    REST API server for mobility control.
+    REST API server for emulation runtime control.
 
-    Wraps an EmulationController and exposes position update endpoints.
+    Wraps an EmulationController and exposes endpoints for controlling
+    node positions and other emulation parameters.
     """
 
     def __init__(self, topology_path: Path):
         """
-        Initialize mobility API server.
+        Initialize control API server.
 
         Args:
             topology_path: Path to network.yaml topology file
@@ -64,8 +65,8 @@ class MobilityAPIServer:
         self.topology_path = topology_path
         self.controller: Optional[EmulationController] = None
         self.app = FastAPI(
-            title="SiNE Mobility API",
-            description="Control node positions in wireless network emulation",
+            title="SiNE Control API",
+            description="Control wireless network emulation at runtime",
             version="0.1.0",
         )
 
@@ -90,7 +91,7 @@ class MobilityAPIServer:
                 "message": "Emulation not started or has stopped",
             }
 
-        @self.app.post("/api/mobility/update", response_model=PositionResponse)
+        @self.app.post("/api/control/update", response_model=PositionResponse)
         async def update_position(update: PositionUpdate):
             """
             Update a node's position.
@@ -151,7 +152,7 @@ class MobilityAPIServer:
                 logger.error(f"Failed to update position: {e}")
                 raise HTTPException(status_code=500, detail=str(e))
 
-        @self.app.get("/api/mobility/position/{node}")
+        @self.app.get("/api/control/position/{node}")
         async def get_position(node: str):
             """Get current position of a node."""
             if not self.controller or not self.controller._running:
@@ -205,13 +206,13 @@ class MobilityAPIServer:
 
     async def start(self, host: str = "0.0.0.0", port: int = 8002) -> None:
         """
-        Start the mobility API server and emulation.
+        Start the control API server and emulation.
 
         Args:
             host: Host to bind to (default: 0.0.0.0)
             port: Port to bind to (default: 8002)
         """
-        logger.info(f"Starting mobility API server on {host}:{port}")
+        logger.info(f"Starting control API server on {host}:{port}")
 
         # Initialize and start emulation controller
         self.controller = EmulationController(self.topology_path)
@@ -228,22 +229,22 @@ class MobilityAPIServer:
         try:
             await server.serve()
         except KeyboardInterrupt:
-            logger.info("Shutting down mobility API server")
+            logger.info("Shutting down control API server")
         finally:
             if self.controller:
                 await self.controller.stop()
 
 
-async def run_mobility_server(
+async def run_control_server(
     topology_path: Path, host: str = "0.0.0.0", port: int = 8002
 ) -> None:
     """
-    Run the mobility API server.
+    Run the control API server.
 
     Args:
         topology_path: Path to network.yaml file
         host: Host to bind to
         port: Port to bind to
     """
-    server = MobilityAPIServer(topology_path)
+    server = ControlAPIServer(topology_path)
     await server.start(host, port)

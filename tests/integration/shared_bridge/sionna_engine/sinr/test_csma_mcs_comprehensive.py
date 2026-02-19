@@ -102,7 +102,7 @@ def test_csma_mcs_index_validation(channel_server, examples_for_tests: Path, bri
     deploy_process = None
     try:
         # Deployment validates MCS table loading and selection
-        deploy_process = deploy_topology(str(yaml_path), enable_mobility=True)
+        deploy_process = deploy_topology(str(yaml_path), enable_control=True)
 
         # Extract container prefix from YAML (e.g., "clab-csma-mcs-test")
         container_prefix = extract_container_prefix(yaml_path)
@@ -123,7 +123,7 @@ def test_csma_mcs_index_validation(channel_server, examples_for_tests: Path, bri
                 time.sleep(1)
 
         if not api_ready:
-            raise RuntimeError("Mobility API did not become ready in time")
+            raise RuntimeError("Control API did not become ready in time")
 
         # Query deployment summary to extract MCS index and SINR
         with urllib.request.urlopen("http://localhost:8002/api/emulation/summary") as response:

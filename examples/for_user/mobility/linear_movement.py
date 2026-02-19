@@ -9,8 +9,8 @@ Usage:
     # Terminal 1: Start channel server
     uv run sine channel-server
 
-    # Terminal 2: Start mobility API server with emulation
-    sudo $(which uv) run sine mobility-server examples/vacuum_20m/network.yaml
+    # Terminal 2: Start control API server with emulation
+    sudo $(which uv) run sine control-server examples/vacuum_20m/network.yaml
 
     # Terminal 3: Run this mobility script
     uv run python examples/mobility/linear_movement.py <node> <start_x> <start_y> <start_z> <end_x> <end_y> <end_z> <velocity>
@@ -107,7 +107,7 @@ class LinearMobility:
             # Update position
             try:
                 response = await self.client.post(
-                    f"{self.api_url}/api/mobility/update",
+                    f"{self.api_url}/api/control/update",
                     json={
                         "node": node,
                         "x": current_pos[0],
@@ -216,8 +216,8 @@ if __name__ == "__main__":
     print()
     print("Prerequisites:")
     print("  1. Channel server running: uv run sine channel-server")
-    print("  2. Mobility server running:")
-    print("     sudo $(which uv) run sine mobility-server examples/vacuum_20m/network.yaml")
+    print("  2. Control server running:")
+    print("     sudo $(which uv) run sine control-server examples/vacuum_20m/network.yaml")
     print()
 
     asyncio.run(main())

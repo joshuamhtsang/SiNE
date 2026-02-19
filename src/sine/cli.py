@@ -6,7 +6,7 @@ Commands:
 - sine destroy <topology.yaml> : Destroy deployed emulation
 - sine status                  : Show status of running emulations
 - sine channel-server          : Start the channel computation server
-- sine mobility-server <topology.yaml> : Start mobility API server with emulation
+- sine control-server <topology.yaml> : Start control API server with emulation
 - sine validate <topology.yaml>: Validate topology file
 - sine render <topology.yaml>  : Render scene with nodes and paths
 - sine info                    : Show system information
@@ -209,17 +209,17 @@ def main(verbose: bool) -> None:
     help="Channel computation server URL",
 )
 @click.option(
-    "--enable-mobility",
+    "--enable-control",
     is_flag=True,
-    help="Start mobility API server on port 8002 for dynamic position updates",
+    help="Start control API server on port 8002 for runtime emulation control",
 )
 @click.option(
-    "--mobility-port",
+    "--control-port",
     default=8002,
     type=int,
-    help="Port for mobility API server (default: 8002)",
+    help="Port for control API server (default: 8002)",
 )
-def deploy(topology: Path, channel_server: str, enable_mobility: bool, mobility_port: int) -> None:
+def deploy(topology: Path, channel_server: str, enable_control: bool, control_port: int) -> None:
     """Deploy wireless network emulation from topology file.
 
     TOPOLOGY is the path to a network.yaml file defining the emulation.
@@ -228,15 +228,16 @@ def deploy(topology: Path, channel_server: str, enable_mobility: bool, mobility_
     topology. This file can be inspected to see the pure containerlab format
     used for deployment.
 
-    With --enable-mobility, the deployment also starts a REST API server
-    that allows external scripts to update node positions in real-time.
+    With --enable-control, the deployment also starts a REST API server
+    that allows external scripts to control the emulation at runtime
+    (update node positions, query link states, etc.).
     """
     from sine.emulation.controller import EmulationController, EmulationError
 
     console.print(f"[bold blue]Deploying topology:[/] {topology}")
 
-    if enable_mobility:
-        console.print(f"[dim]Mobility API will be available on port {mobility_port}[/]")
+    if enable_control:
+        console.print(f"[dim]Control API will be available on port {control_port}[/]")
 
     # Pass channel_server URL to override YAML config if specified
     controller = EmulationController(topology, channel_server_url=channel_server)
@@ -253,9 +254,9 @@ def deploy(topology: Path, channel_server: str, enable_mobility: bool, mobility_
 
                 console.print(f"\n[dim]To destroy: uv run sine destroy {topology}[/]")
 
-                if enable_mobility:
-                    console.print(f"[green]Mobility API running on http://localhost:{mobility_port}[/]")
-                    console.print(f"[dim]Example: curl -X POST http://localhost:{mobility_port}/api/mobility/update \\")
+                if enable_control:
+                    console.print(f"[green]Control API running on http://localhost:{control_port}[/]")
+                    console.print(f"[dim]Example: curl -X POST http://localhost:{control_port}/api/control/update \\")
                     console.print("[dim]         -H 'Content-Type: application/json' \\")
                     console.print("[dim]         -d '{'\"node\": \"node2\", \"x\": 10.0, \"y\": 5.0, \"z\": 1.5}'[/]")
 
@@ -273,13 +274,13 @@ def deploy(topology: Path, channel_server: str, enable_mobility: bool, mobility_
             console.print(f"[bold red]Deployment failed:[/] {e}")
             sys.exit(1)
 
-    # If mobility is enabled, run both emulation and mobility API server
-    if enable_mobility:
+    # If control API is enabled, run both emulation and control API server
+    if enable_control:
         import uvicorn
 
-        from sine.mobility.api import MobilityAPIServer
+        from sine.control.api import ControlAPIServer
 
-        async def run_with_mobility() -> None:
+        async def run_with_control() -> None:
             # Start emulation controller with channel_server override if specified
             controller_obj = EmulationController(topology, channel_server_url=channel_server)
             await controller_obj.start()
@@ -288,31 +289,31 @@ def deploy(topology: Path, channel_server: str, enable_mobility: bool, mobility_
             summary = controller_obj.get_deployment_summary()
             _print_deployment_summary(summary)
 
-            console.print(f"\n[green]Mobility API running on http://localhost:{mobility_port}[/]")
-            console.print(f"[dim]Example: curl -X POST http://localhost:{mobility_port}/api/mobility/update \\")
+            console.print(f"\n[green]Control API running on http://localhost:{control_port}[/]")
+            console.print(f"[dim]Example: curl -X POST http://localhost:{control_port}/api/control/update \\")
             console.print("[dim]         -H 'Content-Type: application/json' \\")
             console.print("[dim]         -d '{'\"node\": \"node2\", \"x\": 10.0, \"y\": 5.0, \"z\": 1.5}'[/]")
-            console.print(f"[dim]Query deployment: curl http://localhost:{mobility_port}/api/emulation/summary[/]")
+            console.print(f"[dim]Query deployment: curl http://localhost:{control_port}/api/emulation/summary[/]")
             console.print(f"[dim]To destroy: uv run sine destroy {topology}[/]")
             console.print("[dim]Press Ctrl+C to stop emulation[/]")
 
-            # Create combined API server with both mobility and emulation endpoints
+            # Create combined API server with both control and emulation endpoints
             from sine.emulation.api import EmulationAPIServer
 
-            mobility_server = MobilityAPIServer(topology)
-            mobility_server.controller = controller_obj  # Use existing controller
+            control_server = ControlAPIServer(topology)
+            control_server.controller = controller_obj  # Use existing controller
 
             emulation_api = EmulationAPIServer(controller_obj)
 
-            # Mount emulation API routes onto mobility API app
+            # Mount emulation API routes onto control API app
             for route in emulation_api.app.routes:
-                mobility_server.app.routes.append(route)
+                control_server.app.routes.append(route)
 
             # Start combined FastAPI server
             config = uvicorn.Config(
-                mobility_server.app,
+                control_server.app,
                 host="0.0.0.0",
-                port=mobility_port,
+                port=control_port,
                 log_level="info",
                 access_log=False,
             )
@@ -328,11 +329,11 @@ def deploy(topology: Path, channel_server: str, enable_mobility: bool, mobility_
                 console.print("[green]Emulation stopped[/]")
 
         try:
-            asyncio.run(run_with_mobility())
+            asyncio.run(run_with_control())
         except KeyboardInterrupt:
             pass
     else:
-        # Standard deployment without mobility API
+        # Standard deployment without control API
         try:
             asyncio.run(run_emulation())
         except KeyboardInterrupt:
@@ -451,31 +452,32 @@ def channel_server(host: str, port: int, reload: bool, force_fallback: bool) -> 
     )
 
 
-@main.command("mobility-server")
+@main.command("control-server")
 @click.argument("topology", type=click.Path(exists=True, path_type=Path))
 @click.option("--host", default="0.0.0.0", help="Host to bind to")
 @click.option("-p", "--port", default=8002, type=int, help="Port to listen on")
-def mobility_server(topology: Path, host: str, port: int) -> None:
-    """Start the mobility API server with emulation.
+def control_server(topology: Path, host: str, port: int) -> None:
+    """Start the control API server with emulation.
 
-    This starts both the emulation and a REST API server that allows
-    external tools to update node positions in real-time.
+    This starts both the emulation and a REST API server that exposes
+    runtime control over the emulation (node positions, link state queries,
+    and other EmulationController operations).
 
     Example:
         # Start server
-        uv run sine mobility-server examples/vacuum_20m/network.yaml
+        uv run sine control-server examples/vacuum_20m/network.yaml
 
         # Update position (in another terminal)
-        curl -X POST http://localhost:8002/api/mobility/update \\
+        curl -X POST http://localhost:8002/api/control/update \\
              -H "Content-Type: application/json" \\
              -d '{"node": "node1", "x": 10.0, "y": 5.0, "z": 1.5}'
     """
-    console.print(f"[bold blue]Starting mobility API server on {host}:{port}[/]")
+    console.print(f"[bold blue]Starting control API server on {host}:{port}[/]")
     console.print(f"[dim]Topology: {topology}[/]")
 
-    from sine.mobility import run_mobility_server
+    from sine.control import run_control_server
 
-    asyncio.run(run_mobility_server(topology, host, port))
+    asyncio.run(run_control_server(topology, host, port))
 
 
 @main.command()
@@ -526,7 +528,7 @@ def validate(topology: Path) -> None:
     scene_file = config.topology.scene.file if config.topology.scene else "(none)"
     table.add_row("Scene File", scene_file)
     table.add_row("Channel Server", config.topology.channel_server)
-    table.add_row("Mobility Poll", f"{config.topology.mobility_poll_ms}ms")
+    table.add_row("Control Poll", f"{config.topology.control_poll_ms}ms")
 
     console.print(table)
 

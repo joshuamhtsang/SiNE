@@ -59,7 +59,7 @@ class EmulationController:
         #   Shared bridge: (tx_node, tx_iface, rx_node, rx_iface)
         self._link_states: dict[tuple, dict] = {}  # Stores netem and RF metrics
         self._link_mcs_info: dict[tuple, dict] = {}  # MCS info for each link
-        self._mobility_task: asyncio.Task | None = None
+        self._control_task: asyncio.Task | None = None
         self._netem_failures: list[tuple[str, str]] = []  # Track failed netem applications
 
     async def start(self) -> bool:
@@ -72,7 +72,7 @@ class EmulationController:
         3. Initialize scene on channel server
         4. Compute initial channel conditions
         5. Configure netem on all links
-        6. Start mobility polling loop
+        6. Start control polling loop
 
         Returns:
             True if emulation started successfully
@@ -176,9 +176,9 @@ class EmulationController:
             logger.error(f"Failed to compute initial channels: {e}")
             raise EmulationError(f"Failed to compute channels: {e}") from e
 
-        # Start mobility polling
+        # Start control polling
         self._running = True
-        self._mobility_task = asyncio.create_task(self._mobility_polling_loop())
+        self._control_task = asyncio.create_task(self._control_polling_loop())
 
         # Report any netem failures
         if self._netem_failures:
@@ -210,11 +210,11 @@ class EmulationController:
 
         self._running = False
 
-        # Cancel mobility polling
-        if self._mobility_task:
-            self._mobility_task.cancel()
+        # Cancel control polling
+        if self._control_task:
+            self._control_task.cancel()
             try:
-                await self._mobility_task
+                await self._control_task
             except asyncio.CancelledError:
                 pass
 
@@ -1191,23 +1191,23 @@ class EmulationController:
         )
         return "eth1"
 
-    async def _mobility_polling_loop(self) -> None:
+    async def _control_polling_loop(self) -> None:
         """
-        Poll for mobility updates at configured interval.
+        Control polling loop running at configured interval.
 
         Default: 100ms polling period
         """
-        poll_interval = self.config.topology.mobility_poll_ms / 1000.0
+        poll_interval = self.config.topology.control_poll_ms / 1000.0
 
         while self._running:
             await asyncio.sleep(poll_interval)
 
             # In a full implementation, this would:
-            # 1. Query an external mobility model or API
-            # 2. Update node positions
-            # 3. Recompute channels if positions changed
+            # 1. Query external sources for control updates
+            # 2. Apply any pending control operations
+            # 3. Recompute channels if state changed
 
-            # For now, this is a placeholder for future mobility support
+            # For now, this is a placeholder for future polling-based control
 
     async def update_node_position(
         self, node_name: str, interface: str, x: float, y: float, z: float

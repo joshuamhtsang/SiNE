@@ -55,11 +55,11 @@ __all__ = ["channel_server"]
 @pytest.fixture
 def mobility_deployment(examples_for_tests: Path, channel_server):
     """
-    Deploy topology with mobility API enabled.
+    Deploy topology with control API enabled.
 
     This is a function-scoped fixture that:
-    1. Deploys a topology with --enable-mobility flag
-    2. Waits for both deployment completion and mobility API to start
+    1. Deploys a topology with --enable-control flag
+    2. Waits for both deployment completion and control API to start
     3. Returns the deployment process and yaml path
     4. Cleans up on teardown
 
@@ -74,19 +74,19 @@ def mobility_deployment(examples_for_tests: Path, channel_server):
     # Cleanup any existing deployment first
     destroy_topology(str(yaml_path))
 
-    # Deploy with mobility enabled
+    # Deploy with control API enabled
     uv_path = get_uv_path()
 
     print(f"\n{'='*70}")
-    print(f"Deploying topology with mobility API: {yaml_path}")
+    print(f"Deploying topology with control API: {yaml_path}")
     print(f"{'='*70}\n")
 
-    # Start deployment with mobility API in background
+    # Start deployment with control API in background
     # Use the existing channel server to avoid port conflict
     deploy_process = subprocess.Popen(
         ["sudo", uv_path, "run", "sine", "deploy",
          "--channel-server", "http://localhost:8000",
-         "--enable-mobility", str(yaml_path)],
+         "--enable-control", str(yaml_path)],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -95,7 +95,7 @@ def mobility_deployment(examples_for_tests: Path, channel_server):
 
     try:
         # Wait for deployment to complete
-        print("Waiting for deployment and mobility API to start...")
+        print("Waiting for deployment and control API to start...")
         deployment_ready = False
 
         # Type assertion: stdout is guaranteed to be available since we passed PIPE

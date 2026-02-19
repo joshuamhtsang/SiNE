@@ -108,7 +108,7 @@ network.yaml -> EmulationController -> Containerlab (Docker containers + veth li
 | Container Deployment | Containerlab | Industry-standard container network orchestration; handles topology, containers, veth links |
 | Topology Format | Containerlab-compatible YAML | SiNE extends containerlab format with wireless parameters; generates pure containerlab YAML for deployment |
 | API Framework | FastAPI | Async support, OpenAPI docs |
-| Mobility Poll | 100ms | Balance responsiveness vs overhead |
+| Control Poll | 100ms | Balance responsiveness vs overhead |
 | Rate Limiting | tbf | netem lacks native rate control |
 | Sionna API | PathSolver, Scene | Sionna v1.2.1 API (use `Scene()` for empty) |
 | PER Formula | BLER for coded | Industry standard |
@@ -199,8 +199,8 @@ uv run sine channel-server
 # CRITICAL: MUST use full pattern - UV_PATH=$(which uv) sudo -E $(which uv) run ...
 UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy examples/for_user/adaptive_mcs_wifi6/network.yaml
 
-# Deploy with mobility API enabled (for dynamic position updates)
-UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy --enable-mobility examples/for_tests/p2p_sionna_snr_two-rooms/network.yaml
+# Deploy with control API enabled (for dynamic position updates and runtime control)
+UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy --enable-control examples/for_tests/p2p_sionna_snr_two-rooms/network.yaml
 
 # Validate topology
 uv run sine validate examples/for_user/adaptive_mcs_wifi6/network.yaml
@@ -1557,10 +1557,10 @@ SiNE supports real-time position updates with automatic channel recomputation, e
 ### Mobility Architecture
 
 **Polling-based updates:**
-- Mobility API runs on port 8002 (separate from channel server on port 8000)
+- Control API runs on port 8002 (separate from channel server on port 8000)
 - Position updates trigger channel recomputation via channel server
 - Netem parameters updated on both endpoints of affected links
-- Default poll interval: 100ms (configurable via `mobility_poll_ms` in topology YAML)
+- Default poll interval: 100ms (configurable via `control_poll_ms` in topology YAML)
 
 **Channel recomputation:**
 - Uses same pipeline as initial deployment (ray tracing → SNR → BER/BLER → PER → netem)
@@ -1569,22 +1569,22 @@ SiNE supports real-time position updates with automatic channel recomputation, e
 
 ### Enabling Mobility
 
-**Deploy with mobility API:**
+**Deploy with control API:**
 ```bash
 # Start channel server
 uv run sine channel-server
 
-# Deploy with mobility enabled
-UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy --enable-mobility examples/for_tests/p2p_sionna_snr_two-rooms/network.yaml
+# Deploy with control API enabled
+UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy --enable-control examples/for_tests/p2p_sionna_snr_two-rooms/network.yaml
 
-# Mobility API now running on http://localhost:8002
+# Control API now running on http://localhost:8002
 ```
 
-### Mobility API Endpoints
+### Control API Endpoints (Mobility)
 
 **Update node position:**
 ```bash
-curl -X POST http://localhost:8002/api/mobility/update \
+curl -X POST http://localhost:8002/api/control/update \
      -H "Content-Type: application/json" \
      -d '{
        "node": "node2",
@@ -1596,7 +1596,7 @@ curl -X POST http://localhost:8002/api/mobility/update \
 
 **Get current positions:**
 ```bash
-curl http://localhost:8002/api/mobility/positions
+curl http://localhost:8002/api/control/position/node2
 ```
 
 **Response:**
@@ -1639,7 +1639,7 @@ uv run python examples/for_user/mobility/random_walk.py \
 **Topology YAML:**
 ```yaml
 topology:
-  mobility_poll_ms: 100  # Position check interval (default: 100ms)
+  control_poll_ms: 100  # Control API polling interval (default: 100ms)
   channel_server: "http://localhost:8000"
 ```
 
@@ -1675,8 +1675,8 @@ topology:
 Use the live viewer to monitor moving nodes in real-time:
 
 ```bash
-# 1. Deploy with mobility
-UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy --enable-mobility examples/for_tests/p2p_sionna_snr_two-rooms/network.yaml
+# 1. Deploy with control API
+UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy --enable-control examples/for_tests/p2p_sionna_snr_two-rooms/network.yaml
 
 # 2. Start mobility script
 uv run python examples/for_user/mobility/linear_movement.py node2 0.0 0.0 1.0 20.0 0.0 1.0 30.0 &
@@ -1727,7 +1727,7 @@ For continuous channel variation, reduce poll interval or implement custom inter
 import requests
 import time
 
-API_URL = "http://localhost:8002/api/mobility/update"
+API_URL = "http://localhost:8002/api/control/update"
 
 # Start in room 1 (LOS blocked)
 positions = [

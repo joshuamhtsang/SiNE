@@ -213,12 +213,12 @@ def extract_container_prefix(yaml_path: str | Path) -> str:
     return f"{prefix}-{lab_name}"
 
 
-def deploy_topology(yaml_path: str, enable_mobility: bool = False, channel_server_url: str = "http://localhost:8000") -> subprocess.Popen:
+def deploy_topology(yaml_path: str, enable_control: bool = False, channel_server_url: str = "http://localhost:8000") -> subprocess.Popen:
     """Deploy a topology using sine deploy command.
 
     Args:
         yaml_path: Path to the topology YAML file
-        enable_mobility: If True, deploy with --enable-mobility flag
+        enable_control: If True, deploy with --enable-control flag (starts control API on port 8002)
         channel_server_url: URL of the channel server to use (default: http://localhost:8000)
 
     Returns:
@@ -238,9 +238,9 @@ def deploy_topology(yaml_path: str, enable_mobility: bool = False, channel_serve
     # Register cleanup handlers on first deployment
     _register_cleanup_handlers()
 
-    mobility_str = " (with mobility)" if enable_mobility else ""
+    control_str = " (with control API)" if enable_control else ""
     print(f"\n{'='*70}")
-    print(f"Deploying topology{mobility_str}: {yaml_path}")
+    print(f"Deploying topology{control_str}: {yaml_path}")
     print(f"Using channel server: {channel_server_url}")
     print(f"{'='*70}\n")
 
@@ -248,8 +248,8 @@ def deploy_topology(yaml_path: str, enable_mobility: bool = False, channel_serve
     cmd = ["sudo", uv_path, "run", "sine", "deploy", str(yaml_path)]
     # Always specify the channel server URL to avoid starting a new one
     cmd.extend(["--channel-server", channel_server_url])
-    if enable_mobility:
-        cmd.append("--enable-mobility")
+    if enable_control:
+        cmd.append("--enable-control")
 
     # Start deployment in background
     process = subprocess.Popen(

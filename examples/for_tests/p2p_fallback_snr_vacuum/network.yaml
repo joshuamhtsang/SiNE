@@ -106,5 +106,5 @@ topology:
   # Fallback tests use port 8001 (channel_server_fallback fixture)
   channel_server: "http://localhost:8001"
 
-  # Mobility polling interval (milliseconds)
-  mobility_poll_ms: 100
+  # Control API polling interval (milliseconds)
+  control_poll_ms: 100

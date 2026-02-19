@@ -9,8 +9,8 @@ Usage:
     # Terminal 1: Start channel server
     uv run sine channel-server
 
-    # Terminal 2: Start mobility API server with emulation
-    sudo $(which uv) run sine mobility-server examples/vacuum_20m/network.yaml
+    # Terminal 2: Start control API server with emulation
+    sudo $(which uv) run sine control-server examples/vacuum_20m/network.yaml
 
     # Terminal 3: Run this mobility script
     uv run python examples/mobility/waypoint_movement.py
@@ -101,7 +101,7 @@ class WaypointMobility:
         for step in range(num_steps + 1):
             try:
                 response = await self.client.post(
-                    f"{self.api_url}/api/mobility/update",
+                    f"{self.api_url}/api/control/update",
                     json={
                         "node": node,
                         "x": current_pos[0],
@@ -277,8 +277,8 @@ if __name__ == "__main__":
     print()
     print("Prerequisites:")
     print("  1. Channel server: uv run sine channel-server")
-    print("  2. Mobility server:")
-    print("     sudo $(which uv) run sine mobility-server examples/vacuum_20m/network.yaml")
+    print("  2. Control server:")
+    print("     sudo $(which uv) run sine control-server examples/vacuum_20m/network.yaml")
     print()
 
     # Uncomment to run advanced example instead:

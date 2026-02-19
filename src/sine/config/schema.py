@@ -566,9 +566,9 @@ class TopologyDefinition(BaseModel):
     channel_server: str = Field(
         default="http://localhost:8000", description="Channel computation server URL"
     )
-    mobility_poll_ms: int = Field(
+    control_poll_ms: int = Field(
         default=100,
-        description="Mobility polling interval in milliseconds",
+        description="Control API polling interval in milliseconds",
         ge=10,
         le=10000,
     )
