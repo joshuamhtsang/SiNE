@@ -1490,6 +1490,119 @@ def channel_server_fallback():
     print("✓ Port 8001 is now available")
 
 
+# =============================================================================
+# Control API Helpers and Fixtures
+# =============================================================================
+
+
+def control_api_get(base_url: str, path: str) -> dict:
+    """GET request to control API, returns parsed JSON."""
+    import json
+
+    with urllib.request.urlopen(f"{base_url}{path}", timeout=5) as r:
+        return json.loads(r.read())
+
+
+def control_api_post(base_url: str, path: str, body: dict) -> dict:
+    """POST request to control API, returns parsed JSON."""
+    import json
+
+    data = json.dumps(body).encode()
+    req = urllib.request.Request(
+        f"{base_url}{path}",
+        data=data,
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=5) as r:
+        return json.loads(r.read())
+
+
+def _wait_for_control_api(base_url: str, max_retries: int = 30) -> None:
+    """Wait for the control API to become ready.
+
+    Args:
+        base_url: Control API base URL (e.g., "http://localhost:8002")
+        max_retries: Maximum number of 1-second retries
+
+    Raises:
+        RuntimeError: If control API does not become ready within max_retries seconds
+    """
+    for _ in range(max_retries):
+        try:
+            with urllib.request.urlopen(f"{base_url}/health", timeout=1) as r:
+                if r.status == 200:
+                    return
+        except Exception:
+            time.sleep(1)
+    raise RuntimeError(f"Control API at {base_url} did not become ready in {max_retries}s")
+
+
+@pytest.fixture
+def control_api_fallback_deployment(examples_for_tests, channel_server_fallback):
+    """Deploy p2p_fallback_snr_vacuum with control API enabled.
+
+    Deploys the topology, waits for port 8002 to become ready, then yields.
+    Tears down the topology and waits for port 8002 to be released afterward.
+
+    Depends on channel_server_fallback (port 8001) being running.
+
+    Yields:
+        Tuple of (deploy_process, yaml_path, base_url)
+    """
+    yaml_path = examples_for_tests / "p2p_fallback_snr_vacuum" / "network.yaml"
+    base_url = "http://localhost:8002"
+
+    destroy_topology(str(yaml_path))  # Clean up any leftover deployment
+
+    deploy_process = deploy_topology(
+        str(yaml_path), enable_control=True, channel_server_url=channel_server_fallback
+    )
+
+    try:
+        _wait_for_control_api(base_url)
+        yield deploy_process, yaml_path, base_url
+    finally:
+        stop_deployment_process(deploy_process)
+        force_kill_port_occupants(8002)
+        try:
+            wait_for_port_available(8002, timeout_seconds=10)
+        except RuntimeError:
+            logger.warning("Port 8002 still in use after control API teardown")
+        destroy_topology(str(yaml_path))
+
+
+@pytest.fixture
+def control_api_fixed_deployment(examples_for_user):
+    """Deploy examples/for_user/fixed_link with control API enabled.
+
+    Used to test behavior when a node has only fixed_netem interfaces
+    (expects 400 from /api/control/update).
+
+    No channel server dependency — fixed_netem links don't require one.
+
+    Yields:
+        Tuple of (deploy_process, yaml_path, base_url)
+    """
+    yaml_path = examples_for_user / "fixed_link" / "network.yaml"
+    base_url = "http://localhost:8002"
+
+    destroy_topology(str(yaml_path))
+
+    deploy_process = deploy_topology(str(yaml_path), enable_control=True)
+
+    try:
+        _wait_for_control_api(base_url)
+        yield deploy_process, yaml_path, base_url
+    finally:
+        stop_deployment_process(deploy_process)
+        force_kill_port_occupants(8002)
+        try:
+            wait_for_port_available(8002, timeout_seconds=10)
+        except RuntimeError:
+            logger.warning("Port 8002 still in use after control API teardown")
+        destroy_topology(str(yaml_path))
+
+
 @pytest.fixture
 def bridge_node_ips() -> dict[str, str]:
     """Standard shared bridge node IPs (192.168.100.x/24).
