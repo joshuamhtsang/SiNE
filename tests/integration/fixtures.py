@@ -378,7 +378,7 @@ def destroy_topology(yaml_path: str) -> None:
         logger.debug(f"Unregistered topology from cleanup: {yaml_path_obj}")
 
 
-def wait_for_iperf3(container_name: str, max_wait_sec: int = 30) -> None:
+def wait_for_iperf3(container_name: str, max_wait_sec: int = 60) -> None:
     """Wait for iperf3 to be available in a container.
 
     Containerlab's exec commands run asynchronously, so we need to wait for
@@ -401,7 +401,10 @@ def wait_for_iperf3(container_name: str, max_wait_sec: int = 30) -> None:
         if result.returncode == 0:
             return  # iperf3 is available
 
-        time.sleep(0.5)  # Wait before retrying
+        elapsed = time.time() - start_time
+        if elapsed > 5:
+            print(f"  Still waiting for iperf3 in {container_name}... ({elapsed:.0f}s elapsed)")
+        time.sleep(1.0)  # Wait before retrying
 
     raise RuntimeError(
         f"iperf3 not available in {container_name} after {max_wait_sec}s. "

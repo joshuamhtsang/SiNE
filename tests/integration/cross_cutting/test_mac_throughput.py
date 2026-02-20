@@ -105,7 +105,7 @@ def mobility_deployment(examples_for_tests: Path, channel_server):
             print(line, end="")
             if "Emulation deployed successfully!" in line:
                 deployment_ready = True
-            if deployment_ready and "Mobility API running" in line:
+            if deployment_ready and "Control API running" in line:
                 break
             if deploy_process.poll() is not None:
                 raise RuntimeError(f"Deployment failed (exit code {deploy_process.returncode})")
