@@ -1,4 +1,4 @@
-name: sh-sio-snr-equal-triangle
+name: sh-sio-snr-dual-band
 
 topology:
   scene:
@@ -7,7 +7,7 @@ topology:
   shared_bridge:
     enabled: true
     name: manet-br0
-    nodes: [node1, node2, node3]
+    nodes: [node1, node2]
 
   nodes:
     node1:
@@ -25,10 +25,24 @@ topology:
               z: 1
             frequency_ghz: 5.18
             rf_power_dbm: 20.0
-            rx_sensitivity_dbm: -80.0       # WiFi 6 receiver sensitivity
-            antenna_pattern: hw_dipole  # Half-wave dipole (2.16 dBi)
+            antenna_pattern: hw_dipole
             polarization: V
             bandwidth_mhz: 80
+            modulation: 64qam
+            fec_type: ldpc
+            fec_code_rate: 0.5
+        eth2:
+          ip_address: 192.168.200.1/24
+          wireless:
+            position:
+              x: 0
+              y: 0
+              z: 1
+            frequency_ghz: 2.4
+            rf_power_dbm: 20.0
+            antenna_pattern: hw_dipole
+            polarization: V
+            bandwidth_mhz: 20
             modulation: 64qam
             fec_type: ldpc
             fec_code_rate: 0.5
@@ -43,38 +57,29 @@ topology:
           ip_address: 192.168.100.2/24
           wireless:
             position:
-              x: 30
+              x: 20
               y: 0
               z: 1
             frequency_ghz: 5.18
             rf_power_dbm: 20.0
-            rx_sensitivity_dbm: -80.0       # WiFi 6 receiver sensitivity
-            antenna_pattern: hw_dipole  # Half-wave dipole (2.16 dBi)
+            antenna_pattern: hw_dipole
             polarization: V
             bandwidth_mhz: 80
             modulation: 64qam
             fec_type: ldpc
             fec_code_rate: 0.5
-
-    node3:
-      kind: linux
-      image: alpine:latest
-      exec:
-        - apk add --no-cache iproute2 iputils iperf3
-      interfaces:
-        eth1:
-          ip_address: 192.168.100.3/24
+        eth2:
+          ip_address: 192.168.200.2/24
           wireless:
             position:
-              x: 15
-              y: 25.98
+              x: 20
+              y: 0
               z: 1
-            frequency_ghz: 5.18
+            frequency_ghz: 2.4
             rf_power_dbm: 20.0
-            rx_sensitivity_dbm: -80.0       # WiFi 6 receiver sensitivity
-            antenna_pattern: hw_dipole  # Half-wave dipole (2.16 dBi)
+            antenna_pattern: hw_dipole
             polarization: V
-            bandwidth_mhz: 80
+            bandwidth_mhz: 20
             modulation: 64qam
             fec_type: ldpc
             fec_code_rate: 0.5

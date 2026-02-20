@@ -4,6 +4,8 @@ Unit tests for InterferenceEngine (Phase 0).
 Tests PathSolver-based interference computation against theoretical values.
 """
 
+from unittest.mock import patch
+
 import pytest
 import numpy as np
 from sine.channel.interference_engine import (
@@ -13,7 +15,7 @@ from sine.channel.interference_engine import (
     InterferenceResult,
     calculate_aclr_db,
 )
-from sine.channel.sionna_engine import is_sionna_available
+from sine.channel.sionna_engine import is_sionna_available, PathResult
 
 
 # Skip all tests if Sionna is not available
@@ -251,6 +253,160 @@ class TestInterferenceCache:
         # Cache size should still be 1
         stats2 = engine.get_cache_stats()
         assert stats2["num_cached_paths"] == 1
+
+
+class TestCacheKeyIsolation:
+    """
+    Regression tests for _path_cache key completeness (Feb 2026).
+
+    Bug: cache key was only (tx_pos, rx_pos), missing antenna pattern and scene path.
+    Sionna RT embeds antenna pattern gains into path_loss_db, so paths computed with
+    different patterns are NOT interchangeable even at identical positions.
+
+    Scenario that revealed the bug:
+    - Integration test A (asym-triangle, hw_dipole = halfwave dipole antennas) ran first,
+      caching (0,0,1)→(30,0,1) with path_loss_db ≈ 71.95 dB (72 - 2×2.16 dBi gains)
+    - Integration test B (csma-mcs, iso antennas) looked up same (0,0,1)→(30,0,1)
+      → cache HIT → used halfwave dipole path loss for iso computation
+    - Interference appeared 4.32 dB too strong → SINR 4.32 dB too low
+      → MCS 1 selected instead of MCS 3, causing test assertion failure
+
+    Fix: cache key now includes (scene_path, tx_pos, rx_pos, tx_pattern,
+         rx_pattern, tx_polarization, rx_polarization).
+    """
+
+    # Positions matching the original bug scenario (asym-triangle / csma-mcs)
+    _TX_POS = (0.0, 0.0, 1.0)
+    _RX_POS = (30.0, 0.0, 1.0)
+
+    def _fake_path(self, path_loss_db: float):
+        return PathResult(
+            path_loss_db=path_loss_db,
+            min_delay_ns=100.0,
+            max_delay_ns=100.0,
+            delay_spread_ns=0.0,
+            num_paths=1,
+            dominant_path_type="los",
+        )
+
+    def _interferer(self, antenna_pattern: str) -> TransmitterInfo:
+        return TransmitterInfo(
+            node_name="node1",
+            position=self._TX_POS,
+            tx_power_dbm=20.0,
+            antenna_pattern=antenna_pattern,
+            polarization="V",
+            frequency_hz=5.18e9,
+            bandwidth_hz=80e6,
+        )
+
+    def _rx_kwargs(self, antenna_pattern: str, interferer: TransmitterInfo) -> dict:
+        return {
+            "rx_position": self._RX_POS,
+            "rx_antenna_gain_dbi": 0.0,
+            "rx_node": "node2",
+            "interferers": [interferer],
+            "rx_antenna_pattern": antenna_pattern,
+            "rx_polarization": "V",
+        }
+
+    def test_different_antenna_patterns_produce_separate_cache_entries(self):
+        """
+        Regression: iso and hw_dipole (halfwave dipole) at the same positions must
+        produce two separate cache entries, not share one.
+
+        Before the fix, the iso request hit the halfwave dipole cache entry, returning
+        a path_loss_db that was 4.32 dB too low (antenna gains embedded by Sionna RT),
+        making interference appear 4.32 dB too strong and reducing SINR accordingly.
+        """
+        engine = InterferenceEngine()
+        engine.load_scene(scene_path=None, frequency_hz=5.18e9, bandwidth_hz=80e6)
+
+        # halfwave dipole result: lower path loss because Sionna embeds 2×2.16 dBi gains
+        hw_dipole_result = self._fake_path(71.95)
+        # iso result: pure propagation loss, no embedded antenna gains
+        iso_result = self._fake_path(76.27)
+
+        # --- First call: halfwave dipole ---
+        interferer_hw = self._interferer("hw_dipole")
+        with patch.object(engine, "_compute_interference_path", return_value=hw_dipole_result):
+            engine.compute_interference_at_receiver(**self._rx_kwargs("hw_dipole", interferer_hw))
+
+        assert engine.get_cache_stats()["num_cached_paths"] == 1
+
+        # --- Second call: iso at the SAME positions ---
+        interferer_iso = self._interferer("iso")
+        with patch.object(
+            engine, "_compute_interference_path", return_value=iso_result
+        ) as mock_compute:
+            engine.compute_interference_at_receiver(**self._rx_kwargs("iso", interferer_iso))
+            assert mock_compute.call_count == 1, (
+                "iso request incorrectly hit the halfwave dipole cache entry — "
+                "antenna pattern must be part of the cache key"
+            )
+
+        assert engine.get_cache_stats()["num_cached_paths"] == 2, (
+            "Different antenna patterns at the same positions must produce separate cache entries. "
+            "If only 1 entry exists, the halfwave dipole result was incorrectly reused for iso."
+        )
+
+    def test_different_scene_paths_produce_separate_cache_entries(self):
+        """
+        Regression: same positions and antenna pattern for two different scenes must
+        produce separate cache entries.
+
+        The scene path is included in the cache key as defence-in-depth: even though
+        the cache is cleared on scene reload, a bug that skips that clear would otherwise
+        silently return a path computed for a different geometric environment.
+        """
+        engine = InterferenceEngine()
+        engine.load_scene(scene_path=None, frequency_hz=5.18e9, bandwidth_hz=80e6)
+
+        scene_a_result = self._fake_path(72.0)
+        scene_b_result = self._fake_path(85.0)  # Different scene → different geometry
+
+        interferer = self._interferer("iso")
+        kwargs = self._rx_kwargs("iso", interferer)
+
+        # --- First call: scene A ---
+        engine._scene_path = "scenes/vacuum.xml"
+        with patch.object(engine, "_compute_interference_path", return_value=scene_a_result):
+            engine.compute_interference_at_receiver(**kwargs)
+
+        assert engine.get_cache_stats()["num_cached_paths"] == 1
+
+        # --- Second call: scene B, same positions and antenna pattern ---
+        engine._scene_path = "scenes/two_rooms.xml"
+        with patch.object(
+            engine, "_compute_interference_path", return_value=scene_b_result
+        ) as mock_compute:
+            engine.compute_interference_at_receiver(**kwargs)
+            assert mock_compute.call_count == 1, (
+                "Scene B request incorrectly hit the Scene A cache entry — "
+                "scene path must be part of the cache key"
+            )
+
+        assert engine.get_cache_stats()["num_cached_paths"] == 2, (
+            "Different scene paths at the same positions must produce separate cache entries."
+        )
+
+    def test_identical_parameters_reuse_cache_entry(self):
+        """Sanity check: identical calls must share one cache entry."""
+        engine = InterferenceEngine()
+        engine.load_scene(scene_path=None, frequency_hz=5.18e9, bandwidth_hz=80e6)
+
+        interferer = self._interferer("iso")
+        kwargs = self._rx_kwargs("iso", interferer)
+
+        with patch.object(
+            engine, "_compute_interference_path", return_value=self._fake_path(76.27)
+        ) as mock_compute:
+            engine.compute_interference_at_receiver(**kwargs)
+            engine.compute_interference_at_receiver(**kwargs)  # identical second call
+
+            assert mock_compute.call_count == 1, "Identical parameters must reuse the cache entry"
+
+        assert engine.get_cache_stats()["num_cached_paths"] == 1
 
 
 class TestEquilateralTriangle:

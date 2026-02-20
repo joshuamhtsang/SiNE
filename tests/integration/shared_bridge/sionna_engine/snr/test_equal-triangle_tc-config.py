@@ -186,13 +186,13 @@ def test_shared_bridge_bidirectional_asymmetric_nf(channel_server, examples_for_
         ]
 
         for tx, rx in expected_links:
-            link_state = controller._link_states.get((tx, rx))
+            link_state = controller._link_states.get((tx, "eth1", rx, "eth1"))
             assert link_state is not None, f"Link state {tx}→{rx} missing"
 
         # Verify SNR differences based on receiver NF
         # node1→node2 (RX NF=10dB) vs node1→node3 (RX NF=5dB) should differ by 5dB
-        snr_12 = controller._link_states[("node1", "node2")]["rf"]["snr_db"]
-        snr_13 = controller._link_states[("node1", "node3")]["rf"]["snr_db"]
+        snr_12 = controller._link_states[("node1", "eth1", "node2", "eth1")]["rf"]["snr_db"]
+        snr_13 = controller._link_states[("node1", "eth1", "node3", "eth1")]["rf"]["snr_db"]
 
         snr_diff = snr_13 - snr_12  # node3 has better NF → higher SNR
         assert 4.5 < snr_diff < 5.5, (

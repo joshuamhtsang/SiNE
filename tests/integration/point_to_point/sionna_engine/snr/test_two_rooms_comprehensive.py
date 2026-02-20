@@ -250,7 +250,7 @@ def test_two_rooms_tc_config(channel_server, examples_for_tests: Path):
 @pytest.mark.integration
 @pytest.mark.very_slow
 @pytest.mark.sionna
-@pytest.mark.skip(reason="Mobility API requires --enable-mobility flag, tested separately")
+@pytest.mark.skip(reason="Control API requires --enable-control flag, tested separately")
 def test_two_rooms_mobility(channel_server, examples_for_tests: Path, p2p_node_ips: dict):
     """Test mobility: move node2 along wall, verify channel recomputation.
 
@@ -261,8 +261,8 @@ def test_two_rooms_mobility(channel_server, examples_for_tests: Path, p2p_node_i
     - Expected: Path loss changes as node moves
 
     Note: This test is marked as skip by default since it requires
-    deployment with --enable-mobility flag. Run mobility tests separately
-    with the mobility test suite.
+    deployment with --enable-control flag. Run control API tests separately
+    with the control API test suite.
     """
     yaml_path = examples_for_tests / "p2p_sionna_snr_two-rooms" / "network.yaml"
 
@@ -274,7 +274,7 @@ def test_two_rooms_mobility(channel_server, examples_for_tests: Path, p2p_node_i
     deploy_process = None
     try:
         # Deploy with mobility enabled
-        deploy_process = deploy_topology(str(yaml_path), enable_mobility=True)
+        deploy_process = deploy_topology(str(yaml_path), enable_control=True)
 
         # Extract container prefix from YAML (e.g., "clab-two-rooms")
         container_prefix = extract_container_prefix(yaml_path)

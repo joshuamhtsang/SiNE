@@ -1,16 +1,16 @@
 """
-Mobility API Server for SiNE.
+Control API Server for SiNE.
 
-Provides REST API endpoints for updating node positions during emulation.
-This allows external mobility drivers, scripts, or interactive tools to
-control node movement in real-time.
+Provides REST API endpoints for controlling the emulation at runtime.
+This allows external tools, scripts, or interactive interfaces to
+control node positions and other emulation parameters in real-time.
 
 Example usage:
-    # Start the mobility API server
-    uv run sine mobility-server --topology examples/vacuum_20m/network.yaml
+    # Start the control API server
+    uv run sine control-server --topology examples/vacuum_20m/network.yaml
 
     # Update position via HTTP
-    curl -X POST http://localhost:8002/api/mobility/update \
+    curl -X POST http://localhost:8002/api/control/update \
          -H "Content-Type: application/json" \
          -d '{"node": "node1", "x": 10.0, "y": 5.0, "z": 1.5}'
 """
@@ -47,16 +47,42 @@ class PositionResponse(BaseModel):
     message: Optional[str] = None
 
 
-class MobilityAPIServer:
-    """
-    REST API server for mobility control.
+class InterfaceActiveUpdate(BaseModel):
+    """Request model for toggling interface active state."""
 
-    Wraps an EmulationController and exposes position update endpoints.
+    node: str = Field(..., description="Node name")
+    interface: str = Field(..., description="Interface name (e.g. 'eth1')")
+    is_active: bool = Field(..., description="True to enable, False to disable")
+
+
+class InterfaceStateResponse(BaseModel):
+    """Response model for interface state queries and updates."""
+
+    status: str
+    node: str
+    interface: str
+    is_active: bool
+    message: Optional[str] = None
+
+
+class RecomputeResponse(BaseModel):
+    """Response model for forced channel recompute."""
+
+    status: str
+    message: Optional[str] = None
+
+
+class ControlAPIServer:
+    """
+    REST API server for emulation runtime control.
+
+    Wraps an EmulationController and exposes endpoints for controlling
+    node positions and other emulation parameters.
     """
 
     def __init__(self, topology_path: Path):
         """
-        Initialize mobility API server.
+        Initialize control API server.
 
         Args:
             topology_path: Path to network.yaml topology file
@@ -64,8 +90,8 @@ class MobilityAPIServer:
         self.topology_path = topology_path
         self.controller: Optional[EmulationController] = None
         self.app = FastAPI(
-            title="SiNE Mobility API",
-            description="Control node positions in wireless network emulation",
+            title="SiNE Control API",
+            description="Control wireless network emulation at runtime",
             version="0.1.0",
         )
 
@@ -90,7 +116,7 @@ class MobilityAPIServer:
                 "message": "Emulation not started or has stopped",
             }
 
-        @self.app.post("/api/mobility/update", response_model=PositionResponse)
+        @self.app.post("/api/control/update", response_model=PositionResponse)
         async def update_position(update: PositionUpdate):
             """
             Update a node's position.
@@ -151,7 +177,7 @@ class MobilityAPIServer:
                 logger.error(f"Failed to update position: {e}")
                 raise HTTPException(status_code=500, detail=str(e))
 
-        @self.app.get("/api/mobility/position/{node}")
+        @self.app.get("/api/control/position/{node}")
         async def get_position(node: str):
             """Get current position of a node."""
             if not self.controller or not self.controller._running:
@@ -181,6 +207,109 @@ class MobilityAPIServer:
                 "position": {"x": pos.x, "y": pos.y, "z": pos.z},
             }
 
+        @self.app.post("/api/control/recompute", response_model=RecomputeResponse)
+        async def force_recompute():
+            """
+            Force an immediate recompute of all link channels.
+
+            Useful after external state changes or as a diagnostic trigger.
+            Equivalent to re-deploying channel conditions without changing positions.
+            Typically completes in <100ms (GPU) or <500ms (CPU fallback).
+            """
+            if not self.controller or not self.controller._running:
+                raise HTTPException(status_code=503, detail="Emulation not running")
+
+            try:
+                await self.controller.force_channel_recompute()
+                return RecomputeResponse(
+                    status="success",
+                    message="All link channels recomputed",
+                )
+            except Exception as e:
+                logger.error(f"Forced recompute failed: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @self.app.post("/api/control/interface", response_model=InterfaceStateResponse)
+        async def set_interface_active(update: InterfaceActiveUpdate):
+            """
+            Enable or disable a wireless interface at runtime.
+
+            When disabled, the interface is excluded from SINR interference calculations.
+            Triggers a channel recompute. The physical link remains in the topology.
+            """
+            if not self.controller or not self.controller._running:
+                raise HTTPException(status_code=503, detail="Emulation not running")
+
+            # Validate node exists
+            if update.node not in self.controller.config.topology.nodes:
+                available = list(self.controller.config.topology.nodes.keys())
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Node '{update.node}' not found. Available: {available}",
+                )
+
+            # Validate interface exists and is wireless
+            node_config = self.controller.config.topology.nodes[update.node]
+            if not node_config.interfaces or update.interface not in node_config.interfaces:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Interface '{update.interface}' not found on node '{update.node}'",
+                )
+            iface_config = node_config.interfaces[update.interface]
+            if not iface_config.is_wireless:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Interface '{update.interface}' is not wireless (fixed_netem cannot be toggled)",
+                )
+
+            try:
+                await self.controller.update_interface_active(
+                    update.node, update.interface, update.is_active
+                )
+                action = "enabled" if update.is_active else "disabled"
+                return InterfaceStateResponse(
+                    status="success",
+                    node=update.node,
+                    interface=update.interface,
+                    is_active=update.is_active,
+                    message=f"Interface {action} and channels recomputed",
+                )
+            except Exception as e:
+                logger.error(f"Failed to set interface active state: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @self.app.get(
+            "/api/control/interface/{node}/{interface}",
+            response_model=InterfaceStateResponse,
+        )
+        async def get_interface_state(node: str, interface: str):
+            """Get the current active state of a specific wireless interface."""
+            if not self.controller or not self.controller._running:
+                raise HTTPException(status_code=503, detail="Emulation not running")
+
+            if node not in self.controller.config.topology.nodes:
+                raise HTTPException(status_code=404, detail=f"Node '{node}' not found")
+
+            node_config = self.controller.config.topology.nodes[node]
+            if not node_config.interfaces or interface not in node_config.interfaces:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Interface '{interface}' not found on node '{node}'",
+                )
+            iface_config = node_config.interfaces[interface]
+            if not iface_config.is_wireless:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Interface '{interface}' is not wireless",
+                )
+
+            return InterfaceStateResponse(
+                status="ok",
+                node=node,
+                interface=interface,
+                is_active=iface_config.wireless.is_active,
+            )
+
         @self.app.get("/api/nodes")
         async def list_nodes():
             """List all nodes with their current positions."""
@@ -205,13 +334,13 @@ class MobilityAPIServer:
 
     async def start(self, host: str = "0.0.0.0", port: int = 8002) -> None:
         """
-        Start the mobility API server and emulation.
+        Start the control API server and emulation.
 
         Args:
             host: Host to bind to (default: 0.0.0.0)
             port: Port to bind to (default: 8002)
         """
-        logger.info(f"Starting mobility API server on {host}:{port}")
+        logger.info(f"Starting control API server on {host}:{port}")
 
         # Initialize and start emulation controller
         self.controller = EmulationController(self.topology_path)
@@ -228,22 +357,22 @@ class MobilityAPIServer:
         try:
             await server.serve()
         except KeyboardInterrupt:
-            logger.info("Shutting down mobility API server")
+            logger.info("Shutting down control API server")
         finally:
             if self.controller:
                 await self.controller.stop()
 
 
-async def run_mobility_server(
+async def run_control_server(
     topology_path: Path, host: str = "0.0.0.0", port: int = 8002
 ) -> None:
     """
-    Run the mobility API server.
+    Run the control API server.
 
     Args:
         topology_path: Path to network.yaml file
         host: Host to bind to
         port: Port to bind to
     """
-    server = MobilityAPIServer(topology_path)
+    server = ControlAPIServer(topology_path)
     await server.start(host, port)

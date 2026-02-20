@@ -213,12 +213,12 @@ def extract_container_prefix(yaml_path: str | Path) -> str:
     return f"{prefix}-{lab_name}"
 
 
-def deploy_topology(yaml_path: str, enable_mobility: bool = False, channel_server_url: str = "http://localhost:8000") -> subprocess.Popen:
+def deploy_topology(yaml_path: str, enable_control: bool = False, channel_server_url: str = "http://localhost:8000") -> subprocess.Popen:
     """Deploy a topology using sine deploy command.
 
     Args:
         yaml_path: Path to the topology YAML file
-        enable_mobility: If True, deploy with --enable-mobility flag
+        enable_control: If True, deploy with --enable-control flag (starts control API on port 8002)
         channel_server_url: URL of the channel server to use (default: http://localhost:8000)
 
     Returns:
@@ -238,9 +238,9 @@ def deploy_topology(yaml_path: str, enable_mobility: bool = False, channel_serve
     # Register cleanup handlers on first deployment
     _register_cleanup_handlers()
 
-    mobility_str = " (with mobility)" if enable_mobility else ""
+    control_str = " (with control API)" if enable_control else ""
     print(f"\n{'='*70}")
-    print(f"Deploying topology{mobility_str}: {yaml_path}")
+    print(f"Deploying topology{control_str}: {yaml_path}")
     print(f"Using channel server: {channel_server_url}")
     print(f"{'='*70}\n")
 
@@ -248,8 +248,8 @@ def deploy_topology(yaml_path: str, enable_mobility: bool = False, channel_serve
     cmd = ["sudo", uv_path, "run", "sine", "deploy", str(yaml_path)]
     # Always specify the channel server URL to avoid starting a new one
     cmd.extend(["--channel-server", channel_server_url])
-    if enable_mobility:
-        cmd.append("--enable-mobility")
+    if enable_control:
+        cmd.append("--enable-control")
 
     # Start deployment in background
     process = subprocess.Popen(
@@ -378,7 +378,7 @@ def destroy_topology(yaml_path: str) -> None:
         logger.debug(f"Unregistered topology from cleanup: {yaml_path_obj}")
 
 
-def wait_for_iperf3(container_name: str, max_wait_sec: int = 30) -> None:
+def wait_for_iperf3(container_name: str, max_wait_sec: int = 60) -> None:
     """Wait for iperf3 to be available in a container.
 
     Containerlab's exec commands run asynchronously, so we need to wait for
@@ -401,7 +401,10 @@ def wait_for_iperf3(container_name: str, max_wait_sec: int = 30) -> None:
         if result.returncode == 0:
             return  # iperf3 is available
 
-        time.sleep(0.5)  # Wait before retrying
+        elapsed = time.time() - start_time
+        if elapsed > 5:
+            print(f"  Still waiting for iperf3 in {container_name}... ({elapsed:.0f}s elapsed)")
+        time.sleep(1.0)  # Wait before retrying
 
     raise RuntimeError(
         f"iperf3 not available in {container_name} after {max_wait_sec}s. "
@@ -1488,6 +1491,158 @@ def channel_server_fallback():
     print("Waiting for port 8001 to be released...")
     wait_for_port_available(8001, timeout_seconds=15, force_kill=True)
     print("✓ Port 8001 is now available")
+
+
+# =============================================================================
+# Control API Helpers and Fixtures
+# =============================================================================
+
+
+def control_api_get(base_url: str, path: str) -> dict:
+    """GET request to control API, returns parsed JSON."""
+    import json
+
+    with urllib.request.urlopen(f"{base_url}{path}", timeout=5) as r:
+        return json.loads(r.read())
+
+
+def control_api_post(base_url: str, path: str, body: dict) -> dict:
+    """POST request to control API, returns parsed JSON."""
+    import json
+
+    data = json.dumps(body).encode()
+    req = urllib.request.Request(
+        f"{base_url}{path}",
+        data=data,
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=5) as r:
+        return json.loads(r.read())
+
+
+def _wait_for_control_api(base_url: str, max_retries: int = 30) -> None:
+    """Wait for the control API to become ready.
+
+    Args:
+        base_url: Control API base URL (e.g., "http://localhost:8002")
+        max_retries: Maximum number of 1-second retries
+
+    Raises:
+        RuntimeError: If control API does not become ready within max_retries seconds
+    """
+    for _ in range(max_retries):
+        try:
+            with urllib.request.urlopen(f"{base_url}/health", timeout=1) as r:
+                if r.status == 200:
+                    return
+        except Exception:
+            time.sleep(1)
+    raise RuntimeError(f"Control API at {base_url} did not become ready in {max_retries}s")
+
+
+@pytest.fixture
+def control_api_fallback_deployment(examples_for_tests, channel_server_fallback):
+    """Deploy p2p_fallback_snr_vacuum with control API enabled.
+
+    Deploys the topology, waits for port 8002 to become ready, then yields.
+    Tears down the topology and waits for port 8002 to be released afterward.
+
+    Depends on channel_server_fallback (port 8001) being running.
+
+    Yields:
+        Tuple of (deploy_process, yaml_path, base_url)
+    """
+    yaml_path = examples_for_tests / "p2p_fallback_snr_vacuum" / "network.yaml"
+    base_url = "http://localhost:8002"
+
+    destroy_topology(str(yaml_path))  # Clean up any leftover deployment
+
+    deploy_process = deploy_topology(
+        str(yaml_path), enable_control=True, channel_server_url=channel_server_fallback
+    )
+
+    try:
+        _wait_for_control_api(base_url)
+        yield deploy_process, yaml_path, base_url
+    finally:
+        stop_deployment_process(deploy_process)
+        force_kill_port_occupants(8002)
+        try:
+            wait_for_port_available(8002, timeout_seconds=10)
+        except RuntimeError:
+            logger.warning("Port 8002 still in use after control API teardown")
+        destroy_topology(str(yaml_path))
+
+
+@pytest.fixture
+def control_api_fixed_deployment(examples_for_user):
+    """Deploy examples/for_user/fixed_link with control API enabled.
+
+    Used to test behavior when a node has only fixed_netem interfaces
+    (expects 400 from /api/control/update).
+
+    No channel server dependency — fixed_netem links don't require one.
+
+    Yields:
+        Tuple of (deploy_process, yaml_path, base_url)
+    """
+    yaml_path = examples_for_user / "fixed_link" / "network.yaml"
+    base_url = "http://localhost:8002"
+
+    destroy_topology(str(yaml_path))
+
+    deploy_process = deploy_topology(str(yaml_path), enable_control=True)
+
+    try:
+        _wait_for_control_api(base_url)
+        yield deploy_process, yaml_path, base_url
+    finally:
+        stop_deployment_process(deploy_process)
+        force_kill_port_occupants(8002)
+        try:
+            wait_for_port_available(8002, timeout_seconds=10)
+        except RuntimeError:
+            logger.warning("Port 8002 still in use after control API teardown")
+        destroy_topology(str(yaml_path))
+
+
+@pytest.fixture(scope="function")
+def control_api_sinr_deployment(channel_server, examples_for_tests):
+    """
+    Deploy shared_sionna_sinr_asym-triangle with control API enabled.
+
+    Uses the asymmetric triangle (unequal link distances) so that the desired
+    link (node1↔node2, 30m, SNR ≈ 36 dB) has a stronger signal than the
+    interference path (node3→node1, 91.2m), yielding SINR ≈ 9–10 dB with
+    all nodes active. This gives a clearly positive, stable baseline with
+    ~26 dB of measurable improvement when node3 is disabled.
+
+    The equilateral triangle is NOT used because equal S = I gives SINR ≈ 0 dB,
+    which is below the QPSK threshold and makes the baseline brittle.
+
+    Yields:
+        tuple: (deploy_process, yaml_path, base_url)
+    """
+    yaml_path = (
+        examples_for_tests / "shared_sionna_sinr_asym-triangle" / "network.yaml"
+    )
+    base_url = "http://localhost:8002"
+
+    destroy_topology(str(yaml_path))  # Clean up any leftover deployment
+
+    deploy_process = deploy_topology(str(yaml_path), enable_control=True)
+
+    try:
+        _wait_for_control_api(base_url)
+        yield deploy_process, yaml_path, base_url
+    finally:
+        stop_deployment_process(deploy_process)
+        force_kill_port_occupants(8002)
+        try:
+            wait_for_port_available(8002, timeout_seconds=10)
+        except RuntimeError:
+            logger.warning("Port 8002 still in use after control API teardown")
+        destroy_topology(str(yaml_path))
 
 
 @pytest.fixture

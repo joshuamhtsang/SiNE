@@ -21,7 +21,6 @@ topology:
     enabled: true
     name: tdma-rr-br0
     nodes: [node1, node2, node3]
-    interface_name: eth1
 
   nodes:
     node1:

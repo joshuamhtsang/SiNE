@@ -39,7 +39,7 @@
 #      uv run sine channel-server
 #
 #   2. Deploy the emulation with mobility:
-#      sudo $(which uv) run sine deploy --enable-mobility examples/two_rooms/network.yaml
+#      sudo $(which uv) run sine deploy --enable-control examples/two_rooms/network.yaml
 #      (IP addresses are automatically configured from the topology YAML)
 #
 #   3. Test connectivity:
@@ -115,4 +115,4 @@ topology:
     - endpoints: [node1:eth1, node2:eth1]
 
   channel_server: "http://localhost:8000"
-  mobility_poll_ms: 100                     # Update channel every 100ms during mobility
+  control_poll_ms: 100                      # Control API polling interval during mobility

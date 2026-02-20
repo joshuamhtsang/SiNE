@@ -517,6 +517,10 @@ class SharedBridgeDomain(BaseModel):
     When enabled, all nodes share a single Linux bridge instead of
     point-to-point veth pairs. This enables true broadcast medium
     behavior with per-destination netem filtering.
+
+    All wireless interfaces on listed nodes are auto-discovered and
+    connected to the bridge, enabling multi-radio nodes (e.g., dual-band
+    2.4 GHz + 5 GHz) on a shared bridge.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -530,8 +534,13 @@ class SharedBridgeDomain(BaseModel):
     nodes: list[str] = Field(
         ..., description="Nodes in this broadcast domain"
     )
-    interface_name: str = Field(
-        default="eth1", description="Interface to attach to bridge"
+    self_isolation_db: float = Field(
+        default=30.0,
+        ge=0.0,
+        le=60.0,
+        description="Coupling isolation between co-located radios on same node (dB). "
+                    "Used instead of ray tracing for same-node interface pairs. "
+                    "Typical: 20-40 dB for co-located antennas.",
     )
 
 
@@ -557,9 +566,9 @@ class TopologyDefinition(BaseModel):
     channel_server: str = Field(
         default="http://localhost:8000", description="Channel computation server URL"
     )
-    mobility_poll_ms: int = Field(
+    control_poll_ms: int = Field(
         default=100,
-        description="Mobility polling interval in milliseconds",
+        description="Control API polling interval in milliseconds",
         ge=10,
         le=10000,
     )
@@ -692,70 +701,116 @@ class TopologyDefinition(BaseModel):
                             return True
         return False
 
+    def get_bridge_interfaces(self) -> list[tuple[str, str]]:
+        """Return all (node_name, interface_name) pairs on the shared bridge.
+
+        Auto-discovers all wireless interfaces on nodes listed in the bridge config.
+
+        Returns:
+            List of (node_name, interface_name) tuples for all wireless interfaces
+            on bridge nodes.
+        """
+        bridge = self.shared_bridge
+        if not bridge or not bridge.enabled:
+            return []
+
+        result = []
+        for node_name in bridge.nodes:
+            node = self.nodes.get(node_name)
+            if node and node.interfaces:
+                for iface_name, iface_config in node.interfaces.items():
+                    if iface_config.wireless:
+                        result.append((node_name, iface_name))
+        return result
+
     def _validate_shared_bridge(self) -> None:
-        """Validate shared bridge configuration."""
+        """Validate shared bridge configuration.
+
+        Validates that:
+        - All bridge nodes exist and have at least one wireless interface
+        - All wireless interfaces on bridge nodes have IP addresses in CIDR format
+        - No IP address conflicts exist across all bridge interfaces
+        - Warns if two interfaces on the same node share a frequency (likely misconfiguration)
+        """
         import ipaddress
 
         bridge = self.shared_bridge
         if not bridge:
             return
 
-        interface_name = bridge.interface_name
-
         for node_name in bridge.nodes:
             if node_name not in self.nodes:
                 raise ValueError(f"Bridge node '{node_name}' not defined in nodes section")
 
             node = self.nodes[node_name]
-            if not node.interfaces or interface_name not in node.interfaces:
-                raise ValueError(f"Node '{node_name}' missing interface '{interface_name}'")
+            if not node.interfaces:
+                raise ValueError(f"Bridge node '{node_name}' has no interfaces configured")
 
-            iface = node.interfaces[interface_name]
-
-            # Phase 1: Only wireless interfaces allowed
-            if not iface.wireless:
+            # Check node has at least one wireless interface
+            wireless_ifaces = [
+                (iface_name, iface_config)
+                for iface_name, iface_config in node.interfaces.items()
+                if iface_config.wireless
+            ]
+            if not wireless_ifaces:
                 raise ValueError(
-                    f"Node '{node_name}' interface '{interface_name}' must be wireless "
-                    f"(mixed wireless + fixed_netem not supported in Phase 1)"
+                    f"Bridge node '{node_name}' has no wireless interfaces. "
+                    f"Shared bridge requires at least one wireless interface per node."
                 )
 
-            # IP address required for tc filter matching
-            if not iface.ip_address:
-                raise ValueError(
-                    f"Node '{node_name}' interface '{interface_name}' must have ip_address "
-                    f"(required for tc flower filters)"
-                )
+            # Validate each wireless interface
+            for iface_name, iface_config in wireless_ifaces:
+                # IP address required for tc filter matching
+                if not iface_config.ip_address:
+                    raise ValueError(
+                        f"Node '{node_name}' interface '{iface_name}' must have ip_address "
+                        f"(required for tc flower filters)"
+                    )
 
-            # Validate IP format (CIDR notation required)
-            if "/" not in iface.ip_address:
-                raise ValueError(
-                    f"Invalid IP address for {node_name}:{interface_name}: "
-                    f"'{iface.ip_address}' missing subnet mask. "
-                    f"Expected CIDR notation (e.g., 192.168.100.1/24)"
-                )
-            try:
-                ipaddress.ip_interface(iface.ip_address)
-            except ValueError as e:
-                raise ValueError(
-                    f"Invalid IP address for {node_name}:{interface_name}: "
-                    f"{iface.ip_address} - {e}. Expected CIDR notation (e.g., 192.168.100.1/24)"
-                ) from e
+                # Validate IP format (CIDR notation required)
+                if "/" not in iface_config.ip_address:
+                    raise ValueError(
+                        f"Invalid IP address for {node_name}:{iface_name}: "
+                        f"'{iface_config.ip_address}' missing subnet mask. "
+                        f"Expected CIDR notation (e.g., 192.168.100.1/24)"
+                    )
+                try:
+                    ipaddress.ip_interface(iface_config.ip_address)
+                except ValueError as e:
+                    raise ValueError(
+                        f"Invalid IP address for {node_name}:{iface_name}: "
+                        f"{iface_config.ip_address} - {e}. "
+                        f"Expected CIDR notation (e.g., 192.168.100.1/24)"
+                    ) from e
 
-        # Check for IP conflicts (compare IP portion only, not subnet)
-        ip_map: dict[str, str] = {}
+            # Warn if two interfaces on the same node share a frequency
+            freq_map: dict[float, str] = {}
+            for iface_name, iface_config in wireless_ifaces:
+                freq = iface_config.wireless.frequency_ghz
+                if freq in freq_map:
+                    logger.warning(
+                        f"Node '{node_name}': interfaces '{freq_map[freq]}' and "
+                        f"'{iface_name}' share the same frequency ({freq} GHz). "
+                        f"This is likely a misconfiguration - co-channel same-node "
+                        f"interfaces will have significant self-interference."
+                    )
+                freq_map[freq] = iface_name
+
+        # Check for IP conflicts across ALL wireless interfaces on ALL bridge nodes
+        ip_map: dict[str, str] = {}  # {ip_only: "node:iface"}
         for node_name in bridge.nodes:
             node = self.nodes[node_name]
-            if node.interfaces and interface_name in node.interfaces:
-                ip_cidr = node.interfaces[interface_name].ip_address
-                if ip_cidr:
-                    # Extract IP portion (before /) for conflict checking
-                    ip_only = str(ipaddress.ip_interface(ip_cidr).ip)
-                    if ip_only in ip_map:
-                        raise ValueError(
-                            f"IP address conflict: {ip_only} used by both "
-                            f"{ip_map[ip_only]} and {node_name}"
-                        )
-                    ip_map[ip_only] = node_name
+            if node.interfaces:
+                for iface_name, iface_config in node.interfaces.items():
+                    if iface_config.wireless and iface_config.ip_address:
+                        ip_only = str(ipaddress.ip_interface(iface_config.ip_address).ip)
+                        iface_key = f"{node_name}:{iface_name}"
+                        if ip_only in ip_map:
+                            raise ValueError(
+                                f"IP address conflict: {ip_only} used by both "
+                                f"{ip_map[ip_only]} and {iface_key}"
+                            )
+                        ip_map[ip_only] = iface_key
 
 
 class NetworkTopology(BaseModel):

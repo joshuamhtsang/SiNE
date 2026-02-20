@@ -54,9 +54,12 @@ class EmulationController:
         self.channel_server_url: str = "http://localhost:8000"
         self._channel_server_override: str | None = channel_server_url  # CLI override
         self._running = False
-        self._link_states: dict[tuple[str, str], dict] = {}  # Stores netem and RF metrics
-        self._link_mcs_info: dict[tuple[str, str], dict] = {}  # MCS info for each link
-        self._mobility_task: asyncio.Task | None = None
+        # Link states keyed by:
+        #   P2P: (tx_node, rx_node)
+        #   Shared bridge: (tx_node, tx_iface, rx_node, rx_iface)
+        self._link_states: dict[tuple, dict] = {}  # Stores netem and RF metrics
+        self._link_mcs_info: dict[tuple, dict] = {}  # MCS info for each link
+        self._control_task: asyncio.Task | None = None
         self._netem_failures: list[tuple[str, str]] = []  # Track failed netem applications
 
     async def start(self) -> bool:
@@ -69,7 +72,7 @@ class EmulationController:
         3. Initialize scene on channel server
         4. Compute initial channel conditions
         5. Configure netem on all links
-        6. Start mobility polling loop
+        6. Start control polling loop
 
         Returns:
             True if emulation started successfully
@@ -173,9 +176,9 @@ class EmulationController:
             logger.error(f"Failed to compute initial channels: {e}")
             raise EmulationError(f"Failed to compute channels: {e}") from e
 
-        # Start mobility polling
+        # Start control polling
         self._running = True
-        self._mobility_task = asyncio.create_task(self._mobility_polling_loop())
+        self._control_task = asyncio.create_task(self._control_polling_loop())
 
         # Report any netem failures
         if self._netem_failures:
@@ -207,11 +210,11 @@ class EmulationController:
 
         self._running = False
 
-        # Cancel mobility polling
-        if self._mobility_task:
-            self._mobility_task.cancel()
+        # Cancel control polling
+        if self._control_task:
+            self._control_task.cancel()
             try:
-                await self._mobility_task
+                await self._control_task
             except asyncio.CancelledError:
                 pass
 
@@ -268,121 +271,149 @@ class EmulationController:
             logger.info("Scene loaded on channel server")
 
     async def _update_shared_bridge_links(self) -> None:
-        """Compute and apply per-destination netem for shared bridge mode."""
+        """Compute and apply per-destination netem for shared bridge mode.
+
+        Uses interface-level iteration: each wireless interface on each bridge node
+        is treated as an independent entity. Cross-node interface pairs are computed
+        via the channel server. Same-node interface pairs use the self_isolation_db
+        model (no ray tracing).
+        """
         bridge_config = self.config.topology.shared_bridge
         if not bridge_config:
             return
 
-        nodes = bridge_config.nodes
-        interface_name = bridge_config.interface_name
-
-        logger.info(
-            f"Computing all-to-all links for shared bridge: "
-            f"{len(nodes)} nodes, {len(nodes) * (len(nodes) - 1)} directional links"
+        # Auto-discover all (node, interface) pairs on the bridge
+        bridge_ifaces = self.config.topology.get_bridge_interfaces()
+        nodes = self.config.topology.nodes
+        num_ifaces = len(bridge_ifaces)
+        num_cross_links = sum(
+            1
+            for tx_node, tx_iface in bridge_ifaces
+            for rx_node, rx_iface in bridge_ifaces
+            if (tx_node, tx_iface) != (rx_node, rx_iface)
+            and tx_node != rx_node
         )
 
-        # 1. Build all-to-all link list for channel computation
+        logger.info(
+            f"Computing interface-to-interface links for shared bridge: "
+            f"{num_ifaces} interfaces, {num_cross_links} cross-node "
+            f"directional links"
+        )
+
+        # 1. Build cross-node link list for channel computation
+        #    Same-node pairs are handled separately (self-isolation model)
         wireless_links = []
-        for tx_node in nodes:
-            for rx_node in nodes:
+        for tx_node, tx_iface in bridge_ifaces:
+            for rx_node, rx_iface in bridge_ifaces:
+                if (tx_node, tx_iface) == (rx_node, rx_iface):
+                    continue  # Skip self
+
                 if tx_node == rx_node:
-                    continue  # Skip self-links
+                    continue  # Same-node pair: handled by self-isolation
 
-                tx_iface_config = self.config.topology.nodes[tx_node].interfaces[
-                    interface_name
-                ]
-                rx_iface_config = self.config.topology.nodes[rx_node].interfaces[
-                    interface_name
-                ]
+                tx_iface_config = nodes[tx_node].interfaces[tx_iface]
+                rx_iface_config = nodes[rx_node].interfaces[rx_iface]
 
-                wireless_links.append(
-                    {
-                        "tx_node": tx_node,
-                        "rx_node": rx_node,
-                        "tx_params": tx_iface_config.wireless,
-                        "rx_params": rx_iface_config.wireless,
-                    }
-                )
+                wireless_links.append({
+                    "tx_node": tx_node,
+                    "tx_iface": tx_iface,
+                    "rx_node": rx_node,
+                    "rx_iface": rx_iface,
+                    "tx_params": tx_iface_config.wireless,
+                    "rx_params": rx_iface_config.wireless,
+                })
 
-        # 2. Batch compute all link conditions
+        # 2. Batch compute cross-node link conditions via channel server
         link_requests = []
         for link_info in wireless_links:
-            tx_params = link_info["tx_params"]
-            rx_params = link_info["rx_params"]
-
             request = self._build_channel_request(
                 tx_node=link_info["tx_node"],
                 rx_node=link_info["rx_node"],
-                tx_params=tx_params,
-                rx_params=rx_params,
+                tx_params=link_info["tx_params"],
+                rx_params=link_info["rx_params"],
+                tx_iface=link_info["tx_iface"],
+                rx_iface=link_info["rx_iface"],
             )
-
             link_requests.append(request)
 
-        # Get scene configuration
-        scene_config = self.config.topology.scene
-
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(
-                f"{self.channel_server_url}/compute/batch",
-                json={
-                    "scene": {
-                        "scene_file": scene_config.file,
-                        "frequency_hz": link_requests[0]["frequency_hz"],
-                        "bandwidth_hz": link_requests[0]["bandwidth_hz"],
+        results = []
+        if link_requests:
+            scene_config = self.config.topology.scene
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(
+                    f"{self.channel_server_url}/compute/batch",
+                    json={
+                        "scene": {
+                            "scene_file": scene_config.file,
+                            "frequency_hz": link_requests[0][
+                                "frequency_hz"
+                            ],
+                            "bandwidth_hz": link_requests[0][
+                                "bandwidth_hz"
+                            ],
+                        },
+                        "links": link_requests,
+                        "enable_sinr": (
+                            self.config.topology.enable_sinr
+                        ),
+                        "active_states": (
+                            self._build_active_states_dict()
+                        ),
                     },
-                    "links": link_requests,
-                    "enable_sinr": self.config.topology.enable_sinr,
-                    "active_states": self._build_active_states_dict(),
-                },
+                )
+                if response.status_code != 200:
+                    logger.error(
+                        f"Channel server error: {response.text}"
+                    )
+                response.raise_for_status()
+                results = response.json()["results"]
+
+        logger.info(f"Computed {len(results)} cross-node link conditions")
+
+        # 3. Build interface-level IP map and per-interface config
+        #    Key: (node_name, iface_name) -> ip_address
+        ip_map: dict[tuple[str, str], str] = {}
+        for node_name, iface_name in bridge_ifaces:
+            ip_addr = nodes[node_name].interfaces[iface_name].ip_address
+            if ip_addr:
+                ip_only = (
+                    ip_addr.split("/")[0] if "/" in ip_addr else ip_addr
+                )
+                ip_map[(node_name, iface_name)] = ip_only
+
+        # Initialize per-(node, interface) configs
+        per_iface_config: dict[
+            tuple[str, str], PerDestinationConfig
+        ] = {}
+        for node_name, iface_name in bridge_ifaces:
+            per_iface_config[(node_name, iface_name)] = (
+                PerDestinationConfig(
+                    node=node_name,
+                    interface=iface_name,
+                    default_params=NetemParams(
+                        delay_ms=1.0,
+                        jitter_ms=0.0,
+                        loss_percent=0.0,
+                        rate_mbps=1000.0,
+                    ),
+                    dest_params={},
+                )
             )
-            if response.status_code != 200:
-                logger.error(f"Channel server error response: {response.text}")
-            response.raise_for_status()
-            results = response.json()["results"]
 
-        logger.info(f"Computed {len(results)} link conditions")
-
-        # 3. Build per-node destination maps
-        per_node_config: dict[str, PerDestinationConfig] = {}
-        ip_map: dict[str, str] = {}
-
-        # Get IP addresses (strip CIDR suffix if present)
-        for node_name in nodes:
-            ip_address = self.config.topology.nodes[node_name].interfaces[
-                interface_name
-            ].ip_address
-            if ip_address:
-                # Strip /XX CIDR notation for use in tc flower filters
-                # Example: "192.168.100.1/24" -> "192.168.100.1"
-                ip_only = ip_address.split("/")[0] if "/" in ip_address else ip_address
-                ip_map[node_name] = ip_only
-
-        # Initialize per-node configs
-        for tx_node in nodes:
-            per_node_config[tx_node] = PerDestinationConfig(
-                node=tx_node,
-                interface=interface_name,
-                default_params=NetemParams(
-                    delay_ms=1.0, jitter_ms=0.0, loss_percent=0.0, rate_mbps=1000.0
-                ),
-                dest_params={},
-            )
-
-        # Populate destination parameters and store link states
+        # 4. Populate destination params from cross-node results
         for i, link_info in enumerate(wireless_links):
-            tx_node = link_info["tx_node"]
-            rx_node = link_info["rx_node"]
-            rx_ip = ip_map.get(rx_node)
+            tx_key = (link_info["tx_node"], link_info["tx_iface"])
+            rx_key = (link_info["rx_node"], link_info["rx_iface"])
+            rx_ip = ip_map.get(rx_key)
 
             if not rx_ip:
-                logger.error(f"No IP address for {rx_node}, skipping")
+                logger.error(
+                    f"No IP for {rx_key[0]}:{rx_key[1]}, skipping"
+                )
                 continue
 
             result = results[i]
 
-            # Note: TDMA throughput multiplier already applied by channel server
-            # (see server.py:703 - netem_rate_mbps includes slot ownership)
             netem_params = NetemParams(
                 delay_ms=result["netem_delay_ms"],
                 jitter_ms=result["netem_jitter_ms"],
@@ -390,44 +421,236 @@ class EmulationController:
                 rate_mbps=result["netem_rate_mbps"],
             )
 
-            per_node_config[tx_node].dest_params[rx_ip] = netem_params
+            per_iface_config[tx_key].dest_params[rx_ip] = netem_params
 
-            # Store link state for deployment summary
-            self._link_states[(tx_node, rx_node)] = {
+            # Store link state with 4-tuple key
+            state_key = (
+                link_info["tx_node"],
+                link_info["tx_iface"],
+                link_info["rx_node"],
+                link_info["rx_iface"],
+            )
+            self._link_states[state_key] = {
                 "netem": netem_params,
                 "rf": {
                     "snr_db": result.get("snr_db"),
-                    "sinr_db": result.get("sinr_db"),  # SINR when MAC model present
+                    "sinr_db": result.get("sinr_db"),
                     "path_loss_db": result.get("path_loss_db"),
                     "per": result.get("per"),
                     "rx_power_dbm": result.get("rx_power_dbm"),
-                    "mac_model_type": result.get("mac_model_type"),  # CSMA, TDMA, or None
+                    "mac_model_type": result.get("mac_model_type"),
                 },
             }
 
-            # Store MCS info if available
             if result.get("selected_mcs_index") is not None:
-                self._link_mcs_info[(tx_node, rx_node)] = {
+                self._link_mcs_info[state_key] = {
                     "mcs_index": result.get("selected_mcs_index"),
                     "modulation": result.get("selected_modulation"),
                     "code_rate": result.get("selected_code_rate"),
                     "fec_type": result.get("selected_fec_type"),
-                    "bandwidth_mhz": result.get("selected_bandwidth_mhz"),
+                    "bandwidth_mhz": result.get(
+                        "selected_bandwidth_mhz"
+                    ),
                 }
 
-        # 4. Apply per-destination netem to all nodes
+        # 5. Handle same-node interface pairs (self-isolation model)
+        self._apply_same_node_isolation(
+            bridge_ifaces, per_iface_config, ip_map
+        )
+
+        # 6. Apply per-destination netem to all (node, interface) pairs
         configurator = SharedNetemConfigurator(self.clab_manager)
 
-        for node_name, config in per_node_config.items():
+        for (node_name, iface_name), config in per_iface_config.items():
             success = configurator.apply_per_destination_netem(config)
             if not success:
-                logger.error(f"Failed to apply per-dest netem to {node_name}")
-                self._netem_failures.append((node_name, "shared_bridge"))
+                logger.error(
+                    f"Failed to apply per-dest netem to "
+                    f"{node_name}:{iface_name}"
+                )
+                self._netem_failures.append(
+                    (node_name, "shared_bridge")
+                )
 
         logger.info(
-            f"Applied per-destination netem to {len(per_node_config)} nodes "
-            f"in shared bridge mode"
+            f"Applied per-destination netem to "
+            f"{len(per_iface_config)} interfaces in shared bridge mode"
         )
+
+    def _apply_same_node_isolation(
+        self,
+        bridge_ifaces: list[tuple[str, str]],
+        per_iface_config: dict[
+            tuple[str, str], PerDestinationConfig
+        ],
+        ip_map: dict[tuple[str, str], str],
+    ) -> None:
+        """Apply self-isolation model for same-node interface pairs.
+
+        For interfaces on the same node, ray tracing is physically undefined
+        (zero distance). Instead, use the configurable self_isolation_db
+        parameter as the path loss floor, plus ACLR for cross-band pairs.
+
+        Args:
+            bridge_ifaces: All (node, iface) pairs on the bridge
+            per_iface_config: Per-interface netem config to populate
+            ip_map: IP address map for (node, iface) pairs
+        """
+        from sine.channel.modulation import (
+            BERCalculator,
+            BLERCalculator,
+            get_bits_per_symbol,
+        )
+        from sine.channel.per_calculator import PERCalculator
+        from sine.channel.snr import SNRCalculator
+
+        bridge_config = self.config.topology.shared_bridge
+        self_isolation_db = bridge_config.self_isolation_db
+        nodes = self.config.topology.nodes
+
+        # Group interfaces by node
+        node_ifaces: dict[str, list[str]] = {}
+        for node_name, iface_name in bridge_ifaces:
+            node_ifaces.setdefault(node_name, []).append(iface_name)
+
+        for node_name, ifaces in node_ifaces.items():
+            if len(ifaces) < 2:
+                continue  # Single interface, no same-node pairs
+
+            for tx_iface in ifaces:
+                for rx_iface in ifaces:
+                    if tx_iface == rx_iface:
+                        continue
+
+                    rx_ip = ip_map.get((node_name, rx_iface))
+                    if not rx_ip:
+                        continue
+
+                    tx_w = nodes[node_name].interfaces[
+                        tx_iface
+                    ].wireless
+                    rx_w = nodes[node_name].interfaces[
+                        rx_iface
+                    ].wireless
+
+                    # ACLR between the two interfaces
+                    freq_sep = abs(
+                        tx_w.frequency_hz - rx_w.frequency_hz
+                    )
+                    bw = max(tx_w.bandwidth_hz, rx_w.bandwidth_hz)
+                    aclr_db = self._compute_aclr(freq_sep, bw)
+                    total_isolation = self_isolation_db + aclr_db
+
+                    # SNR from isolation as path loss
+                    snr_calc = SNRCalculator(
+                        bandwidth_hz=rx_w.bandwidth_hz,
+                        noise_figure_db=rx_w.noise_figure_db,
+                    )
+                    tx_gain = (
+                        tx_w.antenna_gain_dbi
+                        if tx_w.antenna_gain_dbi is not None
+                        else 0.0
+                    )
+                    rx_gain = (
+                        rx_w.antenna_gain_dbi
+                        if rx_w.antenna_gain_dbi is not None
+                        else 0.0
+                    )
+                    _, snr_db = snr_calc.calculate_link_snr(
+                        tx_power_dbm=tx_w.rf_power_dbm,
+                        tx_gain_dbi=tx_gain,
+                        rx_gain_dbi=rx_gain,
+                        path_loss_db=total_isolation,
+                        from_sionna=False,
+                    )
+
+                    # BER/PER from SNR using instance methods
+                    mod = tx_w.modulation
+                    fec = tx_w.fec_type
+                    cr = tx_w.fec_code_rate
+                    if mod and fec and cr:
+                        ber_calc = BERCalculator(mod.value)
+                        ber = ber_calc.theoretical_ber_awgn(snr_db)
+                        bler_calc = BLERCalculator(
+                            fec_type=fec.value,
+                            code_rate=cr,
+                            modulation=mod.value,
+                        )
+                        bler = bler_calc.approximate_bler(snr_db)
+                        per_calc = PERCalculator(fec_type=fec.value)
+                        per = per_calc.calculate_per(
+                            ber=ber, bler=bler,
+                        )
+                        bps = get_bits_per_symbol(mod.value)
+                        rate = (
+                            tx_w.bandwidth_mhz * bps * cr
+                            * 0.8 * (1.0 - per)
+                        )
+                    else:
+                        per = 1.0
+                        rate = 0.1
+
+                    netem_params = NetemParams(
+                        delay_ms=0.1,  # ~0 propagation
+                        jitter_ms=0.0,
+                        loss_percent=min(per * 100.0, 100.0),
+                        rate_mbps=max(rate, 0.1),
+                    )
+
+                    tx_key = (node_name, tx_iface)
+                    per_iface_config[tx_key].dest_params[
+                        rx_ip
+                    ] = netem_params
+
+                    state_key = (
+                        node_name, tx_iface,
+                        node_name, rx_iface,
+                    )
+                    self._link_states[state_key] = {
+                        "netem": netem_params,
+                        "rf": {
+                            "snr_db": snr_db,
+                            "sinr_db": None,
+                            "path_loss_db": total_isolation,
+                            "per": per,
+                            "rx_power_dbm": None,
+                            "mac_model_type": None,
+                            "self_isolation": True,
+                        },
+                    }
+
+    @staticmethod
+    def _compute_aclr(
+        freq_separation_hz: float, bandwidth_hz: float
+    ) -> float:
+        """Compute Adjacent Channel Leakage Ratio (ACLR) in dB.
+
+        Uses IEEE 802.11ax spectral mask model.
+
+        Args:
+            freq_separation_hz: Frequency separation in Hz
+            bandwidth_hz: Channel bandwidth in Hz
+
+        Returns:
+            ACLR in dB (0 = co-channel, 45 = orthogonal)
+        """
+        half_bw = bandwidth_hz / 2.0
+
+        if freq_separation_hz <= half_bw:
+            return 0.0  # Co-channel
+        elif freq_separation_hz <= bandwidth_hz:
+            # Transition band: linear interpolation 0-28 dB
+            frac = (freq_separation_hz - half_bw) / half_bw
+            return frac * 28.0
+        elif freq_separation_hz <= 1.5 * bandwidth_hz:
+            # First adjacent: 28-40 dB
+            frac = (
+                (freq_separation_hz - bandwidth_hz)
+                / (0.5 * bandwidth_hz)
+            )
+            return 28.0 + frac * 12.0
+        else:
+            return 45.0  # Orthogonal
 
     async def _update_all_links(self) -> None:
         """Update channel conditions for all links (point-to-point or shared bridge)."""
@@ -496,6 +719,8 @@ class EmulationController:
                 rx_node=node2_name,
                 tx_params=wireless1,
                 rx_params=wireless2,
+                tx_iface=iface1,
+                rx_iface=iface2,
             )
 
             link_requests.append(request_12)
@@ -506,6 +731,8 @@ class EmulationController:
                 rx_node=node1_name,
                 tx_params=wireless2,
                 rx_params=wireless1,
+                tx_iface=iface2,
+                rx_iface=iface1,
             )
 
             link_requests.append(request_21)
@@ -565,6 +792,8 @@ class EmulationController:
         rx_node: str,
         tx_params: WirelessParams,
         rx_params: WirelessParams,
+        tx_iface: str | None = None,
+        rx_iface: str | None = None,
     ) -> dict:
         """
         Build a channel computation request dictionary for the batch compute endpoint.
@@ -574,20 +803,12 @@ class EmulationController:
             rx_node: Receiver node name
             tx_params: Wireless configuration for transmitter interface
             rx_params: Wireless configuration for receiver interface
+            tx_iface: Transmitter interface name (for interface-level SINR)
+            rx_iface: Receiver interface name (for interface-level SINR)
 
         Returns:
-            Dictionary with all fields required by the channel server's /compute/batch endpoint,
-            including:
-            - Core link parameters (positions, power, gains, antenna config, frequencies)
-            - Either adaptive MCS (mcs_table_path, mcs_hysteresis_db) OR
-              fixed modulation (modulation, fec_type, fec_code_rate)
-            - Optional MAC model configuration (CSMA or TDMA)
-
-        Note:
-            - Antenna gain defaults to 0.0 if not specified
-            - Antenna pattern defaults to "iso" if not specified
-            - Polarization defaults to "V" if not specified
-            - Uses transmitter's frequency/bandwidth and receiver's noise figure
+            Dictionary with all fields required by the channel server's
+            /compute/batch endpoint.
         """
         # Build core request fields
         request = {
@@ -622,6 +843,12 @@ class EmulationController:
             "rx_bandwidth_hz": rx_params.bandwidth_hz,
             "noise_figure_db": rx_params.noise_figure_db,
         }
+
+        # Add interface names for interface-level SINR identity
+        if tx_iface is not None:
+            request["tx_interface"] = tx_iface
+        if rx_iface is not None:
+            request["rx_interface"] = rx_iface
 
         # Add MCS table OR fixed modulation parameters
         if tx_params.uses_adaptive_mcs:
@@ -964,23 +1191,23 @@ class EmulationController:
         )
         return "eth1"
 
-    async def _mobility_polling_loop(self) -> None:
+    async def _control_polling_loop(self) -> None:
         """
-        Poll for mobility updates at configured interval.
+        Control polling loop running at configured interval.
 
         Default: 100ms polling period
         """
-        poll_interval = self.config.topology.mobility_poll_ms / 1000.0
+        poll_interval = self.config.topology.control_poll_ms / 1000.0
 
         while self._running:
             await asyncio.sleep(poll_interval)
 
             # In a full implementation, this would:
-            # 1. Query an external mobility model or API
-            # 2. Update node positions
-            # 3. Recompute channels if positions changed
+            # 1. Query external sources for control updates
+            # 2. Apply any pending control operations
+            # 3. Recompute channels if state changed
 
-            # For now, this is a placeholder for future mobility support
+            # For now, this is a placeholder for future polling-based control
 
     async def update_node_position(
         self, node_name: str, interface: str, x: float, y: float, z: float
@@ -1008,6 +1235,43 @@ class EmulationController:
                 logger.info(f"Updated position of {node_name}:{interface} to ({x}, {y}, {z})")
 
                 # Recompute channels for all links involving this node
+                await self._update_all_links()
+
+    async def force_channel_recompute(self) -> None:
+        """
+        Force an immediate recompute of all link channels.
+
+        Useful after a series of control changes, or for diagnostic/debug
+        purposes. Same effect as `_update_all_links()` but exposed as a
+        public method for the Control API.
+        """
+        logger.info("Forcing channel recompute on all links")
+        await self._update_all_links()
+
+    async def update_interface_active(
+        self, node_name: str, interface: str, is_active: bool
+    ) -> None:
+        """
+        Enable or disable a wireless interface and recompute affected channels.
+
+        When disabled, the interface is excluded from SINR interference calculations
+        on subsequent channel recomputes. The physical link is not removed.
+
+        Args:
+            node_name: Name of the node
+            interface: Interface name (e.g., "eth1")
+            is_active: True to enable, False to disable
+        """
+        node = self.config.topology.nodes.get(node_name)
+        if node and node.interfaces and interface in node.interfaces:
+            iface_config = node.interfaces[interface]
+            if iface_config.wireless:
+                if iface_config.wireless.is_active == is_active:
+                    return  # No-op: skip unnecessary channel recompute
+                iface_config.wireless.is_active = is_active
+                logger.info(
+                    f"Set {node_name}:{interface} is_active={is_active}"
+                )
                 await self._update_all_links()
 
     def get_link_status(self) -> dict[str, dict]:
@@ -1066,10 +1330,17 @@ class EmulationController:
 
         # Add shared bridge info
         if is_shared_bridge:
+            bridge = self.config.topology.shared_bridge
+            bridge_ifaces = (
+                self.config.topology.get_bridge_interfaces()
+            )
             summary["shared_bridge"] = {
-                "name": self.config.topology.shared_bridge.name,
-                "nodes": self.config.topology.shared_bridge.nodes,
-                "interface": self.config.topology.shared_bridge.interface_name,
+                "name": bridge.name,
+                "nodes": bridge.nodes,
+                "interfaces": [
+                    f"{n}:{i}" for n, i in bridge_ifaces
+                ],
+                "self_isolation_db": bridge.self_isolation_db,
             }
 
         # Get container info
@@ -1083,14 +1354,16 @@ class EmulationController:
                     "interfaces": info.get("interfaces", []),
                     "ipv4": info.get("ipv4", ""),
                 }
-                # Add wireless positions and IPs if available (from interfaces)
-                short_name = name.replace(f"clab-{self.config.name}-", "")
+                short_name = name.replace(
+                    f"clab-{self.config.name}-", ""
+                )
                 node = self.config.topology.nodes.get(short_name)
                 if node and node.interfaces:
-                    # Collect positions and IPs from all wireless interfaces
                     positions = {}
                     ips = {}
-                    for iface_name, iface_config in node.interfaces.items():
+                    for iface_name, iface_config in (
+                        node.interfaces.items()
+                    ):
                         if iface_config.wireless:
                             positions[iface_name] = {
                                 "x": iface_config.wireless.position.x,
@@ -1106,30 +1379,51 @@ class EmulationController:
                 summary["containers"].append(container_info)
 
         # Get link states with interface information
-        for (tx, rx), link_state in self._link_states.items():
+        # Keys are 2-tuples (P2P) or 4-tuples (shared bridge)
+        for state_key, link_state in self._link_states.items():
             params = link_state["netem"]
             rf_metrics = link_state["rf"]
 
-            # Get interface names from the mapping
-            tx_iface = None
-            rx_iface = None
-            if self.clab_manager:
-                tx_iface = self.clab_manager.get_interface_for_peer(tx, rx)
-                rx_iface = self.clab_manager.get_interface_for_peer(rx, tx)
+            # Parse key: 4-tuple or 2-tuple
+            if len(state_key) == 4:
+                tx, tx_iface, rx, rx_iface = state_key
+            else:
+                tx, rx = state_key
+                tx_iface = None
+                rx_iface = None
+                if self.clab_manager:
+                    tx_iface = (
+                        self.clab_manager.get_interface_for_peer(
+                            tx, rx
+                        )
+                    )
+                    rx_iface = (
+                        self.clab_manager.get_interface_for_peer(
+                            rx, tx
+                        )
+                    )
 
             # Determine link type from interface config
-            link_type = "unknown"
+            link_type = "wireless"
             tx_node = self.config.topology.nodes.get(tx)
             if tx_node and tx_node.interfaces and tx_iface:
                 if tx_iface in tx_node.interfaces:
-                    link_type = "wireless" if tx_node.interfaces[tx_iface].is_wireless else "fixed"
+                    iface_cfg = tx_node.interfaces[tx_iface]
+                    link_type = (
+                        "wireless" if iface_cfg.is_wireless
+                        else "fixed"
+                    )
 
-            # Format link with interfaces: "node1 (eth1) → node2 (eth1)" (directional)
-            tx_str = f"{tx} ({tx_iface})" if tx_iface else tx
-            rx_str = f"{rx} ({rx_iface})" if rx_iface else rx
+            # Format link with interfaces
+            tx_str = (
+                f"{tx}:{tx_iface}" if tx_iface else tx
+            )
+            rx_str = (
+                f"{rx}:{rx_iface}" if rx_iface else rx
+            )
 
             link_info = {
-                "link": f"{tx_str} → {rx_str}",  # Directional arrow for bidirectional computation
+                "link": f"{tx_str} -> {rx_str}",
                 "type": link_type,
                 "tx_node": tx,
                 "rx_node": rx,
@@ -1141,29 +1435,44 @@ class EmulationController:
                 "rate_mbps": params.rate_mbps,
             }
 
-            # Add RF metrics if available (wireless links only)
+            # Add self-isolation flag if present
+            if rf_metrics and rf_metrics.get("self_isolation"):
+                link_info["self_isolation"] = True
+
+            # Add RF metrics if available
             if rf_metrics:
                 link_info["snr_db"] = rf_metrics["snr_db"]
-                # Add SINR if available (MAC model case)
                 if rf_metrics.get("sinr_db") is not None:
                     link_info["sinr_db"] = rf_metrics["sinr_db"]
                 if rf_metrics.get("mac_model_type"):
-                    link_info["mac_model_type"] = rf_metrics["mac_model_type"]
-                link_info["path_loss_db"] = rf_metrics["path_loss_db"]
+                    link_info["mac_model_type"] = (
+                        rf_metrics["mac_model_type"]
+                    )
+                link_info["path_loss_db"] = (
+                    rf_metrics["path_loss_db"]
+                )
                 link_info["per"] = rf_metrics["per"]
-                if rf_metrics["rx_power_dbm"] is not None:
-                    link_info["rx_power_dbm"] = rf_metrics["rx_power_dbm"]
+                if rf_metrics.get("rx_power_dbm") is not None:
+                    link_info["rx_power_dbm"] = (
+                        rf_metrics["rx_power_dbm"]
+                    )
 
             # Add MCS info if available
-            mcs_info = self._link_mcs_info.get((tx, rx), {})
+            mcs_info = self._link_mcs_info.get(state_key, {})
             if mcs_info:
-                link_info["modulation"] = mcs_info.get("modulation")
+                link_info["modulation"] = mcs_info.get(
+                    "modulation"
+                )
                 link_info["code_rate"] = mcs_info.get("code_rate")
                 link_info["fec_type"] = mcs_info.get("fec_type")
                 if mcs_info.get("mcs_index") is not None:
-                    link_info["mcs_index"] = mcs_info.get("mcs_index")
+                    link_info["mcs_index"] = mcs_info.get(
+                        "mcs_index"
+                    )
                 if mcs_info.get("bandwidth_mhz") is not None:
-                    link_info["bandwidth_mhz"] = mcs_info.get("bandwidth_mhz")
+                    link_info["bandwidth_mhz"] = mcs_info.get(
+                        "bandwidth_mhz"
+                    )
 
             summary["links"].append(link_info)
 

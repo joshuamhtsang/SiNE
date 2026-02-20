@@ -122,10 +122,13 @@ class ContainerlabManager:
         Creates a container-namespace bridge (not host-namespace) which is
         automatically created by containerlab without manual pre-creation.
 
+        Auto-discovers all wireless interfaces on bridge nodes and creates
+        one veth pair per interface, enabling multi-radio nodes.
+
         Architecture:
         1. Parent container (bridge-host) to host the bridge
         2. Bridge node inside parent's namespace (name|parent syntax)
-        3. Links with correct endpoint format (both sides have interfaces)
+        3. One link per wireless interface (not per node)
 
         Args:
             sine_config: SiNE NetworkTopology as dict
@@ -154,7 +157,6 @@ class ContainerlabManager:
 
         bridge_name = bridge_config["name"]
         bridge_nodes = bridge_config["nodes"]
-        interface_name = bridge_config.get("interface_name", "eth1")
 
         # Create parent container to host the bridge
         parent_node = "bridge-host"
@@ -190,23 +192,47 @@ class ContainerlabManager:
 
             clab_topology["topology"]["nodes"][node_name] = clab_node
 
-        # Connect each node to bridge with correct endpoint format
-        for node_name in bridge_nodes:
-            bridge_interface = f"{node_name}-{interface_name}"  # Unique per node
+        # Auto-discover wireless interfaces and create one link per interface
+        bridge_interfaces = self._get_bridge_interfaces(topology_def, bridge_config)
+        for node_name, iface_name in bridge_interfaces:
+            bridge_iface = f"{node_name}-{iface_name}"  # Unique per (node, interface)
             link = {
                 "endpoints": [
-                    f"{node_name}:{interface_name}",
-                    f"{bridge_full_name}:{bridge_interface}"
+                    f"{node_name}:{iface_name}",
+                    f"{bridge_full_name}:{bridge_iface}"
                 ]
             }
             clab_topology["topology"]["links"].append(link)
 
             logger.debug(
-                f"Connected {node_name}:{interface_name} to "
-                f"{bridge_full_name}:{bridge_interface}"
+                f"Connected {node_name}:{iface_name} to "
+                f"{bridge_full_name}:{bridge_iface}"
             )
 
         return clab_topology
+
+    @staticmethod
+    def _get_bridge_interfaces(
+        topology_def: dict, bridge_config: dict
+    ) -> list[tuple[str, str]]:
+        """
+        Auto-discover all wireless interfaces on bridge nodes.
+
+        Args:
+            topology_def: Topology definition dict
+            bridge_config: Shared bridge configuration dict
+
+        Returns:
+            List of (node_name, interface_name) tuples for all wireless interfaces
+        """
+        result = []
+        for node_name in bridge_config["nodes"]:
+            node_config = topology_def["nodes"].get(node_name, {})
+            interfaces = node_config.get("interfaces", {})
+            for iface_name, iface_config in interfaces.items():
+                if iface_config.get("wireless"):
+                    result.append((node_name, iface_name))
+        return result
 
     @staticmethod
     def _parse_endpoint(endpoint: str) -> tuple[str, str]:
@@ -279,40 +305,46 @@ class ContainerlabManager:
                 "Install from: https://containerlab.dev/install/"
             ) from e
 
-    def _get_bridge_subnet(self, sine_config: dict, bridge_config: dict) -> str:
+    def _get_bridge_subnets(self, sine_config: dict, bridge_config: dict) -> list[str]:
         """
-        Extract bridge subnet from node IPs in CIDR notation.
+        Extract all unique subnets from bridge interface IPs.
 
         Args:
             sine_config: SiNE NetworkTopology as dict
             bridge_config: Shared bridge configuration dict
 
         Returns:
-            Bridge subnet string (e.g., '192.168.100.0/24')
+            List of unique subnet strings (e.g., ['192.168.100.0/24', '192.168.200.0/24'])
         """
         import ipaddress
 
-        interface_name = bridge_config.get("interface_name", "eth1")
-        first_node = bridge_config["nodes"][0]
-        first_ip_cidr = sine_config["topology"]["nodes"][first_node]["interfaces"][
-            interface_name
-        ]["ip_address"]
+        topology_def = sine_config.get("topology", {})
+        bridge_interfaces = self._get_bridge_interfaces(topology_def, bridge_config)
+        subnets = set()
 
-        # Parse CIDR notation and extract network
-        ip_interface = ipaddress.ip_interface(first_ip_cidr)
-        network = ip_interface.network
-        return str(network)
+        for node_name, iface_name in bridge_interfaces:
+            ip_cidr = topology_def["nodes"][node_name]["interfaces"][iface_name].get("ip_address")
+            if ip_cidr:
+                ip_iface = ipaddress.ip_interface(ip_cidr)
+                subnets.add(str(ip_iface.network))
 
-    def apply_bridge_ips(self, sine_config: dict) -> dict[str, str]:
+        return sorted(subnets)
+
+    def apply_bridge_ips(self, sine_config: dict) -> dict[str, dict[str, str]]:
         """
-        Apply user-specified IPs and routing to container interfaces in shared bridge mode.
+        Apply user-specified IPs and routing to all wireless interfaces in shared bridge mode.
+
+        Iterates over all wireless interfaces on bridge nodes (not just one per node),
+        enabling multi-radio nodes.
 
         Args:
             sine_config: SiNE NetworkTopology as dict
 
         Returns:
-            Dictionary mapping node_name to ip_address
+            Dictionary mapping node_name to {interface_name: ip_address}
         """
+        import ipaddress
+
         topology_def = sine_config.get("topology", {})
         bridge_config = topology_def.get("shared_bridge")
 
@@ -320,22 +352,36 @@ class ContainerlabManager:
             logger.warning("apply_bridge_ips called but shared_bridge not enabled")
             return {}
 
-        interface_name = bridge_config.get("interface_name", "eth1")
-        bridge_nodes = bridge_config["nodes"]
-        ip_assignments = {}
+        # Auto-discover all wireless interfaces on bridge nodes
+        bridge_interfaces = self._get_bridge_interfaces(topology_def, bridge_config)
+        # Get all unique subnets for routing
+        bridge_subnets = self._get_bridge_subnets(sine_config, bridge_config)
 
-        # Get bridge subnet for routing configuration
-        bridge_subnet = self._get_bridge_subnet(sine_config, bridge_config)
+        # Build per-node map of subnets that are directly connected
+        # (i.e., the node has an interface with an IP on that subnet).
+        # Used to avoid adding explicit routes that conflict with kernel
+        # connected routes created by `ip addr add`.
+        node_connected_subnets: dict[str, set[str]] = {}
+        for n_name, i_name in bridge_interfaces:
+            iface_cfg = topology_def["nodes"][n_name]["interfaces"][i_name]
+            ip_cidr = iface_cfg.get("ip_address")
+            if ip_cidr:
+                subnet = str(ipaddress.ip_network(ip_cidr, strict=False))
+                node_connected_subnets.setdefault(n_name, set()).add(subnet)
 
-        for node_name in bridge_nodes:
-            node_config = topology_def["nodes"][node_name]
-            interface_config = node_config["interfaces"][interface_name]
-            ip_cidr = interface_config["ip_address"]
+        ip_assignments: dict[str, dict[str, str]] = {}
+
+        for node_name, iface_name in bridge_interfaces:
+            interface_config = topology_def["nodes"][node_name]["interfaces"][iface_name]
+            ip_cidr = interface_config.get("ip_address")
+            if not ip_cidr:
+                continue
 
             # Store IP portion only for mapping (for tc filter compatibility)
-            import ipaddress
             ip_only = str(ipaddress.ip_interface(ip_cidr).ip)
-            ip_assignments[node_name] = ip_only
+            if node_name not in ip_assignments:
+                ip_assignments[node_name] = {}
+            ip_assignments[node_name][iface_name] = ip_only
 
             # Apply IP to container interface
             container_info = self.get_container_info(node_name)
@@ -362,51 +408,65 @@ class ContainerlabManager:
                         "add",
                         ip_cidr,
                         "dev",
-                        interface_name,
+                        iface_name,
                     ],
                     capture_output=True,
                     text=True,
                 )
                 if result.returncode == 0:
-                    logger.info(f"Applied IP {ip_cidr} to {node_name}:{interface_name}")
+                    logger.info(f"Applied IP {ip_cidr} to {node_name}:{iface_name}")
                 elif "File exists" in result.stderr:
-                    logger.debug(f"IP {ip_cidr} already exists on {node_name}:{interface_name}")
+                    logger.debug(f"IP {ip_cidr} already exists on {node_name}:{iface_name}")
                 else:
-                    logger.error(f"Failed to apply IP to {node_name}:{interface_name}: {result.stderr}")
+                    logger.error(f"Failed to apply IP to {node_name}:{iface_name}: {result.stderr}")
                     continue
 
-                # 2. Add route for bridge subnet
-                result = subprocess.run(
-                    [
-                        "sudo",
-                        "nsenter",
-                        "-t",
-                        str(pid),
-                        "-n",
-                        "ip",
-                        "route",
-                        "add",
-                        bridge_subnet,
-                        "dev",
-                        interface_name,
-                    ],
-                    capture_output=True,
-                    text=True,
-                )
-                if result.returncode == 0:
-                    logger.info(
-                        f"Added route {bridge_subnet} via {interface_name} on {node_name}"
+                # 2. Add routes for bridge subnets this node is NOT directly
+                #    connected to.  Directly-connected subnets already have
+                #    kernel routes created by `ip addr add` above, so adding
+                #    an explicit route would either conflict or, worse, pin
+                #    the subnet to the wrong interface (e.g. 5 GHz eth1 gets
+                #    an explicit route for the 2.4 GHz subnet before eth2's
+                #    connected route is created).
+                connected = node_connected_subnets.get(node_name, set())
+                for bridge_subnet in bridge_subnets:
+                    if bridge_subnet in connected:
+                        logger.debug(
+                            f"Skipping route {bridge_subnet} on {node_name}:{iface_name} "
+                            f"(directly connected on another interface)"
+                        )
+                        continue
+                    result = subprocess.run(
+                        [
+                            "sudo",
+                            "nsenter",
+                            "-t",
+                            str(pid),
+                            "-n",
+                            "ip",
+                            "route",
+                            "add",
+                            bridge_subnet,
+                            "dev",
+                            iface_name,
+                        ],
+                        capture_output=True,
+                        text=True,
                     )
-                elif "File exists" in result.stderr:
-                    logger.debug(f"Route {bridge_subnet} already exists on {node_name}:{interface_name}")
-                else:
-                    logger.warning(
-                        f"Failed to add route on {node_name}:{interface_name}: {result.stderr}"
-                    )
+                    if result.returncode == 0:
+                        logger.info(
+                            f"Added route {bridge_subnet} via {iface_name} on {node_name}"
+                        )
+                    elif "File exists" in result.stderr:
+                        logger.debug(f"Route {bridge_subnet} already exists on {node_name}:{iface_name}")
+                    else:
+                        logger.warning(
+                            f"Failed to add route on {node_name}:{iface_name}: {result.stderr}"
+                        )
 
             except Exception as e:
                 logger.error(
-                    f"Unexpected error configuring {node_name}:{interface_name}: {e}"
+                    f"Unexpected error configuring {node_name}:{iface_name}: {e}"
                 )
 
         return ip_assignments

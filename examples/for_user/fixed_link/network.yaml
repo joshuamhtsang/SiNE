@@ -37,7 +37,7 @@ topology:
   # scene: not required
 
   channel_server: "http://localhost:8000"  # Not used for fixed links
-  mobility_poll_ms: 100
+  control_poll_ms: 100
 
   nodes:
     node1:

@@ -12,7 +12,7 @@ from sine.channel.mcs import MCSTable, MCSEntry, MODULATION_BITS
 @pytest.fixture
 def test_mcs_table_path() -> Path:
     """Return path to test MCS table."""
-    return Path(__file__).parent.parent.parent / "fixtures" / "mcs_tables" / "test_mcs.csv"
+    return Path(__file__).parent.parent.parent.parent / "examples" / "common_data" / "wifi6_mcs.csv"
 
 
 @pytest.fixture
@@ -123,7 +123,7 @@ class TestMCSTableLoading:
         """Test loading MCS table from CSV file."""
         table = MCSTable.from_csv(test_mcs_table_path, hysteresis_db=2.0)
 
-        assert len(table) == 10  # test_mcs.csv has 10 entries
+        assert len(table) == 12  # wifi6_mcs.csv has 12 entries
         assert table.hysteresis_db == 2.0
 
     def test_load_nonexistent_file(self):
@@ -145,13 +145,13 @@ class TestMCSTableLoading:
 
     def test_table_len(self, mcs_table: MCSTable):
         """Test table length."""
-        assert len(mcs_table) == 10
+        assert len(mcs_table) == 12
 
     def test_table_repr(self, mcs_table: MCSTable):
         """Test table string representation."""
         repr_str = repr(mcs_table)
         assert "MCSTable" in repr_str
-        assert "10 entries" in repr_str
+        assert "12 entries" in repr_str
         assert "hysteresis=2.0" in repr_str
 
 
@@ -168,10 +168,10 @@ class TestMCSSelection:
 
     def test_select_highest_mcs_above_all_thresholds(self, mcs_table: MCSTable):
         """Test that highest MCS is selected when SNR is above all thresholds."""
-        # MCS 9 has min_snr_db = 35.0
+        # MCS 11 has min_snr_db = 38.0
         mcs = mcs_table.select_mcs(snr_db=40.0)
 
-        assert mcs.mcs_index == 9
+        assert mcs.mcs_index == 11
         assert mcs.modulation == "1024qam"
 
     @pytest.mark.parametrize(
@@ -184,7 +184,7 @@ class TestMCSSelection:
             (14.0, 3),  # At MCS 3 threshold
             (20.0, 5),  # At MCS 5 threshold
             (25.0, 6),  # Between MCS 6 and 7
-            (35.0, 9),  # At MCS 9 threshold
+            (35.0, 10),  # At MCS 10 threshold
         ],
     )
     def test_select_mcs_at_various_snr_levels(
@@ -327,9 +327,9 @@ class TestMCSTableProperties:
     def test_max_mcs(self, mcs_table: MCSTable):
         """Test getting maximum MCS entry."""
         max_mcs = mcs_table.max_mcs
-        assert max_mcs.mcs_index == 9
+        assert max_mcs.mcs_index == 11
         assert max_mcs.modulation == "1024qam"
-        assert max_mcs.min_snr_db == 35.0
+        assert max_mcs.min_snr_db == 38.0
 
     def test_get_by_index_valid(self, mcs_table: MCSTable):
         """Test getting MCS entry by index."""

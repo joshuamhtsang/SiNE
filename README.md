@@ -330,8 +330,8 @@ nodes:
 Without TDMA or CSMA/CA configuration, SiNE assumes worst-case interference (100% transmission probability). This represents scenarios where nodes transmit continuously (e.g., beacon-heavy networks, saturated channels).
 
 **SINR Examples** (see `examples/for_tests/`):
-- Basic MANET: `shared_sionna_sinr_triangle/` (equilateral, co-channel)
-- Asymmetric MANET: `shared_sionna_sinr_asymmetric/` (variable link quality)
+- Basic MANET: `shared_sionna_sinr_equal-triangle/` (equilateral, co-channel)
+- Asymmetric MANET: `shared_sionna_sinr_asym-triangle/` (variable link quality)
 - Round-robin TDMA: `shared_sionna_sinr_tdma-rr/` (equal slot allocation)
 - Fixed TDMA: `shared_sionna_sinr_tdma-fixed/` (custom scheduling)
 - CSMA/CA: `shared_sionna_sinr_csma/` (carrier sensing with interference)
@@ -350,7 +350,7 @@ Two modes for Mobile Ad-hoc Networks:
 **2. Shared Bridge (True Broadcast Medium)**
 - All nodes share a container-namespace Linux bridge
 - Per-destination netem using HTB + tc flower filters
-- Single interface per node (realistic)
+- Supports multiple interfaces per node (e.g., dual-band 2.4 GHz + 5 GHz)
 - Supports MANET routing protocols (OLSR, BATMAN-adv, Babel)
 
 ```yaml
@@ -359,14 +359,15 @@ topology:
     enabled: true
     name: manet-br0
     nodes: [node1, node2, node3]
-    interface_name: eth1
+    self_isolation_db: 30.0  # Coupling isolation between co-located radios (optional)
 ```
 
 **Example coming soon** (to be added to `examples/for_user/`).
 
 See test examples in `examples/for_tests/`:
-- **SNR only**: `shared_sionna_snr_triangle/` (3-node MANET without interference)
-- **SINR enabled**: `shared_sionna_sinr_triangle/` and `shared_sionna_sinr_asymmetric/` (with interference modeling)
+- **SNR only**: `shared_sionna_snr_equal-triangle/` (3-node MANET without interference)
+- **SINR enabled**: `shared_sionna_sinr_equal-triangle/` and `shared_sionna_sinr_asym-triangle/` (with interference modeling)
+- **Multi-radio**: `shared_sionna_snr_dual-band/` (dual-band 2.4 GHz + 5 GHz per node)
 
 ### Node Mobility
 
@@ -470,8 +471,9 @@ Key integration test examples (see directory for complete list):
 |---------|-------------|----------|
 | [p2p_fallback_snr_vacuum/](examples/for_tests/p2p_fallback_snr_vacuum/) | Baseline free-space (2 nodes, 20m) | Basic wireless, fallback engine |
 | [p2p_sionna_snr_two-rooms/](examples/for_tests/p2p_sionna_snr_two-rooms/) | Indoor multipath | 2 rooms with doorway, Sionna RT |
-| [shared_sionna_snr_triangle/](examples/for_tests/shared_sionna_snr_triangle/) | 3-node MANET | Shared bridge, broadcast, SNR-only |
-| [shared_sionna_sinr_asymmetric/](examples/for_tests/shared_sionna_sinr_asymmetric/) | 3-node MANET with SINR | Asymmetric geometry, positive SINR |
+| [shared_sionna_snr_equal-triangle/](examples/for_tests/shared_sionna_snr_equal-triangle/) | 3-node MANET | Shared bridge, broadcast, SNR-only |
+| [shared_sionna_sinr_asym-triangle/](examples/for_tests/shared_sionna_sinr_asym-triangle/) | 3-node MANET with SINR | Asymmetric geometry, positive SINR |
+| [shared_sionna_snr_dual-band/](examples/for_tests/shared_sionna_snr_dual-band/) | Dual-band per node | 2.4 GHz + 5 GHz, multi-interface |
 | [shared_sionna_sinr_tdma-rr/](examples/for_tests/shared_sionna_sinr_tdma-rr/) | Round-robin TDMA | Equal slot allocation, SINR |
 | [shared_sionna_sinr_csma/](examples/for_tests/shared_sionna_sinr_csma/) | CSMA with SINR | Carrier sensing, MCS, interference |
 

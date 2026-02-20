@@ -164,10 +164,11 @@ class InterferenceEngine:
             )
 
         self._engine: Optional[SionnaEngine] = None
-        self._path_cache: dict[tuple[tuple[float, float, float], tuple[float, float, float]], PathResult] = {}
+        self._path_cache: dict = {}
         self._scene_loaded = False
         self._frequency_hz = 5.18e9
         self._bandwidth_hz = 80e6
+        self._scene_path: str = ""
 
     def load_scene(
         self,
@@ -188,6 +189,7 @@ class InterferenceEngine:
         self._scene_loaded = True
         self._frequency_hz = frequency_hz
         self._bandwidth_hz = bandwidth_hz
+        self._scene_path = scene_path or ""
         self._path_cache.clear()
 
         logger.info(f"InterferenceEngine: loaded scene at {frequency_hz/1e9:.3f} GHz")
@@ -270,25 +272,37 @@ class InterferenceEngine:
                 f"RX_BW={rx_bandwidth_hz/1e6:.0f} MHz → ACLR={aclr_db:.2f} dB"
             )
 
-            # Check cache for this TX→RX path
-            cache_key = (interferer.position, rx_position)
+            # Resolve antenna patterns before building the cache key.
+            tx_pattern = interferer.antenna_pattern or "iso"
+            tx_polarization = interferer.polarization or "V"
+
+            # Cache key includes everything that affects the path computation result:
+            #   - positions (geometry)
+            #   - antenna patterns & polarizations (Sionna RT embeds their gains into
+            #     path_loss_db, so paths computed with different patterns differ)
+            #   - scene path (paths are scene-specific; cache is cleared on scene reload,
+            #     but including the scene here adds defence-in-depth)
+            cache_key = (
+                self._scene_path,
+                interferer.position,
+                rx_position,
+                tx_pattern,
+                rx_antenna_pattern,
+                tx_polarization,
+                rx_polarization,
+            )
 
             if cache_key in self._path_cache:
                 path_result = self._path_cache[cache_key]
                 logger.debug("Using cached path for %s→%s", interferer.node_name, rx_node)
             else:
-                # Compute path from interferer to receiver using PathSolver
-                # Use antenna patterns if available, otherwise fall back to iso
-                tx_pattern = interferer.antenna_pattern or "iso"
-                tx_polar = interferer.polarization or "V"
-
                 path_result = self._compute_interference_path(
                     interferer.position,
                     rx_position,
                     interferer.node_name,
                     rx_node,
                     tx_antenna_pattern=tx_pattern,
-                    tx_polarization=tx_polar,
+                    tx_polarization=tx_polarization,
                     rx_antenna_pattern=rx_antenna_pattern,
                     rx_polarization=rx_polarization,
                 )
