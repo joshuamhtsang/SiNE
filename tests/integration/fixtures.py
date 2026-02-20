@@ -1603,6 +1603,45 @@ def control_api_fixed_deployment(examples_for_user):
         destroy_topology(str(yaml_path))
 
 
+@pytest.fixture(scope="function")
+def control_api_sinr_deployment(channel_server, examples_for_tests):
+    """
+    Deploy shared_sionna_sinr_asym-triangle with control API enabled.
+
+    Uses the asymmetric triangle (unequal link distances) so that the desired
+    link (node1↔node2, 30m, SNR ≈ 36 dB) has a stronger signal than the
+    interference path (node3→node1, 91.2m), yielding SINR ≈ 9–10 dB with
+    all nodes active. This gives a clearly positive, stable baseline with
+    ~26 dB of measurable improvement when node3 is disabled.
+
+    The equilateral triangle is NOT used because equal S = I gives SINR ≈ 0 dB,
+    which is below the QPSK threshold and makes the baseline brittle.
+
+    Yields:
+        tuple: (deploy_process, yaml_path, base_url)
+    """
+    yaml_path = (
+        examples_for_tests / "shared_sionna_sinr_asym-triangle" / "network.yaml"
+    )
+    base_url = "http://localhost:8002"
+
+    destroy_topology(str(yaml_path))  # Clean up any leftover deployment
+
+    deploy_process = deploy_topology(str(yaml_path), enable_control=True)
+
+    try:
+        _wait_for_control_api(base_url)
+        yield deploy_process, yaml_path, base_url
+    finally:
+        stop_deployment_process(deploy_process)
+        force_kill_port_occupants(8002)
+        try:
+            wait_for_port_available(8002, timeout_seconds=10)
+        except RuntimeError:
+            logger.warning("Port 8002 still in use after control API teardown")
+        destroy_topology(str(yaml_path))
+
+
 @pytest.fixture
 def bridge_node_ips() -> dict[str, str]:
     """Standard shared bridge node IPs (192.168.100.x/24).

@@ -1582,6 +1582,14 @@ UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy --enable-control example
 
 ### Control API Endpoints (Mobility)
 
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/control/update` | Update node position and recompute channels |
+| `GET` | `/api/control/position/{node}` | Get current position of a node |
+| `POST` | `/api/control/recompute` | Force immediate recompute of all link channels |
+| `POST` | `/api/control/interface` | Set `is_active` for a wireless interface |
+| `GET` | `/api/control/interface/{node}/{interface}` | Get current `is_active` for a wireless interface |
+
 **Update node position:**
 ```bash
 curl -X POST http://localhost:8002/api/control/update \
@@ -1597,6 +1605,23 @@ curl -X POST http://localhost:8002/api/control/update \
 **Get current positions:**
 ```bash
 curl http://localhost:8002/api/control/position/node2
+```
+
+**Force channel recompute:**
+```bash
+curl -X POST http://localhost:8002/api/control/recompute
+```
+
+**Get interface active state:**
+```bash
+curl http://localhost:8002/api/control/interface/node1/eth1
+```
+
+**Enable/disable wireless interface:**
+```bash
+curl -X POST http://localhost:8002/api/control/interface \
+     -H "Content-Type: application/json" \
+     -d '{"node": "node1", "interface": "eth1", "is_active": false}'
 ```
 
 **Response:**

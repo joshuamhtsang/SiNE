@@ -726,7 +726,7 @@ async def _compute_batch_with_sinr(
     Returns:
         List of channel responses with SINR and MAC metadata
     """
-    global _engine, _interference_engine, _sinr_calculator
+    global _engine, _interference_engine, _sinr_calculator, _interference_engine_scene_key
 
     if mac_model_config is not None:
         logger.info(f"Computing {len(links)} links with {mac_model_config.type.upper()} MAC model")

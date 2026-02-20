@@ -21,9 +21,11 @@ from pathlib import Path
 import pytest
 
 from tests.integration.fixtures import (
+    channel_server,  # noqa: F401
     channel_server_fallback,  # noqa: F401
     control_api_fallback_deployment,  # noqa: F401
     control_api_fixed_deployment,  # noqa: F401
+    control_api_sinr_deployment,  # noqa: F401
     control_api_get,
     control_api_post,
     extract_container_prefix,
@@ -436,3 +438,246 @@ def test_control_api_polling_interval(control_api_fallback_deployment):
 
     pos = control_api_get(base_url, "/api/control/position/node2")
     assert pos["position"]["x"] == pytest.approx(10.0)
+
+
+# =============================================================================
+# Group 6: Interface Active State
+# =============================================================================
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+@pytest.mark.fallback
+def test_interface_get_state_default(control_api_fallback_deployment):
+    """GET /api/control/interface returns is_active=true by default."""
+    _, _, base_url = control_api_fallback_deployment
+    data = control_api_get(base_url, "/api/control/interface/node1/eth1")
+    assert data["node"] == "node1"
+    assert data["interface"] == "eth1"
+    assert data["is_active"] is True
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+@pytest.mark.fallback
+def test_interface_disable(control_api_fallback_deployment):
+    """POST /api/control/interface sets is_active=false; GET confirms."""
+    _, _, base_url = control_api_fallback_deployment
+    data = control_api_post(
+        base_url,
+        "/api/control/interface",
+        {"node": "node1", "interface": "eth1", "is_active": False},
+    )
+    assert data["status"] == "success"
+    assert data["is_active"] is False
+
+    # Confirm via GET
+    get_data = control_api_get(base_url, "/api/control/interface/node1/eth1")
+    assert get_data["is_active"] is False
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+@pytest.mark.fallback
+def test_interface_reenable(control_api_fallback_deployment):
+    """Disable then re-enable; both state transitions confirmed via GET."""
+    _, _, base_url = control_api_fallback_deployment
+    # Disable
+    control_api_post(
+        base_url,
+        "/api/control/interface",
+        {"node": "node2", "interface": "eth1", "is_active": False},
+    )
+    assert control_api_get(base_url, "/api/control/interface/node2/eth1")[
+        "is_active"
+    ] is False
+
+    # Re-enable
+    control_api_post(
+        base_url,
+        "/api/control/interface",
+        {"node": "node2", "interface": "eth1", "is_active": True},
+    )
+    assert control_api_get(base_url, "/api/control/interface/node2/eth1")[
+        "is_active"
+    ] is True
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+@pytest.mark.fallback
+def test_interface_invalid_node(control_api_fallback_deployment):
+    """POST with unknown node returns 404."""
+    _, _, base_url = control_api_fallback_deployment
+    try:
+        control_api_post(
+            base_url,
+            "/api/control/interface",
+            {"node": "nonexistent", "interface": "eth1", "is_active": False},
+        )
+        raise AssertionError("Expected 404 but got success")
+    except urllib.error.HTTPError as e:
+        assert e.code == 404, f"Expected 404, got {e.code}"
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+@pytest.mark.fallback
+def test_interface_invalid_interface(control_api_fallback_deployment):
+    """POST with unknown interface returns 404."""
+    _, _, base_url = control_api_fallback_deployment
+    try:
+        control_api_post(
+            base_url,
+            "/api/control/interface",
+            {"node": "node1", "interface": "eth99", "is_active": False},
+        )
+        raise AssertionError("Expected 404 but got success")
+    except urllib.error.HTTPError as e:
+        assert e.code == 404, f"Expected 404, got {e.code}"
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_interface_fixed_only_node(control_api_fixed_deployment):
+    """POST on a fixed_netem interface returns 400."""
+    _, _, base_url = control_api_fixed_deployment
+    try:
+        control_api_post(
+            base_url,
+            "/api/control/interface",
+            {"node": "node1", "interface": "eth1", "is_active": False},
+        )
+        raise AssertionError("Expected 400 but got success")
+    except urllib.error.HTTPError as e:
+        assert e.code == 400, f"Expected 400, got {e.code}"
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+@pytest.mark.fallback
+def test_interface_get_invalid_node(control_api_fallback_deployment):
+    """GET with unknown node returns 404."""
+    _, _, base_url = control_api_fallback_deployment
+    try:
+        control_api_get(base_url, "/api/control/interface/ghost/eth1")
+        raise AssertionError("Expected 404 but got success")
+    except urllib.error.HTTPError as e:
+        assert e.code == 404, f"Expected 404, got {e.code}"
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+@pytest.mark.fallback
+def test_force_recompute(control_api_fallback_deployment):
+    """POST /api/control/recompute returns success and link states remain valid."""
+    _, _, base_url = control_api_fallback_deployment
+    links_before = control_api_get(base_url, "/api/emulation/links")["links"]
+    initial_snr = links_before[0]["snr_db"]
+
+    data = control_api_post(base_url, "/api/control/recompute", {})
+    assert data["status"] == "success"
+
+    # SNR unchanged (positions not moved)
+    links_after = control_api_get(base_url, "/api/emulation/links")["links"]
+    assert abs(links_after[0]["snr_db"] - initial_snr) < 1.0
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+@pytest.mark.fallback
+def test_interface_disable_triggers_recompute(control_api_fallback_deployment):
+    """
+    Disabling and re-enabling an interface triggers _update_all_links().
+
+    Uses POST /api/control/recompute to verify the recompute path is healthy
+    after a toggle sequence (no timing dependency on poll interval).
+    """
+    _, _, base_url = control_api_fallback_deployment
+    links_before = control_api_get(base_url, "/api/emulation/links")["links"]
+    initial_snr = links_before[0]["snr_db"]
+
+    # Disable then re-enable (each call internally triggers _update_all_links)
+    control_api_post(
+        base_url,
+        "/api/control/interface",
+        {"node": "node1", "interface": "eth1", "is_active": False},
+    )
+    control_api_post(
+        base_url,
+        "/api/control/interface",
+        {"node": "node1", "interface": "eth1", "is_active": True},
+    )
+
+    # Final explicit recompute to confirm pipeline is functional
+    recompute_data = control_api_post(base_url, "/api/control/recompute", {})
+    assert recompute_data["status"] == "success"
+
+    links_after = control_api_get(base_url, "/api/emulation/links")["links"]
+    assert abs(links_after[0]["snr_db"] - initial_snr) < 1.0, (
+        f"SNR changed unexpectedly: {initial_snr:.1f} → {links_after[0]['snr_db']:.1f} dB"
+    )
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+@pytest.mark.sionna
+def test_interface_disable_improves_sinr(control_api_sinr_deployment):
+    """
+    Disabling an interferer interface improves SINR on the node1→node2 link.
+
+    Topology: asym-triangle in vacuum.xml (free space, deterministic).
+    - node1 (0,0,1) ↔ node2 (30,0,1): 30m desired link → SINR ≈ 9-10 dB
+    - node3 (15,90,1): 91.2m interferer path → weaker interference
+    - After disabling node3:eth1: SINR → SNR ≈ 36 dB (improvement ≈ 26 dB)
+
+    Expected values from network.yaml comments and existing tests
+    (test_asym-triangle_connectivity.py):
+      - initial SINR (node1→node2, node3 active): ~9-10 dB
+      - SNR at 30m (no interference): ~36 dB
+      - Expected improvement on disable: ~26 dB
+
+    Note: POST /api/control/interface awaits _update_all_links() before returning,
+    so no sleep is needed between the toggle and the SINR check.
+    """
+    _, _, base_url = control_api_sinr_deployment
+
+    def get_sinr(node_a: str, node_b: str) -> float:
+        links = control_api_get(base_url, "/api/emulation/links")["links"]
+        return next(
+            lnk["sinr_db"]
+            for lnk in links
+            if lnk["tx_node"] == node_a and lnk["rx_node"] == node_b
+        )
+
+    initial_sinr = get_sinr("node1", "node2")
+    assert initial_sinr > 0.0, (
+        f"Expected positive initial SINR in asym-triangle; got {initial_sinr:.1f} dB"
+    )
+
+    # Disable node3 (91.2m interferer). POST awaits _update_all_links() before returning.
+    data = control_api_post(
+        base_url,
+        "/api/control/interface",
+        {"node": "node3", "interface": "eth1", "is_active": False},
+    )
+    assert data["status"] == "success"
+
+    new_sinr = get_sinr("node1", "node2")
+    assert new_sinr > initial_sinr + 5.0, (
+        f"SINR did not improve meaningfully after disabling interferer: "
+        f"{initial_sinr:.1f} → {new_sinr:.1f} dB (expected ≥ +5 dB, typical ≈ +26 dB)"
+    )
+
+    # Re-enable and verify SINR returns to near-initial value
+    control_api_post(
+        base_url,
+        "/api/control/interface",
+        {"node": "node3", "interface": "eth1", "is_active": True},
+    )
+
+    restored_sinr = get_sinr("node1", "node2")
+    assert abs(restored_sinr - initial_sinr) < 3.0, (
+        f"SINR did not restore to initial after re-enabling interferer: "
+        f"initial={initial_sinr:.1f} dB, restored={restored_sinr:.1f} dB"
+    )

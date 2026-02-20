@@ -1237,6 +1237,43 @@ class EmulationController:
                 # Recompute channels for all links involving this node
                 await self._update_all_links()
 
+    async def force_channel_recompute(self) -> None:
+        """
+        Force an immediate recompute of all link channels.
+
+        Useful after a series of control changes, or for diagnostic/debug
+        purposes. Same effect as `_update_all_links()` but exposed as a
+        public method for the Control API.
+        """
+        logger.info("Forcing channel recompute on all links")
+        await self._update_all_links()
+
+    async def update_interface_active(
+        self, node_name: str, interface: str, is_active: bool
+    ) -> None:
+        """
+        Enable or disable a wireless interface and recompute affected channels.
+
+        When disabled, the interface is excluded from SINR interference calculations
+        on subsequent channel recomputes. The physical link is not removed.
+
+        Args:
+            node_name: Name of the node
+            interface: Interface name (e.g., "eth1")
+            is_active: True to enable, False to disable
+        """
+        node = self.config.topology.nodes.get(node_name)
+        if node and node.interfaces and interface in node.interfaces:
+            iface_config = node.interfaces[interface]
+            if iface_config.wireless:
+                if iface_config.wireless.is_active == is_active:
+                    return  # No-op: skip unnecessary channel recompute
+                iface_config.wireless.is_active = is_active
+                logger.info(
+                    f"Set {node_name}:{interface} is_active={is_active}"
+                )
+                await self._update_all_links()
+
     def get_link_status(self) -> dict[str, dict]:
         """
         Get current status of all wireless links.
