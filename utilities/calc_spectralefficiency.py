@@ -259,7 +259,7 @@ def compute_link_metrics(
     # Call channel server
     try:
         with httpx.Client(timeout=30.0) as client:
-            response = client.post(f"{channel_server_url}/compute/single", json=payload)
+            response = client.post(f"{channel_server_url}/compute/link", json=payload)
             response.raise_for_status()
             data = response.json()
     except httpx.HTTPError as e:

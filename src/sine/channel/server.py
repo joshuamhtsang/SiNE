@@ -5,13 +5,14 @@ Provides REST API endpoints for computing wireless channel parameters
 using Sionna ray tracing. Returns netem parameters for network emulation.
 
 Endpoints:
-- POST /compute/single - Compute channel for single link
-- POST /compute/batch - Compute channels for multiple links (efficient)
-- POST /compute/sinr - Compute SINR with multi-transmitter interference (Phase 1)
+- POST /compute/link - Compute channel for single link
+- POST /compute/links_snr - Independent per-link SNR (no interference, O(N))
+- POST /compute/links_sinr - Interference-aware topology SINR (O(N²))
+- POST /compute/interference - Compute SINR with explicit TX/RX/interferers
 - POST /scene/load - Load/reload ray tracing scene
 - POST /debug/paths - Get detailed path info for debugging (vertices, interactions)
 - GET /health - Health check with GPU status
-- GET /api/visualization/state - Get cached visualization data (scene, devices, paths)
+- GET /visualization/state - Get cached visualization data (scene, devices, paths)
 """
 
 import logging
@@ -22,38 +23,34 @@ from enum import Enum
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-from sine.channel.sionna_engine import get_engine, is_sionna_available, PathResult, PathDetails, SinglePathInfo
+from sine.channel.sionna_engine import is_sionna_available, PathResult, PathDetails
+from sine.channel.path_cache import PathCache
+from sine.channel.engine_registry import EngineRegistry
+from sine.channel.links_sinr_computer import LinksSinrComputer
 from sine.channel.snr import SNRCalculator
 from sine.channel.modulation import BERCalculator, BLERCalculator, get_bits_per_symbol
 from sine.channel.per_calculator import PERCalculator
-from sine.channel.mcs import MCSTable, MCSEntry
-from sine.channel.sinr import SINRCalculator, SINRResult, calculate_thermal_noise
+from sine.channel.mcs import MCSTable
+from sine.channel.sinr import SINRCalculator, calculate_thermal_noise
 from sine.channel.interference_engine import InterferenceEngine, TransmitterInfo
-from sine.channel.frequency_groups import group_nodes_by_frequency
-from sine.channel.csma_model import CSMAModel
-from sine.channel.tdma_model import TDMAModel, TDMASlotConfig, SlotAssignmentMode
-import math
 
 logger = logging.getLogger(__name__)
 
 # Global MCS table cache
 _mcs_tables: dict[str, MCSTable] = {}
 
-# Global engine instances
-_engine = None  # Auto-selected engine (Sionna if available)
-_fallback_engine = None  # Explicit fallback engine
-_force_fallback_mode = False  # CLI flag: force fallback-only mode (disable Sionna)
+# Global engine registry
+_engine_registry = EngineRegistry()
 
-# Global interference engine (for SINR computation)
+# Global links SINR computer (encapsulates interference engine + SINR calculator)
+_links_sinr_computer = LinksSinrComputer()
+
+# Global path cache for visualization
+_path_cache_obj = PathCache()
+
+# Global interference engine and SINR calculator for /compute/interference endpoint
 _interference_engine: InterferenceEngine | None = None
-_interference_engine_scene_key: tuple | None = None  # (scene_file, freq_hz, bw_hz)
-
-# Global SINR calculator
 _sinr_calculator: SINRCalculator | None = None
-
-# Global path cache for visualization (stores computed paths from channel computations)
-_path_cache: dict[str, dict] = {}  # {link_id: {tx_pos, rx_pos, path_details, wireless_metrics}}
-_device_positions: dict[str, tuple[float, float, float]] = {}  # {device_name: (x,y,z)}
 
 
 @asynccontextmanager
@@ -225,22 +222,29 @@ class ChannelResponse(BaseModel):
     throughput_multiplier: float | None = None  # TDMA: Slot ownership fraction
 
 
-class BatchChannelRequest(BaseModel):
-    """Request to compute channels for multiple links."""
+class LinksSnrRequest(BaseModel):
+    """Request to compute independent per-link SNR (no interference)."""
 
     scene: SceneConfig = Field(default_factory=SceneConfig)
     links: list[WirelessLinkRequest]
-    enable_sinr: bool = Field(
-        default=False,
-        description="Enable SINR computation with interference"
-    )
     active_states: dict[str, bool] = Field(
         default_factory=dict,
         description="Interface active states ('node:interface' -> is_active, e.g. 'node1:eth1' -> True)"
     )
 
 
-class BatchChannelResponse(BaseModel):
+class LinksSinrRequest(BaseModel):
+    """Request to compute interference-aware SINR across a topology."""
+
+    scene: SceneConfig = Field(default_factory=SceneConfig)
+    links: list[WirelessLinkRequest]
+    active_states: dict[str, bool] = Field(
+        default_factory=dict,
+        description="Interface active states ('node:interface' -> is_active, e.g. 'node1:eth1' -> True)"
+    )
+
+
+class LinksResponse(BaseModel):
     """Response with results for multiple links."""
 
     results: list[ChannelResponse]
@@ -301,7 +305,7 @@ class PathDetailsResponse(BaseModel):
     shortest_path: SinglePathInfoResponse | None
 
 
-class SINRLinkRequest(BaseModel):
+class InterferenceRequest(BaseModel):
     """Request to compute SINR for a single link with interference."""
 
     # Target link (signal)
@@ -346,7 +350,7 @@ class InterfererInfo(BaseModel):
     is_active: bool = Field(default=True, description="Whether this interferer is currently transmitting")
 
 
-class SINRResponse(BaseModel):
+class InterferenceResponse(BaseModel):
     """Response with SINR computation results."""
 
     tx_node: str
@@ -376,197 +380,6 @@ class SINRResponse(BaseModel):
 # ============================================================================
 # Helper Functions
 # ============================================================================
-
-
-def get_engine_for_request(engine_type: EngineType = EngineType.AUTO):
-    """
-    Get channel engine based on requested type.
-
-    Args:
-        engine_type: Engine selection (AUTO, SIONNA, or FALLBACK)
-
-    Returns:
-        Appropriate ChannelEngine instance
-
-    Raises:
-        SionnaUnavailableError: If SIONNA requested but unavailable
-        HTTPException: If SIONNA requested but server in force-fallback mode
-    """
-    from sine.channel.sionna_engine import SionnaEngine, FallbackEngine
-
-    global _engine, _fallback_engine, _force_fallback_mode
-
-    # Check force-fallback mode first (strict: reject Sionna requests)
-    if _force_fallback_mode:
-        if engine_type == EngineType.SIONNA:
-            raise HTTPException(
-                status_code=400,
-                detail="Server in fallback-only mode (started with --force-fallback). Sionna engine not available."
-            )
-        # Force all AUTO requests to use fallback
-        if _fallback_engine is None:
-            _fallback_engine = FallbackEngine()
-        return _fallback_engine
-
-    if engine_type == EngineType.AUTO:
-        # Current behavior: auto-select with graceful fallback
-        if _engine is None:
-            if is_sionna_available():
-                _engine = SionnaEngine()
-            else:
-                logger.warning("Sionna unavailable, using fallback FSPL engine")
-                _engine = FallbackEngine()
-        return _engine
-
-    elif engine_type == EngineType.SIONNA:
-        # Explicit Sionna request
-        if not is_sionna_available():
-            raise SionnaUnavailableError()
-        if _engine is None or isinstance(_engine, FallbackEngine):
-            _engine = SionnaEngine()
-        return _engine
-
-    elif engine_type == EngineType.FALLBACK:
-        # Explicit fallback request
-        if _fallback_engine is None:
-            _fallback_engine = FallbackEngine()
-        return _fallback_engine
-
-    else:
-        raise ValueError(f"Unknown engine_type: {engine_type}")
-
-
-def calculate_k_factor(path_details: PathDetails) -> float | None:
-    """
-    Calculate Rician K-factor (LOS/NLOS power ratio).
-
-    K = P_LOS / P_NLOS
-    K_dB = 10×log10(K)
-
-    The K-factor characterizes the channel type:
-    - K > 10 dB: Strong LOS component (low fading variance)
-    - 0 < K < 10 dB: Mixed LOS + multipath
-    - K < 0 dB: NLOS dominant (Rayleigh-like fading)
-    - None: No LOS path exists
-
-    Args:
-        path_details: PathDetails object with propagation path information
-
-    Returns:
-        K-factor in dB, or None if no LOS path exists
-    """
-    import numpy as np
-
-    los_paths = [p for p in path_details.paths if p.is_los]
-    nlos_paths = [p for p in path_details.paths if not p.is_los]
-
-    if not los_paths:
-        return None
-
-    # Convert dB to linear power
-    p_los = 10 ** (los_paths[0].power_db / 10)
-    p_nlos_total = sum(10 ** (p.power_db / 10) for p in nlos_paths)
-
-    if p_nlos_total < 1e-20:
-        return 100.0  # Very strong LOS, weak multipath
-
-    k_linear = p_los / p_nlos_total
-    k_db = 10 * np.log10(k_linear)
-
-    return float(k_db)
-
-
-def cache_path_for_visualization(
-    tx_node: str,
-    rx_node: str,
-    tx_pos: tuple[float, float, float],
-    rx_pos: tuple[float, float, float],
-    path_result: PathResult,
-    path_details: PathDetails,
-    bandwidth_hz: float
-) -> None:
-    """
-    Cache computed path data for visualization.
-
-    This function extracts and stores path information including wireless
-    channel metrics (K-factor, coherence bandwidth, delay spread) for later
-    retrieval by the visualization endpoint.
-
-    Args:
-        tx_node: Transmitter node name
-        rx_node: Receiver node name
-        tx_pos: Transmitter position (x, y, z)
-        rx_pos: Receiver position (x, y, z)
-        path_result: Ray tracing path computation results
-        path_details: Detailed path information with vertices and interactions
-        bandwidth_hz: Channel bandwidth in Hz
-    """
-    global _path_cache, _device_positions
-
-    logger.info(f"Caching visualization data for link {tx_node}->{rx_node}")
-
-    try:
-        # Create link identifier (tx_node -> rx_node)
-        link_id = f"{tx_node}->{rx_node}"
-
-        # Calculate Rician K-factor (LOS/NLOS characterization)
-        k_factor_db = calculate_k_factor(path_details)
-
-        # Calculate coherence bandwidth from RMS delay spread
-        # Bc ≈ 1/(5×τ_rms) - indicates frequency selectivity
-        if path_result.delay_spread_ns > 0:
-            coherence_bw_hz = 1.0 / (5.0 * path_result.delay_spread_ns * 1e-9)
-        else:
-            coherence_bw_hz = bandwidth_hz  # No multipath, flat channel
-
-        # Limit to 5 strongest paths for visualization
-        sorted_paths = sorted(path_details.paths, key=lambda p: p.power_db, reverse=True)
-        limited_paths = sorted_paths[:5]
-
-        # Calculate power coverage of shown paths
-        total_power_linear = sum(10**(p.power_db/10) for p in path_details.paths)
-        shown_power_linear = sum(10**(p.power_db/10) for p in limited_paths)
-        power_coverage_pct = 100 * shown_power_linear / total_power_linear if total_power_linear > 0 else 0
-
-        # Convert to JSON-serializable format
-        paths_data = [{
-            "delay_ns": float(p.delay_ns),
-            "power_db": float(p.power_db),
-            "vertices": [[float(v[0]), float(v[1]), float(v[2])] for v in p.vertices],
-            "interaction_types": p.interaction_types,
-            "is_los": p.is_los,
-            "doppler_hz": None,  # TODO: Extract from Sionna in Phase 2
-        } for p in limited_paths]
-
-        _path_cache[link_id] = {
-            "tx_name": tx_node,
-            "rx_name": rx_node,
-            "tx_position": [tx_pos[0], tx_pos[1], tx_pos[2]],
-            "rx_position": [rx_pos[0], rx_pos[1], rx_pos[2]],
-            "distance_m": float(path_details.distance_m),
-            "num_paths_total": path_details.num_paths,
-            "num_paths_shown": len(paths_data),
-            "power_coverage_percent": float(power_coverage_pct),
-
-            # Wireless channel metrics
-            "rms_delay_spread_ns": float(path_result.delay_spread_ns),
-            "coherence_bandwidth_hz": float(coherence_bw_hz),
-            "k_factor_db": float(k_factor_db) if k_factor_db is not None else None,
-            "dominant_path_type": path_result.dominant_path_type,
-
-            "paths": paths_data
-        }
-
-        # Also store device positions
-        _device_positions[tx_node] = tx_pos
-        _device_positions[rx_node] = rx_pos
-
-        logger.info(f"Cached {len(paths_data)} paths for link {link_id}. Total cache size: {len(_path_cache)}")
-
-    except Exception as e:
-        logger.warning(f"Failed to cache paths for visualization: {e}")
-        import traceback
-        logger.warning(traceback.format_exc())
 
 
 def get_or_load_mcs_table(path: str, hysteresis_db: float = 2.0) -> MCSTable:
@@ -623,490 +436,6 @@ def _validate_channel_result(
                 f"Path loss ({path_loss_db:.1f} dB) less than FSPL "
                 f"({fspl:.1f} dB) - physics violation"
             )
-
-
-def estimate_communication_range(
-    tx_power_dbm: float,
-    frequency_hz: float,
-    bandwidth_hz: float,
-    tx_gain_dbi: float = 0.0,
-    rx_gain_dbi: float = 0.0,
-    min_snr_db: float = 10.0,
-    noise_figure_db: float = 7.0,
-) -> float:
-    """
-    Estimate communication range from link budget.
-
-    Finds the distance where SNR drops to min_snr_db threshold.
-    Uses free-space path loss (FSPL) model for conservative estimate.
-
-    Args:
-        tx_power_dbm: Transmit power in dBm
-        frequency_hz: Carrier frequency in Hz
-        bandwidth_hz: Channel bandwidth in Hz
-        tx_gain_dbi: TX antenna gain in dBi (default: 0)
-        rx_gain_dbi: RX antenna gain in dBi (default: 0)
-        min_snr_db: Minimum SNR threshold for communication (default: 10 dB)
-        noise_figure_db: Receiver noise figure (default: 7 dB)
-
-    Returns:
-        Estimated communication range in meters
-    """
-    # Thermal noise power: -174 dBm/Hz + 10*log10(BW) + NF
-    noise_floor_dbm = -174.0 + 10.0 * math.log10(bandwidth_hz) + noise_figure_db
-
-    # Required RX power for min_snr_db
-    min_rx_power_dbm = noise_floor_dbm + min_snr_db
-
-    # Maximum allowable path loss
-    max_path_loss_db = tx_power_dbm + tx_gain_dbi + rx_gain_dbi - min_rx_power_dbm
-
-    # FSPL formula: PL = 20*log10(d) + 20*log10(f) - 147.55
-    # Solve for d: d = 10^((PL - 20*log10(f) + 147.55) / 20)
-    frequency_ghz = frequency_hz / 1e9
-    log_distance = (max_path_loss_db - 20.0 * math.log10(frequency_ghz * 1e9) + 147.55) / 20.0
-    communication_range_m = 10.0 ** log_distance
-
-    logger.info(
-        f"Estimated communication range: {communication_range_m:.1f} m "
-        f"(TX={tx_power_dbm} dBm, f={frequency_ghz:.2f} GHz, "
-        f"BW={bandwidth_hz/1e6:.0f} MHz, min_SNR={min_snr_db} dB)"
-    )
-
-    return communication_range_m
-
-
-def _is_iface_active(
-    iface_key: str, active_states: dict[str, bool]
-) -> bool:
-    """Check if an interface is active.
-
-    Args:
-        iface_key: Interface key ("node:iface" or "node").
-        active_states: Map of "node:interface" -> is_active.
-
-    Returns:
-        True if active (defaults to True if not in active_states).
-    """
-    if not active_states:
-        return True
-    # Direct match (e.g., "node1:eth1")
-    if iface_key in active_states:
-        return active_states[iface_key]
-    # If key is just a node name, check if any interface is active
-    matching = [
-        v for k, v in active_states.items()
-        if k.startswith(f"{iface_key}:")
-    ]
-    if matching:
-        return any(matching)
-    return True  # No info, assume active
-
-
-async def _compute_batch_with_sinr(
-    links: list[WirelessLinkRequest],
-    mac_model_config: MACModel | None,
-    scene_config: SceneConfig,
-    engine_used: EngineType,
-    active_states: dict[str, bool],
-) -> list[ChannelResponse]:
-    """
-    Compute channels for multiple links with SINR (interference-aware).
-
-    This function handles interference-aware SINR computation, optionally using
-    CSMA or TDMA statistical models for transmission probability weighting.
-
-    Args:
-        links: List of link requests
-        mac_model_config: MAC model configuration (CSMA or TDMA), or None for worst-case (tx_prob=1.0)
-        scene_config: Scene configuration
-        engine_used: Engine type used
-        active_states: Dictionary of interface active states ('node:interface' -> is_active)
-
-    Returns:
-        List of channel responses with SINR and MAC metadata
-    """
-    global _engine, _interference_engine, _sinr_calculator, _interference_engine_scene_key
-
-    if mac_model_config is not None:
-        logger.info(f"Computing {len(links)} links with {mac_model_config.type.upper()} MAC model")
-    else:
-        logger.info(f"Computing {len(links)} links with SINR (no MAC model, worst-case tx_probability=1.0)")
-
-    # Clear MCS hysteresis state to prevent stale per-link MCS history from
-    # previous deployments affecting new computations. Without this, a prior
-    # test that set MCS to a low value could prevent upgrades due to hysteresis.
-    for mcs_table in _mcs_tables.values():
-        mcs_table.reset_hysteresis()
-
-    # Initialize interference engine, reloading scene only when config changes.
-    # Avoids expensive Sionna scene parsing on every batch while still handling
-    # different deployments (e.g., different test topologies sharing the same
-    # channel server process).
-    scene_key = (scene_config.scene_file, scene_config.frequency_hz, scene_config.bandwidth_hz)
-    if _interference_engine is None:
-        _interference_engine = InterferenceEngine()
-    if scene_key != _interference_engine_scene_key:
-        _interference_engine.load_scene(
-            scene_path=scene_config.scene_file,
-            frequency_hz=scene_config.frequency_hz,
-            bandwidth_hz=scene_config.bandwidth_hz,
-        )
-        _interference_engine_scene_key = scene_key
-
-    # Initialize SINR calculator if needed
-    if _sinr_calculator is None:
-        _sinr_calculator = SINRCalculator()
-
-    # Detect interface-level mode (multi-interface nodes on shared bridge)
-    has_interface_info = any(link.tx_interface is not None for link in links)
-
-    # Collect positions, powers, gains, frequencies keyed by interface key.
-    # When interface info is available: key = "node:iface" (e.g., "node1:eth1")
-    # When not available (backward compat): key = "node" (e.g., "node1")
-    iface_positions: dict[str, tuple[float, float, float]] = {}
-    iface_powers: dict[str, float] = {}
-    iface_gains: dict[str, float] = {}
-    iface_tx_frequencies: dict[str, float] = {}
-    iface_tx_bandwidths: dict[str, float] = {}
-    iface_antenna_patterns: dict[str, str] = {}
-    iface_polarizations: dict[str, str] = {}
-    # Map interface key -> node name (for same-node exclusion)
-    iface_to_node: dict[str, str] = {}
-    all_iface_keys: set[str] = set()
-    # Keep track of all node names too (for MAC models and backward compat)
-    all_nodes: set[str] = set()
-
-    for link in links:
-        tx_key = link.iface_key()
-        rx_key = link.rx_iface_key()
-
-        iface_positions[tx_key] = link.tx_position.as_tuple()
-        iface_positions[rx_key] = link.rx_position.as_tuple()
-        iface_powers[tx_key] = link.tx_power_dbm
-        iface_gains[tx_key] = link.tx_gain_dbi
-        iface_gains[rx_key] = link.rx_gain_dbi
-        iface_tx_frequencies[tx_key] = link.frequency_hz
-        iface_tx_bandwidths[tx_key] = link.bandwidth_hz
-        iface_antenna_patterns[tx_key] = link.antenna_pattern
-        iface_polarizations[tx_key] = link.polarization
-        iface_to_node[tx_key] = link.tx_node
-        iface_to_node[rx_key] = link.rx_node
-        all_iface_keys.add(tx_key)
-        all_iface_keys.add(rx_key)
-        all_nodes.add(link.tx_node)
-        all_nodes.add(link.rx_node)
-
-    # Instantiate MAC model (if configured)
-    mac_model = None
-    if mac_model_config is not None:
-        if mac_model_config.type == "csma":
-            mac_model = CSMAModel(
-                carrier_sense_range_multiplier=mac_model_config.carrier_sense_range_multiplier or 2.5,
-                default_traffic_load=mac_model_config.traffic_load or 0.3,
-            )
-        elif mac_model_config.type == "tdma":
-            tdma_config = TDMASlotConfig(
-                frame_duration_ms=mac_model_config.frame_duration_ms or 10.0,
-                num_slots=mac_model_config.num_slots or 10,
-                slot_assignment_mode=SlotAssignmentMode(mac_model_config.slot_assignment_mode or "round_robin"),
-                fixed_slot_map=mac_model_config.fixed_slot_map,
-                slot_probability=mac_model_config.slot_probability or 0.1,
-            )
-            mac_model = TDMAModel(tdma_config)
-        else:
-            raise ValueError(f"Unknown MAC model type: {mac_model_config.type}")
-
-    # Compute channels for each link
-    results = []
-    for link in links:
-        try:
-            # Compute signal path (TX -> RX)
-            _engine.clear_devices()
-            tx_pos = link.tx_position.as_tuple()
-            rx_pos = link.rx_position.as_tuple()
-
-            _engine.add_transmitter(
-                name=link.tx_node,
-                position=tx_pos,
-                antenna_pattern=link.antenna_pattern,
-                polarization=link.polarization,
-            )
-            _engine.add_receiver(
-                name=link.rx_node,
-                position=rx_pos,
-                antenna_pattern=link.antenna_pattern,
-                polarization=link.polarization,
-            )
-
-            # Get path result for signal
-            path_result = _engine.compute_paths()
-
-            # Cache paths for visualization
-            path_details = _engine.get_path_details()
-            cache_path_for_visualization(
-                tx_node=link.tx_node,
-                rx_node=link.rx_node,
-                tx_pos=tx_pos,
-                rx_pos=rx_pos,
-                path_result=path_result,
-                path_details=path_details,
-                bandwidth_hz=link.bandwidth_hz
-            )
-
-            # Compute signal power using SNR calculator
-            snr_calc = SNRCalculator(
-                bandwidth_hz=link.bandwidth_hz,
-                noise_figure_db=link.noise_figure_db,
-            )
-            signal_power_dbm, snr_db = snr_calc.calculate_link_snr(
-                tx_power_dbm=link.tx_power_dbm,
-                tx_gain_dbi=link.tx_gain_dbi,
-                rx_gain_dbi=link.rx_gain_dbi,
-                path_loss_db=path_result.path_loss_db,
-                from_sionna=True,
-            )
-
-            # Compute noise power
-            noise_power_dbm = calculate_thermal_noise(
-                bandwidth_hz=link.bandwidth_hz,
-                noise_figure_db=link.noise_figure_db,
-            )
-
-            # Identify interferers: exclude TX/RX and same-node interfaces
-            # (same-node cross-band coupling handled by controller's
-            # self_isolation_db model, not ray tracing)
-            tx_key = link.iface_key()
-            rx_key = link.rx_iface_key()
-            active_interferer_keys = [
-                k for k in all_iface_keys
-                if k != tx_key
-                and k != rx_key
-                and iface_to_node[k] != link.tx_node
-                and iface_to_node[k] != link.rx_node
-                and _is_iface_active(k, active_states)
-            ]
-
-            # Node names for MAC models
-            active_interferer_nodes = list({
-                iface_to_node[k] for k in active_interferer_keys
-            })
-
-            if mac_model_config is not None:
-                if mac_model_config.type == "csma":
-                    communication_range = estimate_communication_range(
-                        tx_power_dbm=link.tx_power_dbm,
-                        frequency_hz=link.frequency_hz,
-                        bandwidth_hz=link.bandwidth_hz,
-                        tx_gain_dbi=link.tx_gain_dbi,
-                        rx_gain_dbi=link.rx_gain_dbi,
-                        min_snr_db=mac_model_config.communication_range_snr_threshold_db or 20.0,
-                        noise_figure_db=7.0,
-                    )
-                    # MAC models use node-level positions
-                    node_positions = {
-                        iface_to_node[k]: iface_positions[k]
-                        for k in iface_positions
-                    }
-                    interference_probs = mac_model.compute_interference_probabilities(
-                        tx_node=link.tx_node,
-                        rx_node=link.rx_node,
-                        interferer_nodes=active_interferer_nodes,
-                        positions=node_positions,
-                        communication_range=communication_range,
-                        traffic_load=mac_model_config.traffic_load,
-                    )
-                    logger.info(
-                        "CSMA %s→%s: comm_range=%.1fm, cs_range=%.1fm, "
-                        "interference_probs=%s",
-                        link.tx_node, link.rx_node,
-                        communication_range,
-                        communication_range * (mac_model_config.carrier_sense_range_multiplier or 2.5),
-                        {k: f"{v:.2f}" for k, v in interference_probs.items()},
-                    )
-                elif mac_model_config.type == "tdma":
-                    interference_probs = mac_model.compute_interference_probabilities(
-                        tx_node=link.tx_node,
-                        rx_node=link.rx_node,
-                        interferer_nodes=active_interferer_nodes,
-                        all_nodes=list(all_nodes),
-                    )
-                else:
-                    interference_probs = {}
-            else:
-                interference_probs = {
-                    iface_to_node[k]: 1.0
-                    for k in active_interferer_keys
-                }
-                logger.debug(
-                    "No MAC model. Worst-case tx_probability=1.0 "
-                    "for %d active interferers.",
-                    len(active_interferer_keys),
-                )
-
-            # Build TransmitterInfo list from active interferer keys
-            interferer_infos = []
-            for ikey in active_interferer_keys:
-                if ikey in iface_positions and ikey in iface_powers:
-                    interferer_infos.append(
-                        TransmitterInfo(
-                            node_name=iface_to_node[ikey],
-                            position=iface_positions[ikey],
-                            tx_power_dbm=iface_powers[ikey],
-                            antenna_pattern=iface_antenna_patterns.get(
-                                ikey, "iso"
-                            ),
-                            polarization=iface_polarizations.get(
-                                ikey, "V"
-                            ),
-                            frequency_hz=iface_tx_frequencies.get(
-                                ikey, link.frequency_hz
-                            ),
-                            bandwidth_hz=iface_tx_bandwidths.get(
-                                ikey, link.bandwidth_hz
-                            ),
-                        )
-                    )
-
-            # Active states for interference engine
-            iface_active_states = {
-                iface_to_node[k]: True
-                for k in active_interferer_keys
-            }
-
-            # Use RX frequency for ACLR calculation (defaults to TX frequency if not specified)
-            rx_freq_hz = link.rx_frequency_hz if link.rx_frequency_hz is not None else link.frequency_hz
-            rx_bw_hz = link.rx_bandwidth_hz if link.rx_bandwidth_hz is not None else link.bandwidth_hz
-
-            interference_result = _interference_engine.compute_interference_at_receiver(
-                rx_position=rx_pos,
-                rx_antenna_gain_dbi=link.rx_gain_dbi,
-                rx_node=link.rx_node,
-                interferers=interferer_infos,
-                active_states=iface_active_states,
-                rx_frequency_hz=rx_freq_hz,
-                rx_bandwidth_hz=rx_bw_hz,
-                rx_antenna_pattern=link.antenna_pattern,  # FIX: Pass RX antenna pattern
-                rx_polarization=link.polarization,        # FIX: Pass RX polarization
-            )
-
-            # Pass all interference terms to SINR calculator
-            # The MAC-specific methods will apply probability scaling internally
-            interference_terms_list = list(interference_result.interference_terms)
-
-            # Compute SINR using MAC-specific methods (or basic SINR if no MAC model)
-            if mac_model_config is not None:
-                if mac_model_config.type == "csma":
-                    # CSMA model: Use probabilistic interference
-                    sinr_result, mac_metadata = _sinr_calculator.calculate_sinr_with_csma(
-                        tx_node=link.tx_node,
-                        rx_node=link.rx_node,
-                        signal_power_dbm=signal_power_dbm,
-                        noise_power_dbm=noise_power_dbm,
-                        interference_terms=interference_terms_list,
-                        interference_probs=interference_probs,
-                    )
-                elif mac_model_config.type == "tdma":
-                    # TDMA model: Use slot-based interference
-                    sinr_result, mac_metadata = _sinr_calculator.calculate_sinr_with_tdma(
-                        tx_node=link.tx_node,
-                        rx_node=link.rx_node,
-                        signal_power_dbm=signal_power_dbm,
-                        noise_power_dbm=noise_power_dbm,
-                        interference_terms=interference_terms_list,
-                        interference_probs=interference_probs,
-                    )
-                else:
-                    # Unknown MAC model type
-                    logger.warning(f"Unknown MAC model type: {mac_model_config.type}")
-                    sinr_result = _sinr_calculator.calculate_sinr(
-                        tx_node=link.tx_node,
-                        rx_node=link.rx_node,
-                        signal_power_dbm=signal_power_dbm,
-                        noise_power_dbm=noise_power_dbm,
-                        interference_terms=interference_terms_list,
-                    )
-                    mac_metadata = {}
-            else:
-                # No MAC model: Use basic SINR with worst-case tx_probability=1.0
-                sinr_result = _sinr_calculator.calculate_sinr(
-                    tx_node=link.tx_node,
-                    rx_node=link.rx_node,
-                    signal_power_dbm=signal_power_dbm,
-                    noise_power_dbm=noise_power_dbm,
-                    interference_terms=interference_terms_list,
-                )
-                mac_metadata = {}
-
-            # Use SINR instead of SNR for MCS selection and BER/BLER/PER calculation
-            effective_snr = sinr_result.sinr_db
-
-            # DEBUG: Log SINR computation details
-            logger.warning(
-                f"SINR DEBUG: {link.tx_node}→{link.rx_node} | "
-                f"SNR={snr_db:.1f} dB, SINR={effective_snr:.1f} dB, "
-                f"Signal={sinr_result.signal_power_dbm:.1f} dBm, "
-                f"Noise={sinr_result.noise_power_dbm:.1f} dBm, "
-                f"Interference={sinr_result.total_interference_dbm:.1f} dBm, "
-                f"Interferers={sinr_result.num_interferers}"
-            )
-
-            # Compute channel parameters using SINR for MAC-aware MCS selection
-            result = compute_channel_for_link(
-                link,
-                path_result,
-                engine_used=engine_used,
-                effective_metric_db=effective_snr  # Pass SINR for accurate MCS selection
-            )
-
-            # Override SNR with SINR and add MAC metadata
-            result.snr_db = snr_db  # Keep original SNR (without interference)
-            result.sinr_db = effective_snr  # Add SINR (with interference)
-
-            if mac_model_config is not None:
-                result.mac_model_type = mac_model_config.type
-
-                # Extract MAC-specific metadata from SINR calculation
-                if mac_model_config.type == "csma":
-                    result.hidden_nodes = mac_metadata.get("num_hidden_nodes", 0)
-                    result.expected_interference_dbm = mac_metadata.get("expected_interference_dbm")
-                elif mac_model_config.type == "tdma":
-                    result.throughput_multiplier = mac_model.get_throughput_multiplier(
-                        link.tx_node, all_nodes=list(all_nodes)
-                    )
-                    # Apply TDMA slot ownership to rate limit
-                    result.netem_rate_mbps = result.netem_rate_mbps * result.throughput_multiplier
-            else:
-                # No MAC model: SINR computed with worst-case tx_probability=1.0
-                result.mac_model_type = None
-
-            results.append(result)
-
-        except Exception as e:
-            logger.error(f"Failed to compute SINR for {link.tx_node}->{link.rx_node}: {e}", exc_info=True)
-            # Add error result
-            results.append(
-                ChannelResponse(
-                    tx_node=link.tx_node,
-                    rx_node=link.rx_node,
-                    path_loss_db=200.0,
-                    num_paths=0,
-                    dominant_path_type="error",
-                    delay_spread_ns=0.0,
-                    received_power_dbm=-200.0,
-                    snr_db=-50.0,
-                    ber=0.5,
-                    bler=1.0,
-                    per=1.0,
-                    netem_delay_ms=0.0,
-                    netem_jitter_ms=0.0,
-                    netem_loss_percent=100.0,
-                    netem_rate_mbps=0.1,
-                    mac_model_type=mac_model_config.type,
-                )
-            )
-
-    return results
 
 
 def compute_channel_for_link(
@@ -1318,7 +647,10 @@ async def health_check():
         status="healthy",
         sionna_available=is_sionna_available(),
         gpu_available=gpu_available,
-        scene_loaded=_engine is not None and getattr(_engine, "_scene_loaded", False),
+        scene_loaded=(
+            _engine_registry.primary_engine is not None
+            and getattr(_engine_registry.primary_engine, "_scene_loaded", False)
+        ),
     )
 
 
@@ -1329,13 +661,10 @@ async def load_scene(config: SceneConfig) -> SceneLoadResponse:
 
     Call this before computing channels.
     """
-    global _engine
-
-    if _engine is None:
-        _engine = get_engine()
+    engine = _engine_registry.get("auto")
 
     try:
-        _engine.load_scene(
+        engine.load_scene(
             scene_path=config.scene_file,
             frequency_hz=config.frequency_hz,
             bandwidth_hz=config.bandwidth_hz,
@@ -1355,61 +684,58 @@ async def load_scene(config: SceneConfig) -> SceneLoadResponse:
         ) from e
 
 
-@app.post("/compute/single", response_model=ChannelResponse)
+def _run_single_path(
+    engine,
+    link,
+    path_cache: PathCache,
+) -> tuple[PathResult, PathDetails]:
+    """Clear devices, compute paths for one link, cache results, and return (path_result, path_details)."""
+    engine.clear_devices()
+    tx_pos = link.tx_position.as_tuple()
+    rx_pos = link.rx_position.as_tuple()
+
+    engine.add_transmitter(
+        name=link.tx_node,
+        position=tx_pos,
+        antenna_pattern=link.antenna_pattern,
+        polarization=link.polarization,
+    )
+    engine.add_receiver(
+        name=link.rx_node,
+        position=rx_pos,
+        antenna_pattern=link.antenna_pattern,
+        polarization=link.polarization,
+    )
+
+    path_result = engine.compute_paths()
+    path_details = engine.get_path_details()
+
+    path_cache.store(
+        tx_node=link.tx_node,
+        rx_node=link.rx_node,
+        tx_pos=tx_pos,
+        rx_pos=rx_pos,
+        path_result=path_result,
+        path_details=path_details,
+        bandwidth_hz=link.bandwidth_hz,
+    )
+
+    return path_result, path_details
+
+
+@app.post("/compute/link", response_model=ChannelResponse)
 async def compute_single_link(request: WirelessLinkRequest):
     """Compute channel parameters for a single wireless link."""
-    from sine.channel.sionna_engine import SionnaEngine, FallbackEngine
-
-    global _path_cache, _device_positions
-
     # Get engine based on request type
-    engine = get_engine_for_request(request.engine_type)
-
-    # Determine which engine type was actually used
-    if isinstance(engine, SionnaEngine):
-        engine_used = EngineType.SIONNA
-    elif isinstance(engine, FallbackEngine):
-        engine_used = EngineType.FALLBACK
-    else:
-        engine_used = EngineType.AUTO  # Fallback for unknown types
+    engine = _engine_registry.get(request.engine_type.value)
+    engine_used = EngineType(engine.engine_type)
 
     # Ensure scene is loaded
     if not getattr(engine, "_scene_loaded", False):
         engine.load_scene(frequency_hz=request.frequency_hz, bandwidth_hz=request.bandwidth_hz)
 
     try:
-        # Clear previous devices and add new ones
-        engine.clear_devices()
-        tx_pos = request.tx_position.as_tuple()
-        rx_pos = request.rx_position.as_tuple()
-
-        engine.add_transmitter(
-            name=request.tx_node,
-            position=tx_pos,
-            antenna_pattern=request.antenna_pattern,
-            polarization=request.polarization,
-        )
-        engine.add_receiver(
-            name=request.rx_node,
-            position=rx_pos,
-            antenna_pattern=request.antenna_pattern,
-            polarization=request.polarization,
-        )
-
-        # Compute paths
-        path_result = engine.compute_paths()
-
-        # Cache path details for visualization
-        path_details = engine.get_path_details()
-        cache_path_for_visualization(
-            tx_node=request.tx_node,
-            rx_node=request.rx_node,
-            tx_pos=tx_pos,
-            rx_pos=rx_pos,
-            path_result=path_result,
-            path_details=path_details,
-            bandwidth_hz=request.bandwidth_hz
-        )
+        path_result, _ = _run_single_path(engine, request, _path_cache_obj)
 
         # Compute complete channel parameters
         return compute_channel_for_link(request, path_result, engine_used)
@@ -1419,128 +745,102 @@ async def compute_single_link(request: WirelessLinkRequest):
         raise HTTPException(status_code=500, detail=f"Computation failed: {str(e)}")
 
 
-@app.post("/compute/batch", response_model=BatchChannelResponse)
-async def compute_batch_links(request: BatchChannelRequest):
+@app.post("/compute/links_snr", response_model=LinksResponse)
+async def compute_links_snr(request: LinksSnrRequest):
     """
-    Compute channel parameters for multiple wireless links.
+    Compute independent per-link SNR for multiple wireless links.
 
-    More efficient than calling /compute/single multiple times as the
+    Each link is computed independently (O(N)); no interference modeling.
+    More efficient than calling /compute/link multiple times as the
     scene is loaded once and reused.
 
-    Supports MAC models (CSMA or TDMA) for interference-aware channel computation.
+    Supports MAC models (CSMA or TDMA) for throughput computation.
     """
-    from sine.channel.sionna_engine import SionnaEngine, FallbackEngine
-
-    global _interference_engine, _sinr_calculator
-
-    # Get engine type from first link (all links in batch use same engine)
     engine_type = request.links[0].engine_type if request.links else EngineType.AUTO
-    engine = get_engine_for_request(engine_type)
-
-    # Determine which engine type was actually used
-    if isinstance(engine, SionnaEngine):
-        engine_used = EngineType.SIONNA
-    elif isinstance(engine, FallbackEngine):
-        engine_used = EngineType.FALLBACK
-    else:
-        engine_used = EngineType.AUTO
+    engine = _engine_registry.get(engine_type.value)
+    engine_used = EngineType(engine.engine_type)
 
     start_time = time.time()
 
-    # Load scene
     engine.load_scene(
         scene_path=request.scene.scene_file,
         frequency_hz=request.scene.frequency_hz,
         bandwidth_hz=request.scene.bandwidth_hz,
     )
 
-    # Extract MAC model config (may be None)
+    results = []
+    for link in request.links:
+        try:
+            path_result, _ = _run_single_path(engine, link, _path_cache_obj)
+            result = compute_channel_for_link(link, path_result, engine_used)
+            results.append(result)
+
+        except Exception as e:
+            logger.error(f"Failed to compute channel for {link.tx_node}->{link.rx_node}: {e}")
+            results.append(
+                ChannelResponse(
+                    tx_node=link.tx_node,
+                    rx_node=link.rx_node,
+                    engine_used=engine_used,
+                    path_loss_db=200.0,
+                    num_paths=0,
+                    dominant_path_type="error",
+                    delay_spread_ns=0.0,
+                    received_power_dbm=-200.0,
+                    snr_db=-50.0,
+                    ber=0.5,
+                    bler=1.0,
+                    per=1.0,
+                    netem_delay_ms=0.0,
+                    netem_jitter_ms=0.0,
+                    netem_loss_percent=100.0,
+                    netem_rate_mbps=0.1,
+                )
+            )
+
+    computation_time_ms = (time.time() - start_time) * 1000
+    return LinksResponse(results=results, computation_time_ms=computation_time_ms)
+
+
+@app.post("/compute/links_sinr", response_model=LinksResponse)
+async def compute_links_sinr(request: LinksSinrRequest):
+    """
+    Compute interference-aware SINR for a full wireless topology.
+
+    Models co-channel interference from all active transmitters (O(N²)).
+    Supports MAC models (CSMA or TDMA) for interference probability weighting.
+    """
+    engine_type = request.links[0].engine_type if request.links else EngineType.AUTO
+    engine = _engine_registry.get(engine_type.value)
+    engine_used = EngineType(engine.engine_type)
+
+    start_time = time.time()
+
+    engine.load_scene(
+        scene_path=request.scene.scene_file,
+        frequency_hz=request.scene.frequency_hz,
+        bandwidth_hz=request.scene.bandwidth_hz,
+    )
+
     mac_model_config = None
     for link in request.links:
         if link.mac_model is not None:
             mac_model_config = link.mac_model
             break
 
-    results = []
-
-    # Decision based on enable_sinr flag (NOT MAC model presence)
-    if request.enable_sinr:
-        # SINR mode: Compute interference from all active transmitters
-        results = await _compute_batch_with_sinr(
-            request.links,
-            mac_model_config,  # May be None (worst-case tx_prob=1.0)
-            request.scene,
-            engine_used,
-            request.active_states  # Filter inactive nodes
-        )
-    else:
-        # Simple SNR mode: Compute each link independently (original behavior)
-        for link in request.links:
-            try:
-                # Clear and set up devices for this link
-                engine.clear_devices()
-                tx_pos = link.tx_position.as_tuple()
-                rx_pos = link.rx_position.as_tuple()
-
-                engine.add_transmitter(
-                    name=link.tx_node,
-                    position=tx_pos,
-                    antenna_pattern=link.antenna_pattern,
-                    polarization=link.polarization,
-                )
-                engine.add_receiver(
-                    name=link.rx_node,
-                    position=rx_pos,
-                    antenna_pattern=link.antenna_pattern,
-                    polarization=link.polarization,
-                )
-
-                # Compute paths
-                path_result = engine.compute_paths()
-
-                # Cache path details for visualization
-                path_details = engine.get_path_details()
-                cache_path_for_visualization(
-                    tx_node=link.tx_node,
-                    rx_node=link.rx_node,
-                    tx_pos=tx_pos,
-                    rx_pos=rx_pos,
-                    path_result=path_result,
-                    path_details=path_details,
-                    bandwidth_hz=link.bandwidth_hz
-                )
-
-                # Compute complete channel
-                result = compute_channel_for_link(link, path_result, engine_used)
-                results.append(result)
-
-            except Exception as e:
-                logger.error(f"Failed to compute channel for {link.tx_node}->{link.rx_node}: {e}")
-                # Add error result
-                results.append(
-                    ChannelResponse(
-                        tx_node=link.tx_node,
-                        rx_node=link.rx_node,
-                        engine_used=engine_used,
-                        path_loss_db=200.0,
-                        num_paths=0,
-                        dominant_path_type="error",
-                        delay_spread_ns=0.0,
-                        received_power_dbm=-200.0,
-                        snr_db=-50.0,
-                        ber=0.5,
-                        bler=1.0,
-                        per=1.0,
-                        netem_delay_ms=0.0,
-                        netem_jitter_ms=0.0,
-                        netem_loss_percent=100.0,
-                        netem_rate_mbps=0.1,
-                    )
-                )
+    results = await _links_sinr_computer.compute(
+        request.links,
+        mac_model_config,
+        request.scene,
+        engine,
+        engine_used,
+        request.active_states,
+        mcs_tables=_mcs_tables,
+        path_cache=_path_cache_obj,
+    )
 
     computation_time_ms = (time.time() - start_time) * 1000
-
-    return BatchChannelResponse(results=results, computation_time_ms=computation_time_ms)
+    return LinksResponse(results=results, computation_time_ms=computation_time_ms)
 
 
 @app.post("/debug/paths", response_model=PathDetailsResponse)
@@ -1554,24 +854,24 @@ async def get_path_details(request: PathDetailsRequest):
 
     Requires scene to be loaded first via POST /scene/load.
     """
-    global _engine
+    engine = _engine_registry.primary_engine
 
-    if _engine is None:
+    if engine is None:
         raise HTTPException(status_code=400, detail="Engine not initialized")
 
-    if not getattr(_engine, "_scene_loaded", False):
+    if not getattr(engine, "_scene_loaded", False):
         raise HTTPException(status_code=400, detail="Scene not loaded. Call POST /scene/load first.")
 
     try:
         # Set up TX/RX
-        _engine.clear_devices()
-        _engine.add_transmitter(
+        engine.clear_devices()
+        engine.add_transmitter(
             name=request.tx_name,
             position=request.tx_position.as_tuple(),
             antenna_pattern=request.antenna_pattern,
             polarization=request.polarization,
         )
-        _engine.add_receiver(
+        engine.add_receiver(
             name=request.rx_name,
             position=request.rx_position.as_tuple(),
             antenna_pattern=request.antenna_pattern,
@@ -1579,7 +879,7 @@ async def get_path_details(request: PathDetailsRequest):
         )
 
         # Get path details
-        details: PathDetails = _engine.get_path_details()
+        details: PathDetails = engine.get_path_details()
 
         # Convert to response format
         path_responses = []
@@ -1648,8 +948,8 @@ def resolve_antenna_gain(
     return get_antenna_gain(antenna_pattern) if has_pattern else antenna_gain_dbi
 
 
-@app.post("/compute/sinr", response_model=SINRResponse)
-async def compute_sinr(request: SINRLinkRequest):
+@app.post("/compute/interference", response_model=InterferenceResponse)
+async def compute_sinr(request: InterferenceRequest):
     """
     Compute SINR for a link with multi-transmitter interference.
 
@@ -1659,20 +959,11 @@ async def compute_sinr(request: SINRLinkRequest):
 
     Phase 1: Same-frequency (co-channel) interference only.
     """
-    from sine.channel.sionna_engine import SionnaEngine, FallbackEngine
-
     global _interference_engine, _sinr_calculator
 
     # Get engine based on request type
-    engine = get_engine_for_request(request.engine_type)
-
-    # Determine which engine type was actually used
-    if isinstance(engine, SionnaEngine):
-        engine_used = EngineType.SIONNA
-    elif isinstance(engine, FallbackEngine):
-        engine_used = EngineType.FALLBACK
-    else:
-        engine_used = EngineType.AUTO
+    engine = _engine_registry.get(request.engine_type.value)
+    engine_used = EngineType(engine.engine_type)
 
     # Initialize interference engine if needed
     if _interference_engine is None:
@@ -1775,7 +1066,7 @@ async def compute_sinr(request: SINRLinkRequest):
         )
 
         # Build response
-        return SINRResponse(
+        return InterferenceResponse(
             tx_node=sinr_result.tx_node,
             rx_node=sinr_result.rx_node,
             engine_used=engine_used,
@@ -1796,7 +1087,7 @@ async def compute_sinr(request: SINRLinkRequest):
         raise HTTPException(status_code=500, detail=f"Failed to compute SINR: {str(e)}")
 
 
-@app.get("/api/visualization/state")
+@app.get("/visualization/state")
 async def get_visualization_state():
     """
     Get complete visualization state (scene, devices, paths).
@@ -1810,15 +1101,15 @@ async def get_visualization_state():
     Raises:
         HTTPException: 404 if no scene is loaded
     """
-    global _engine, _path_cache, _device_positions
+    engine = _engine_registry.primary_engine
 
-    if not _engine or not getattr(_engine, "_scene_loaded", False):
+    if not engine or not getattr(engine, "_scene_loaded", False):
         raise HTTPException(status_code=404, detail="No scene loaded")
 
     # Extract scene geometry
     scene_objects = []
     try:
-        for name, obj in _engine.scene.objects.items():
+        for name, obj in engine.scene.objects.items():
             pos = obj.position
             bbox = obj.mi_mesh.bbox()
             scene_objects.append({
@@ -1829,25 +1120,23 @@ async def get_visualization_state():
                 "bbox_max": [float(bbox.max[0]), float(bbox.max[1]), float(bbox.max[2])]
             })
     except Exception as e:
-        logger.warning(f"Failed to extract scene geometry: {e}")
+        logger.warning("Failed to extract scene geometry: %s", e)
         scene_objects = []
 
-    # Convert device positions to simple dict
-    devices = [{
-        "name": name,
-        "position": {"x": pos[0], "y": pos[1], "z": pos[2]}
-    } for name, pos in _device_positions.items()]
+    devices = [
+        {"name": name, "position": {"x": pos[0], "y": pos[1], "z": pos[2]}}
+        for name, pos in _path_cache_obj.positions.items()
+    ]
 
-    # Return cached paths (already JSON-serializable)
-    paths = list(_path_cache.values())
+    paths = list(_path_cache_obj.links.values())
 
     return {
-        "scene_file": str(_engine.scene_path) if hasattr(_engine, 'scene_path') else None,
+        "scene_file": str(engine.scene_path) if hasattr(engine, "scene_path") else None,
         "scene_loaded": True,
         "scene_objects": scene_objects,
         "devices": devices,
         "paths": paths,
-        "cache_size": len(_path_cache)
+        "cache_size": len(_path_cache_obj.links),
     }
 
 

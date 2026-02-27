@@ -183,7 +183,7 @@ def test_two_rooms_multipath(channel_server, examples_for_tests: Path, p2p_node_
         container_prefix = extract_container_prefix(yaml_path)
 
         # For now, we validate that deployment succeeds and connectivity works
-        # Future enhancement: Query channel server /api/visualization/state
+        # Future enhancement: Query channel server /visualization/state
         # to get actual τ_rms value and assert < 800ns
         verify_ping_connectivity(container_prefix, p2p_node_ips)
 

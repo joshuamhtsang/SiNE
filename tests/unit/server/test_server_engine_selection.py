@@ -7,7 +7,7 @@ Tests include:
 - Force-fallback mode (--force-fallback CLI flag)
 - Error handling for unavailable engines
 - Response metadata (engine_used field)
-- All endpoints: /compute/single, /compute/batch, /compute/sinr
+- All endpoints: /compute/link, /compute/links_snr, /compute/interference
 """
 
 import pytest
@@ -66,7 +66,7 @@ class TestExplicitFallbackEngine:
         """engine_type=FALLBACK should work without GPU."""
         sample_link_request["engine_type"] = "fallback"
 
-        response = client.post("/compute/single", json=sample_link_request)
+        response = client.post("/compute/link", json=sample_link_request)
 
         assert response.status_code == 200
         data = response.json()
@@ -83,7 +83,7 @@ class TestExplicitFallbackEngine:
             "links": [sample_link_request]
         }
 
-        response = client.post("/compute/batch", json=batch_request)
+        response = client.post("/compute/links_snr", json=batch_request)
 
         assert response.status_code == 200
         data = response.json()
@@ -95,8 +95,8 @@ class TestExplicitFallbackEngine:
         sample_link_request["engine_type"] = "fallback"
 
         # Make two requests
-        response1 = client.post("/compute/single", json=sample_link_request)
-        response2 = client.post("/compute/single", json=sample_link_request)
+        response1 = client.post("/compute/link", json=sample_link_request)
+        response2 = client.post("/compute/link", json=sample_link_request)
 
         assert response1.status_code == 200
         assert response2.status_code == 200
@@ -116,7 +116,7 @@ class TestAutoEngineSelection:
         """engine_type=AUTO should use available engine."""
         sample_link_request["engine_type"] = "auto"
 
-        response = client.post("/compute/single", json=sample_link_request)
+        response = client.post("/compute/link", json=sample_link_request)
 
         assert response.status_code == 200
         data = response.json()
@@ -126,7 +126,7 @@ class TestAutoEngineSelection:
     def test_auto_engine_default_parameter(self, client, sample_link_request):
         """Test that AUTO is the default when engine_type not specified."""
         # Don't set engine_type (should default to AUTO)
-        response = client.post("/compute/single", json=sample_link_request)
+        response = client.post("/compute/link", json=sample_link_request)
 
         assert response.status_code == 200
         data = response.json()
@@ -137,10 +137,10 @@ class TestResponseMetadata:
     """Test that response includes engine_used metadata."""
 
     def test_response_includes_engine_used_single(self, client, sample_link_request):
-        """Test that /compute/single includes engine_used field."""
+        """Test that /compute/link includes engine_used field."""
         sample_link_request["engine_type"] = "fallback"
 
-        response = client.post("/compute/single", json=sample_link_request)
+        response = client.post("/compute/link", json=sample_link_request)
 
         assert response.status_code == 200
         data = response.json()
@@ -148,7 +148,7 @@ class TestResponseMetadata:
         assert data["engine_used"] == "fallback"
 
     def test_response_includes_engine_used_batch(self, client, sample_link_request):
-        """Test that /compute/batch includes engine_used in each result."""
+        """Test that /compute/links_snr includes engine_used in each result."""
         sample_link_request["engine_type"] = "fallback"
         batch_request = {
             "scene": {"scene_file": "", "frequency_hz": 5.18e9, "bandwidth_hz": 80e6},
@@ -158,7 +158,7 @@ class TestResponseMetadata:
             ]
         }
 
-        response = client.post("/compute/batch", json=batch_request)
+        response = client.post("/compute/links_snr", json=batch_request)
 
         assert response.status_code == 200
         data = response.json()
@@ -168,10 +168,10 @@ class TestResponseMetadata:
             assert result["engine_used"] == "fallback"
 
     def test_response_includes_engine_used_sinr(self, client, sample_sinr_request):
-        """Test that /compute/sinr includes engine_used (if added to spec)."""
+        """Test that /compute/interference includes engine_used (if added to spec)."""
         # Note: SINR endpoint may not have engine_type parameter yet
         # This test documents expected future behavior
-        response = client.post("/compute/sinr", json=sample_sinr_request)
+        response = client.post("/compute/interference", json=sample_sinr_request)
 
         # SINR endpoint should succeed (may not have engine_used field yet)
         assert response.status_code == 200
@@ -184,14 +184,14 @@ class TestForceFallbackMode:
         """Server in force-fallback mode should reject explicit SIONNA requests."""
         import sine.channel.server as server_module
 
-        # Enable force-fallback mode
-        original_flag = server_module._force_fallback_mode
-        server_module._force_fallback_mode = True
+        # Enable force-fallback mode via engine registry
+        original_flag = server_module._engine_registry._force_fallback
+        server_module._engine_registry._force_fallback = True
 
         try:
             sample_link_request["engine_type"] = "sionna"
 
-            response = client.post("/compute/single", json=sample_link_request)
+            response = client.post("/compute/link", json=sample_link_request)
 
             # Should return 400 error
             assert response.status_code == 400
@@ -199,43 +199,43 @@ class TestForceFallbackMode:
             assert "fallback-only mode" in data["detail"].lower()
         finally:
             # Restore original flag
-            server_module._force_fallback_mode = original_flag
+            server_module._engine_registry._force_fallback = original_flag
 
     def test_force_fallback_accepts_auto_request(self, client, sample_link_request):
         """Force-fallback mode should accept AUTO requests (uses fallback)."""
         import sine.channel.server as server_module
 
-        original_flag = server_module._force_fallback_mode
-        server_module._force_fallback_mode = True
+        original_flag = server_module._engine_registry._force_fallback
+        server_module._engine_registry._force_fallback = True
 
         try:
             sample_link_request["engine_type"] = "auto"
 
-            response = client.post("/compute/single", json=sample_link_request)
+            response = client.post("/compute/link", json=sample_link_request)
 
             assert response.status_code == 200
             data = response.json()
             assert data["engine_used"] == "fallback"
         finally:
-            server_module._force_fallback_mode = original_flag
+            server_module._engine_registry._force_fallback = original_flag
 
     def test_force_fallback_accepts_explicit_fallback(self, client, sample_link_request):
         """Force-fallback mode should accept explicit FALLBACK requests."""
         import sine.channel.server as server_module
 
-        original_flag = server_module._force_fallback_mode
-        server_module._force_fallback_mode = True
+        original_flag = server_module._engine_registry._force_fallback
+        server_module._engine_registry._force_fallback = True
 
         try:
             sample_link_request["engine_type"] = "fallback"
 
-            response = client.post("/compute/single", json=sample_link_request)
+            response = client.post("/compute/link", json=sample_link_request)
 
             assert response.status_code == 200
             data = response.json()
             assert data["engine_used"] == "fallback"
         finally:
-            server_module._force_fallback_mode = original_flag
+            server_module._engine_registry._force_fallback = original_flag
 
 
 class TestExplicitSionnaEngine:
@@ -247,7 +247,7 @@ class TestExplicitSionnaEngine:
 
         sample_link_request["engine_type"] = "sionna"
 
-        response = client.post("/compute/single", json=sample_link_request)
+        response = client.post("/compute/link", json=sample_link_request)
 
         if is_sionna_available():
             # If Sionna available, should succeed
@@ -270,7 +270,7 @@ class TestExplicitSionnaEngine:
 
         sample_link_request["engine_type"] = "sionna"
 
-        response = client.post("/compute/single", json=sample_link_request)
+        response = client.post("/compute/link", json=sample_link_request)
 
         assert response.status_code == 503
         data = response.json()
@@ -293,7 +293,7 @@ class TestBatchEndpoint:
             ]
         }
 
-        response = client.post("/compute/batch", json=batch_request)
+        response = client.post("/compute/links_snr", json=batch_request)
 
         assert response.status_code == 200
         data = response.json()
@@ -314,7 +314,7 @@ class TestBatchEndpoint:
             "links": [link1, link2]
         }
 
-        response = client.post("/compute/batch", json=batch_request)
+        response = client.post("/compute/links_snr", json=batch_request)
 
         # Currently, each link can have its own engine_type
         # This test documents expected behavior
@@ -328,7 +328,7 @@ class TestEngineParameterValidation:
         """Invalid engine_type values should be rejected."""
         sample_link_request["engine_type"] = "invalid_engine"
 
-        response = client.post("/compute/single", json=sample_link_request)
+        response = client.post("/compute/link", json=sample_link_request)
 
         # Should return 422 validation error
         assert response.status_code == 422
@@ -337,7 +337,7 @@ class TestEngineParameterValidation:
         """Test that engine_type is case-sensitive."""
         sample_link_request["engine_type"] = "FALLBACK"  # uppercase
 
-        response = client.post("/compute/single", json=sample_link_request)
+        response = client.post("/compute/link", json=sample_link_request)
 
         # Should be rejected (expects lowercase "fallback")
         assert response.status_code == 422
@@ -352,12 +352,12 @@ class TestFallbackEnginePathLoss:
 
         # Test at 10m
         sample_link_request["rx_position"] = {"x": 10, "y": 0, "z": 1}
-        response_10m = client.post("/compute/single", json=sample_link_request)
+        response_10m = client.post("/compute/link", json=sample_link_request)
         data_10m = response_10m.json()
 
         # Test at 20m
         sample_link_request["rx_position"] = {"x": 20, "y": 0, "z": 1}
-        response_20m = client.post("/compute/single", json=sample_link_request)
+        response_20m = client.post("/compute/link", json=sample_link_request)
         data_20m = response_20m.json()
 
         # Path loss should increase (distance doubled)
@@ -372,7 +372,7 @@ class TestFallbackEnginePathLoss:
         sample_link_request["engine_type"] = "fallback"
         sample_link_request["rx_position"] = {"x": 20, "y": 0, "z": 1}
 
-        response = client.post("/compute/single", json=sample_link_request)
+        response = client.post("/compute/link", json=sample_link_request)
 
         assert response.status_code == 200
         data = response.json()
@@ -404,7 +404,7 @@ class TestEngineSingleton:
 
         # Make multiple requests
         for _ in range(3):
-            response = client.post("/compute/single", json=sample_link_request)
+            response = client.post("/compute/link", json=sample_link_request)
             assert response.status_code == 200
 
         # Engines should be singleton (no way to directly test via API,
