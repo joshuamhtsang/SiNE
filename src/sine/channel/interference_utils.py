@@ -12,7 +12,7 @@ from typing import Optional
 
 import numpy as np
 
-from sine.channel.interference_engine import InterferenceTerm
+from sine.channel.interference_calculator import InterferenceTerm
 
 logger = logging.getLogger(__name__)
 

@@ -6,8 +6,8 @@ probabilities instead of treating all interferers as 100% active.
 """
 
 import pytest
-from sine.channel.sinr import SINRCalculator
-from sine.channel.interference_engine import InterferenceTerm
+from sine.channel.interference_utils import SINRCalculator
+from sine.channel.interference_calculator import InterferenceTerm
 
 
 def test_csma_sinr_uses_probabilities():

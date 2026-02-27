@@ -26,13 +26,13 @@ from pydantic import BaseModel, Field
 from sine.channel.sionna_engine import is_sionna_available, PathResult, PathDetails
 from sine.channel.path_cache import PathCache
 from sine.channel.engine_registry import EngineRegistry
-from sine.channel.links_sinr_computer import LinksSinrComputer
+from sine.channel.batch_sinr import LinksSinrComputer
 from sine.channel.snr import SNRCalculator
 from sine.channel.modulation import BERCalculator, BLERCalculator, get_bits_per_symbol
 from sine.channel.per_calculator import PERCalculator
 from sine.channel.mcs import MCSTable
-from sine.channel.sinr import SINRCalculator, calculate_thermal_noise
-from sine.channel.interference_engine import InterferenceEngine, TransmitterInfo
+from sine.channel.interference_utils import SINRCalculator, calculate_thermal_noise
+from sine.channel.interference_calculator import InterferenceEngine, TransmitterInfo
 
 logger = logging.getLogger(__name__)
 
@@ -967,7 +967,7 @@ async def compute_sinr(request: InterferenceRequest):
 
     # Initialize interference engine if needed
     if _interference_engine is None:
-        from sine.channel.interference_engine import InterferenceEngine
+        from sine.channel.interference_calculator import InterferenceEngine
         _interference_engine = InterferenceEngine()
         logger.info("Initialized InterferenceEngine for SINR computation")
 

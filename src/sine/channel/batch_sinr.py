@@ -11,8 +11,8 @@ from __future__ import annotations
 import logging
 import math
 
-from sine.channel.interference_engine import InterferenceEngine, TransmitterInfo
-from sine.channel.sinr import SINRCalculator, calculate_thermal_noise
+from sine.channel.interference_calculator import InterferenceEngine, TransmitterInfo
+from sine.channel.interference_utils import SINRCalculator, calculate_thermal_noise
 from sine.channel.snr import SNRCalculator
 from sine.channel.csma_model import CSMAModel
 from sine.channel.tdma_model import TDMAModel, TDMASlotConfig, SlotAssignmentMode

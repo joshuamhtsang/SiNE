@@ -8,8 +8,8 @@ import pytest
 import numpy as np
 import math
 
-from sine.channel.sinr import SINRCalculator, SINRResult, calculate_thermal_noise
-from sine.channel.interference_engine import InterferenceTerm
+from sine.channel.interference_utils import SINRCalculator, SINRResult, calculate_thermal_noise
+from sine.channel.interference_calculator import InterferenceTerm
 
 
 class TestThermalNoiseCalculation:

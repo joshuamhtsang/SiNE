@@ -11,7 +11,7 @@ These tests verify that:
 """
 
 import pytest
-from sine.channel.interference_engine import InterferenceEngine, TransmitterInfo
+from sine.channel.interference_calculator import InterferenceEngine, TransmitterInfo
 from sine.channel.sionna_engine import is_sionna_available
 
 

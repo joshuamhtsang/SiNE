@@ -12,7 +12,7 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from sine.channel.interference_engine import (
+from sine.channel.interference_calculator import (
     InterferenceEngine,
     TransmitterInfo,
 )
