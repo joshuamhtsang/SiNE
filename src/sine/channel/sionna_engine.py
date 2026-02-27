@@ -8,6 +8,7 @@ This module requires the 'gpu' optional dependencies:
     pip install sine[gpu]
 """
 
+from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Optional
 from dataclasses import dataclass
@@ -98,13 +99,64 @@ class ChannelResult:
     rate_mbps: float
 
 
-class SionnaEngine:
+class ChannelEngine(ABC):
+    """Abstract base class for channel computation engines."""
+
+    @property
+    @abstractmethod
+    def engine_type(self) -> str:
+        """Return engine identifier: 'sionna' or 'fallback'."""
+
+    @abstractmethod
+    def load_scene(
+        self,
+        scene_path: Optional[str] = None,
+        frequency_hz: float = 5.18e9,
+        bandwidth_hz: float = 80e6,
+    ) -> None: ...
+
+    @abstractmethod
+    def add_transmitter(
+        self,
+        name: str,
+        position: tuple[float, float, float],
+        antenna_pattern: str = "iso",
+        polarization: str = "V",
+    ) -> None: ...
+
+    @abstractmethod
+    def add_receiver(
+        self,
+        name: str,
+        position: tuple[float, float, float],
+        antenna_pattern: str = "iso",
+        polarization: str = "V",
+    ) -> None: ...
+
+    @abstractmethod
+    def compute_paths(self) -> "PathResult": ...
+
+    @abstractmethod
+    def get_path_details(self) -> "PathDetails": ...
+
+    @abstractmethod
+    def clear_devices(self) -> None: ...
+
+    @abstractmethod
+    def update_position(self, name: str, position: tuple[float, float, float]) -> None: ...
+
+
+class SionnaEngine(ChannelEngine):
     """
     Sionna RT engine for ray tracing channel computation.
 
     Uses Sionna's PathSolver API for computing propagation paths through
     a ray-traced scene.
     """
+
+    @property
+    def engine_type(self) -> str:
+        return "sionna"
 
     def __init__(self):
         """Initialize Sionna engine."""
@@ -674,12 +726,16 @@ class SionnaEngine:
         logger.info(f"Rendered scene to {output_path}")
 
 
-class FallbackEngine:
+class FallbackEngine(ChannelEngine):
     """
     Fallback channel computation engine when Sionna is not available.
 
     Uses simple free-space path loss model for basic functionality.
     """
+
+    @property
+    def engine_type(self) -> str:
+        return "fallback"
 
     def __init__(self, indoor_loss_db: float = 10.0):
         """

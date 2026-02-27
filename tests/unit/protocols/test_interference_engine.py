@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import pytest
 import numpy as np
-from sine.channel.interference_engine import (
+from sine.channel.interference_calculator import (
     InterferenceEngine,
     TransmitterInfo,
     InterferenceTerm,

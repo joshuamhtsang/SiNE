@@ -9,7 +9,7 @@ import math
 import pytest
 
 from sine.channel.snr import SNRCalculator
-from sine.channel.sinr import SINRCalculator, calculate_thermal_noise
+from sine.channel.interference_utils import SINRCalculator, calculate_thermal_noise
 
 
 def test_noise_floor_calculation():

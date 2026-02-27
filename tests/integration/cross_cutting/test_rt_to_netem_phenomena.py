@@ -98,7 +98,7 @@ def load_scene_and_compute_channel(
     rx_pos_dict = {"x": rx_position[0], "y": rx_position[1], "z": rx_position[2]}
 
     compute_response = requests.post(
-        f"{channel_server_url}/compute/single",
+        f"{channel_server_url}/compute/link",
         json={
             "tx_node": "tx",
             "rx_node": "rx",

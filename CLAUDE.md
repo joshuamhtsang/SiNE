@@ -295,12 +295,14 @@ The channel server (`uv run sine channel-server`) exposes REST endpoints:
 |----------|--------|-------------|
 | `/health` | GET | Health check with GPU status |
 | `/scene/load` | POST | Load ray tracing scene |
-| `/compute/single` | POST | Compute channel for single link |
-| `/compute/batch` | POST | Compute channels for multiple links |
-| `/compute/sinr` | POST | Compute SINR with interference from multiple transmitters |
+| `/compute/link` | POST | Compute channel for single link |
+| `/compute/links_snr` | POST | Compute channels for multiple links (SNR only, O(N)) |
+| `/compute/links_sinr` | POST | Compute channels with interference (O(N²)) |
+| `/compute/interference` | POST | Compute SINR with explicit TX/RX/interferers |
 | `/debug/paths` | POST | Get detailed path info for debugging |
+| `/visualization/state` | GET | Cached scene/path data for live viewer |
 
-### SINR Endpoint: `POST /compute/sinr`
+### Interference Endpoint: `POST /compute/interference`
 
 Computes Signal-to-Interference-plus-Noise Ratio for multi-node scenarios with co-channel interference and MAC protocol integration.
 
@@ -756,7 +758,7 @@ await continuous_monitoring(update_interval_sec=1.0, max_iterations=60)
 
 **How it works**:
 - Channel server caches paths when computing netem parameters
-- Notebook queries `/api/visualization/state` for cached data (instant)
+- Notebook queries `/visualization/state` for cached data (instant)
 - Paths are re-computed in notebook to get Sionna `Paths` object for 3D preview
 - Small overhead (~100-500ms) acceptable for snapshot visualization
 
@@ -1974,7 +1976,7 @@ from fastapi.testclient import TestClient
 from sine.channel.server import app
 
 client = TestClient(app)
-response = client.post("/compute/single", json={...})
+response = client.post("/compute/link", json={...})
 assert response.status_code == 200
 ```
 
@@ -1982,6 +1984,7 @@ assert response.status_code == 200
 - Must include `scene` config (even if empty: `{"scene_file": ""}`)
 - Each link can have different positions/params
 - All links should use same `engine_type`
+- Use `/compute/links_snr` for SNR-only (no interference), `/compute/links_sinr` for interference-aware
 
 ## Common Debugging Patterns
 

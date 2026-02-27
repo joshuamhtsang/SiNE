@@ -340,8 +340,13 @@ class EmulationController:
         if link_requests:
             scene_config = self.config.topology.scene
             async with httpx.AsyncClient(timeout=60.0) as client:
+                endpoint = (
+                    "/compute/links_sinr"
+                    if self.config.topology.enable_sinr
+                    else "/compute/links_snr"
+                )
                 response = await client.post(
-                    f"{self.channel_server_url}/compute/batch",
+                    f"{self.channel_server_url}{endpoint}",
                     json={
                         "scene": {
                             "scene_file": scene_config.file,
@@ -353,12 +358,7 @@ class EmulationController:
                             ],
                         },
                         "links": link_requests,
-                        "enable_sinr": (
-                            self.config.topology.enable_sinr
-                        ),
-                        "active_states": (
-                            self._build_active_states_dict()
-                        ),
+                        "active_states": self._build_active_states_dict(),
                     },
                 )
                 if response.status_code != 200:
@@ -744,8 +744,13 @@ class EmulationController:
         scene_config = self.config.topology.scene
 
         async with httpx.AsyncClient(timeout=60.0) as client:
+            endpoint = (
+                "/compute/links_sinr"
+                if self.config.topology.enable_sinr
+                else "/compute/links_snr"
+            )
             response = await client.post(
-                f"{self.channel_server_url}/compute/batch",
+                f"{self.channel_server_url}{endpoint}",
                 json={
                     "scene": {
                         "scene_file": scene_config.file,
@@ -753,7 +758,6 @@ class EmulationController:
                         "bandwidth_hz": link_requests[0]["bandwidth_hz"],
                     },
                     "links": link_requests,
-                    "enable_sinr": self.config.topology.enable_sinr,
                     "active_states": self._build_active_states_dict(),
                 },
             )
@@ -808,7 +812,7 @@ class EmulationController:
 
         Returns:
             Dictionary with all fields required by the channel server's
-            /compute/batch endpoint.
+            /compute/links_snr or /compute/links_sinr endpoint.
         """
         # Build core request fields
         request = {

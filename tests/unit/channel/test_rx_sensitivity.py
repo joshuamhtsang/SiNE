@@ -12,8 +12,8 @@ Tests that rx_sensitivity_dbm is properly:
 import pytest
 from sine.config.schema import WirelessParams, Position, ModulationType, FECType, AntennaPattern
 from sine.channel.snr import SNRCalculator
-from sine.channel.sinr import SINRCalculator
-from sine.channel.interference_engine import InterferenceTerm
+from sine.channel.interference_utils import SINRCalculator
+from sine.channel.interference_calculator import InterferenceTerm
 
 
 class TestRxSensitivitySchema:

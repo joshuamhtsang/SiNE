@@ -485,9 +485,11 @@ REST API for channel computation (port 8000):
 |----------|--------|-------------|
 | `/health` | GET | Health check with GPU status |
 | `/scene/load` | POST | Load ray tracing scene |
-| `/compute/single` | POST | Compute channel for single link |
-| `/compute/batch` | POST | Compute channels for multiple links |
-| `/compute/sinr` | POST | Compute SINR with interference |
+| `/compute/link` | POST | Compute channel for single link |
+| `/compute/links_snr` | POST | Compute channels for multiple links (SNR only, O(N)) |
+| `/compute/links_sinr` | POST | Compute channels with interference (O(N²)) |
+| `/compute/interference` | POST | Compute SINR with explicit TX/RX/interferers |
+| `/visualization/state` | GET | Cached scene/path data for live viewer |
 | `/debug/paths` | POST | Get detailed path info for debugging |
 
 Example SINR request:

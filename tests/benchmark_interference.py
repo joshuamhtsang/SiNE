@@ -7,7 +7,7 @@ Target: <500ms for 10-node MANET (N² = 100 link computations with caching).
 
 import time
 import numpy as np
-from sine.channel.interference_engine import InterferenceEngine, TransmitterInfo
+from sine.channel.interference_calculator import InterferenceEngine, TransmitterInfo
 from sine.channel.sionna_engine import is_sionna_available
 
 
