@@ -84,17 +84,16 @@ Deploy a simple two-node wireless network with adaptive MCS (WiFi 6):
 uv run sine channel-server
 
 # Terminal 2: Deploy emulation
-sudo $(which uv) run sine deploy examples/for_user/adaptive_mcs_wifi6/network.yaml
+UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy examples/for_user/01_wireless_mesh/network.yaml
 
 # Terminal 3: Test throughput
-docker exec -it clab-adaptive-mcs-wifi6-node1 iperf3 -s
-# In another terminal:
-docker exec -it clab-adaptive-mcs-wifi6-node2 iperf3 -c 192.168.1.1
+docker exec -d clab-wireless-mesh-01-node2 iperf3 -s
+docker exec clab-wireless-mesh-01-node1 iperf3 -c 192.168.100.2 -t 5
 
-# Expected: Variable rate based on SNR (typical: 150-500 Mbps depending on selected MCS)
+# Expected: ~480 Mbps (30m link, MCS 10)
 
 # Cleanup
-uv run sine destroy examples/for_user/adaptive_mcs_wifi6/network.yaml
+UV_PATH=$(which uv) sudo -E $(which uv) run sine destroy examples/for_user/01_wireless_mesh/network.yaml
 ```
 
 **Why sudo?** Network emulation requires sudo to access container network namespaces via `nsenter` and configure `tc` with netem. Without sudo, links operate at full bandwidth (~10+ Gbps) without wireless emulation.
@@ -189,7 +188,7 @@ See `examples/for_user/` for reference topologies.
 uv run sine channel-server
 
 # Deploy emulation
-sudo $(which uv) run sine deploy path/to/network.yaml
+UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy path/to/network.yaml
 
 # Run your applications
 docker exec -it clab-<topology>-<node> <command>
@@ -382,7 +381,7 @@ Monitor running emulations with live channel metrics and 3D visualization:
 uv run sine channel-server
 
 # 2. Deploy emulation
-sudo $(which uv) run sine deploy examples/for_tests/p2p_sionna_snr_two-rooms/network.yaml
+UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy examples/for_tests/p2p_sionna_snr_two-rooms/network.yaml
 
 # 3. Open live viewer (browser-based Jupyter)
 uv run --with jupyter jupyter notebook scenes/viewer_live.ipynb
@@ -457,11 +456,13 @@ uv run python utilities/calc_spectralefficiency.py examples/for_tests/p2p_fallba
 
 ### User Examples (`examples/for_user/`)
 
-| Example | Description | Features |
-|---------|-------------|----------|
-| [adaptive_mcs_wifi6/](examples/for_user/adaptive_mcs_wifi6/) | WiFi 6 MCS selection | SNR-based adaptive MCS |
-| [fixed_link/](examples/for_user/fixed_link/) | Fixed netem parameters | No RF, direct params |
-| [mobility/](examples/for_user/mobility/) | Node mobility | Dynamic position updates, API examples |
+| Example | Description | Scene | Key Feature |
+|---------|-------------|-------|-------------|
+| [01_wireless_mesh/](examples/for_user/01_wireless_mesh/) | 3-node WiFi mesh — SNR only | Free space | Different throughput per link pair from geometry alone |
+| [02_co_channel_interference/](examples/for_user/02_co_channel_interference/) | Same mesh + co-channel interference | Free space | Links go dead when interference > signal |
+| [03_adaptive_wifi_link/](examples/for_user/03_adaptive_wifi_link/) | Point-to-point WiFi 6 | Free space | Automatic 1024-QAM → BPSK rate adaptation |
+| [04_through_the_wall/](examples/for_user/04_through_the_wall/) | Indoor NLOS propagation | Two rooms | Sionna RT finds the doorway path; wall attenuates SNR |
+| [05_moving_node/](examples/for_user/05_moving_node/) | Real-time node mobility | Two rooms | Watch throughput change live as node crosses doorway |
 
 ### Test Examples (`examples/for_tests/`)
 
@@ -533,8 +534,8 @@ UV_PATH=$(which uv) sudo -E $(which uv) run pytest -s
 
 **Solution:** Run deployment with sudo
 ```bash
-uv run sine destroy <topology.yaml>
-sudo $(which uv) run sine deploy <topology.yaml>
+UV_PATH=$(which uv) sudo -E $(which uv) run sine destroy <topology.yaml>
+UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy <topology.yaml>
 ```
 
 ### Channel server not responding
@@ -552,7 +553,7 @@ curl http://localhost:8000/health
 
 **Solution:** Run with sudo:
 ```bash
-sudo $(which uv) run sine deploy <topology.yaml>
+UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy <topology.yaml>
 ```
 
 Or configure passwordless sudo:
@@ -600,7 +601,7 @@ This file contains the topology after stripping all SiNE-specific wireless and n
 **Example**:
 ```bash
 # Deploy network
-sudo $(which uv) run sine deploy examples/for_tests/p2p_fallback_snr_vacuum/network.yaml
+UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy examples/for_tests/p2p_fallback_snr_vacuum/network.yaml
 
 # Inspect generated containerlab topology
 cat examples/for_tests/p2p_fallback_snr_vacuum/.sine_clab_topology.yaml

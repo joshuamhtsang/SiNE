@@ -1,0 +1,99 @@
+# Example 1: Wireless Mesh (SNR Only)
+#
+# Three WiFi 6 nodes in open space (vacuum). Sionna ray tracing computes
+# path loss for each pair based on geometry alone. No interference modeling.
+#
+# Topology:
+#   node1 (0, 0, 1) ------- 30m ------- node2 (30, 0, 1)
+#           \                                  /
+#          91.2m                           91.2m
+#                \                        /
+#                  node3 (15, 90, 1)
+#
+# Expected results (5.18 GHz, 80 MHz, hw_dipole, 20 dBm):
+# - node1↔node2 (30m):   SNR ≈ 36 dB → MCS 10 (1024-QAM 3/4) → ~480 Mbps
+# - node1↔node3 (91.2m): SNR ≈ 26 dB → MCS 7  (64-QAM 5/6)   → ~320 Mbps
+# - node2↔node3 (91.2m): SNR ≈ 26 dB → MCS 7  (64-QAM 5/6)   → ~320 Mbps
+#
+# The different rates come purely from geometry — no manual configuration.
+# See Example 2 to observe how co-channel interference changes this picture.
+
+name: wireless-mesh-01
+
+topology:
+  enable_sinr: false  # SNR only — no interference modeling
+
+  scene:
+    file: scenes/vacuum.xml
+
+  shared_bridge:
+    enabled: true
+    name: mesh-01-br0
+    nodes: [node1, node2, node3]
+
+  nodes:
+    node1:
+      kind: linux
+      image: alpine:latest
+      exec:
+        - apk add --no-cache iproute2 iputils iperf3
+      interfaces:
+        eth1:
+          ip_address: 192.168.100.1/24
+          wireless:
+            position:
+              x: 0
+              y: 0
+              z: 1
+            frequency_ghz: 5.18
+            bandwidth_mhz: 80
+            rf_power_dbm: 20.0
+            rx_sensitivity_dbm: -80.0
+            antenna_pattern: hw_dipole
+            polarization: V
+            mcs_table: examples/common_data/wifi6_mcs.csv
+            mcs_hysteresis_db: 2.0
+
+    node2:
+      kind: linux
+      image: alpine:latest
+      exec:
+        - apk add --no-cache iproute2 iputils iperf3
+      interfaces:
+        eth1:
+          ip_address: 192.168.100.2/24
+          wireless:
+            position:
+              x: 30
+              y: 0
+              z: 1
+            frequency_ghz: 5.18
+            bandwidth_mhz: 80
+            rf_power_dbm: 20.0
+            rx_sensitivity_dbm: -80.0
+            antenna_pattern: hw_dipole
+            polarization: V
+            mcs_table: examples/common_data/wifi6_mcs.csv
+            mcs_hysteresis_db: 2.0
+
+    node3:
+      kind: linux
+      image: alpine:latest
+      exec:
+        - apk add --no-cache iproute2 iputils iperf3
+      interfaces:
+        eth1:
+          ip_address: 192.168.100.3/24
+          wireless:
+            position:
+              x: 15
+              y: 90
+              z: 1
+            frequency_ghz: 5.18
+            bandwidth_mhz: 80
+            rf_power_dbm: 20.0
+            rx_sensitivity_dbm: -80.0
+            antenna_pattern: hw_dipole
+            polarization: V
+            mcs_table: examples/common_data/wifi6_mcs.csv
+            mcs_hysteresis_db: 2.0

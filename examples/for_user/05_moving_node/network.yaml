@@ -1,0 +1,79 @@
+# Example 5: Moving Node
+#
+# Watch iperf3 throughput change in real-time as a node walks through a doorway.
+# Sionna ray tracing recomputes the channel after each position update via the
+# Controller API.
+#
+# Scene: scenes/two_rooms.xml
+#   Two 20m x 40m rooms separated by a concrete wall at x=20m
+#   1.3m wide x 2m high doorway at y=20m (center of dividing wall)
+#
+# Node positions:
+# - ap (node1):     (10, 20, 2.5) — Room 1, ceiling height, aligned with doorway
+# - client (node2): (30, 5, 1.0)  — Room 2, starts south/far from doorway
+#
+# Movement scenario:
+# - Move client north from (30, 5, 1) to (30, 35, 1) at 1 m/s
+# - As client aligns with doorway (y=20), LOS path appears → SNR spikes
+# - Throughput climbs from ~50-100 Mbps to 300+ Mbps near doorway
+#
+# Run this example with --enable-control to activate the Controller API
+# (required for real-time position updates).
+
+name: moving-node-05
+
+topology:
+  enable_sinr: false
+  control_poll_ms: 100       # Controller API polling interval
+  channel_server: "http://localhost:8000"
+
+  scene:
+    file: scenes/two_rooms.xml
+
+  nodes:
+    ap:
+      kind: linux
+      image: alpine:latest
+      exec:
+        - apk add --no-cache iproute2 iputils iperf3
+      interfaces:
+        eth1:
+          ip_address: 10.0.1.1/24
+          wireless:
+            position:
+              x: 10.0    # Room 1
+              y: 20.0    # Aligned with doorway
+              z: 2.5     # Ceiling height
+            frequency_ghz: 5.18
+            bandwidth_mhz: 80
+            rf_power_dbm: 20.0
+            rx_sensitivity_dbm: -80.0
+            antenna_pattern: hw_dipole
+            polarization: V
+            mcs_table: examples/common_data/wifi6_mcs.csv
+            mcs_hysteresis_db: 2.0
+
+    client:
+      kind: linux
+      image: alpine:latest
+      exec:
+        - apk add --no-cache iproute2 iputils iperf3
+      interfaces:
+        eth1:
+          ip_address: 10.0.1.2/24
+          wireless:
+            position:
+              x: 30.0    # Room 2
+              y: 5.0     # South side (far from doorway at y=20)
+              z: 1.0     # Desk/person height
+            frequency_ghz: 5.18
+            bandwidth_mhz: 80
+            rf_power_dbm: 20.0
+            rx_sensitivity_dbm: -80.0
+            antenna_pattern: hw_dipole
+            polarization: V
+            mcs_table: examples/common_data/wifi6_mcs.csv
+            mcs_hysteresis_db: 2.0
+
+  links:
+    - endpoints: [ap:eth1, client:eth1]
