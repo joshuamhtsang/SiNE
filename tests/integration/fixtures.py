@@ -1575,18 +1575,18 @@ def control_api_fallback_deployment(examples_for_tests, channel_server_fallback)
 
 
 @pytest.fixture
-def control_api_fixed_deployment(examples_for_user):
-    """Deploy examples/for_user/fixed_link with control API enabled.
+def control_api_fixed_deployment(examples_for_tests):
+    """Deploy examples/for_tests/p2p_fixed_netem with control API enabled.
 
     Used to test behavior when a node has only fixed_netem interfaces
-    (expects 400 from /api/control/update).
+    (expects 400 from /api/control/update and /api/control/interface).
 
     No channel server dependency — fixed_netem links don't require one.
 
     Yields:
         Tuple of (deploy_process, yaml_path, base_url)
     """
-    yaml_path = examples_for_user / "fixed_link" / "network.yaml"
+    yaml_path = examples_for_tests / "p2p_fixed_netem" / "network.yaml"
     base_url = "http://localhost:8002"
 
     destroy_topology(str(yaml_path))
