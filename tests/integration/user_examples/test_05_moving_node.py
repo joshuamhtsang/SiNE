@@ -14,6 +14,7 @@ import pytest
 from pathlib import Path
 
 from tests.integration.fixtures import (
+    _wait_for_control_api,
     channel_server,
     control_api_get,
     control_api_post,
@@ -78,6 +79,7 @@ def test_moving_node_position_update_accepted(channel_server, examples_for_user:
     deploy_process = None
     try:
         deploy_process = deploy_topology(str(yaml_path), enable_control=True)
+        _wait_for_control_api(_CONTROL_API_URL)
 
         # Move client to doorway-aligned position
         resp = control_api_post(
@@ -116,6 +118,7 @@ def test_moving_node_throughput_improves_at_doorway(channel_server, examples_for
     deploy_process = None
     try:
         deploy_process = deploy_topology(str(yaml_path), enable_control=True)
+        _wait_for_control_api(_CONTROL_API_URL)
         container_prefix = extract_container_prefix(str(yaml_path))
 
         # Measure throughput at starting position (y=5, far from doorway)

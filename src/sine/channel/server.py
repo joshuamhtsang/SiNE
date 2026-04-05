@@ -670,6 +670,10 @@ async def load_scene(config: SceneConfig) -> SceneLoadResponse:
             bandwidth_hz=config.bandwidth_hz,
         )
 
+        # Reset MCS hysteresis state — new deployment starts fresh
+        for mcs_table in _mcs_tables.values():
+            mcs_table.reset_hysteresis()
+
         return SceneLoadResponse(
             status="success",
             scene_file=config.scene_file,
