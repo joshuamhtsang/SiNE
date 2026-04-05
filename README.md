@@ -220,7 +220,7 @@ mcs_index,modulation,code_rate,min_snr_db,fec_type,bandwidth_mhz
 # ... up to 1024-QAM
 ```
 
-See [examples/for_user/adaptive_mcs_wifi6/](examples/for_user/adaptive_mcs_wifi6/) for complete example.
+See [examples/for_user/03_adaptive_wifi_link/](examples/for_user/03_adaptive_wifi_link/) for complete example.
 
 ### SINR and Interference Modeling
 
@@ -328,14 +328,7 @@ nodes:
 
 Without TDMA or CSMA/CA configuration, SiNE assumes worst-case interference (100% transmission probability). This represents scenarios where nodes transmit continuously (e.g., beacon-heavy networks, saturated channels).
 
-**SINR Examples** (see `examples/for_tests/`):
-- Basic MANET: `shared_sionna_sinr_equal-triangle/` (equilateral, co-channel)
-- Asymmetric MANET: `shared_sionna_sinr_asym-triangle/` (variable link quality)
-- Round-robin TDMA: `shared_sionna_sinr_tdma-rr/` (equal slot allocation)
-- Fixed TDMA: `shared_sionna_sinr_tdma-fixed/` (custom scheduling)
-- CSMA/CA: `shared_sionna_sinr_csma/` (carrier sensing with interference)
-
-**Note**: SINR examples are in `examples/for_tests/` for integration testing. User-friendly versions for `examples/for_user/` are planned for future releases.
+See [02_co_channel_interference/](examples/for_user/02_co_channel_interference/) for a complete example — same 3-node mesh as Example 1 with `enable_sinr: true` added.
 
 ### MANET Support
 
@@ -361,12 +354,7 @@ topology:
     self_isolation_db: 30.0  # Coupling isolation between co-located radios (optional)
 ```
 
-**Example coming soon** (to be added to `examples/for_user/`).
-
-See test examples in `examples/for_tests/`:
-- **SNR only**: `shared_sionna_snr_equal-triangle/` (3-node MANET without interference)
-- **SINR enabled**: `shared_sionna_sinr_equal-triangle/` and `shared_sionna_sinr_asym-triangle/` (with interference modeling)
-- **Multi-radio**: `shared_sionna_snr_dual-band/` (dual-band 2.4 GHz + 5 GHz per node)
+See [01_wireless_mesh/](examples/for_user/01_wireless_mesh/) (SNR only) and [02_co_channel_interference/](examples/for_user/02_co_channel_interference/) (with SINR) for complete shared bridge examples.
 
 ### Node Mobility
 
@@ -380,8 +368,8 @@ Monitor running emulations with live channel metrics and 3D visualization:
 # 1. Start channel server
 uv run sine channel-server
 
-# 2. Deploy emulation
-UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy examples/for_tests/p2p_sionna_snr_two-rooms/network.yaml
+# 2. Deploy emulation (Example 5 is ideal — indoor scene + mobility)
+UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy --enable-control examples/for_user/05_moving_node/network.yaml
 
 # 3. Open live viewer (browser-based Jupyter)
 uv run --with jupyter jupyter notebook scenes/viewer_live.ipynb
@@ -408,75 +396,19 @@ uv run sine render <topology.yaml> -o img   # Render scene
 uv run sine info                            # System information
 ```
 
-## Utilities
-
-### Spectral Efficiency Calculator
-
-Analyze network topologies and compute spectral efficiency metrics for each wireless link. See [dev_resources/PLAN_calc_spectral_efficiency.md](dev_resources/PLAN_calc_spectral_efficiency.md) for full details.
-
-**Features**:
-- Shannon channel capacity (theoretical maximum)
-- Effective data rate (practical throughput with MCS)
-- Spectral efficiency (bits/s/Hz) with categorization
-- Shannon gap (distance from theoretical limit)
-- Link margin (robustness to fading)
-- BER/PER analysis
-
-**Usage**:
-```bash
-# 1. Start channel server
-uv run sine channel-server
-
-# 2. Run spectral efficiency calculator
-uv run python utilities/calc_spectralefficiency.py examples/for_tests/p2p_fallback_snr_vacuum/network.yaml
-
-# Example output:
-# ╭────────────────────────────────────────────────────────╮
-# │              Spectral Efficiency Analysis              │
-# ├──────┬──────┬─────┬─────────┬────────┬─────────┬──────┤
-# │ Link │ Dist │ SNR │ Shannon │ Effec  │ Spec    │ Gap  │
-# │      │ (m)  │ (dB)│ (Mbps)  │ Rate   │ Eff     │ (dB) │
-# │      │      │     │         │ (Mbps) │ (b/s/Hz)│      │
-# ├──────┼──────┼─────┼─────────┼────────┼─────────┼──────┤
-# │ node1│ 20.0 │ 39.7│ 1059    │ 192    │ 13.2 /  │ 7.4  │
-# │ :eth1│      │     │ (13.2)  │        │ 2.4     │      │
-# │  ↔   │      │     │         │        │ (Medium)│      │
-# │ node2│      │     │         │        │         │      │
-# │ :eth1│      │     │         │        │         │      │
-# ╰──────┴──────┴─────┴─────────┴────────┴─────────┴──────╯
-```
-
-**Supports**:
-- Point-to-point wireless links
-- Shared bridge (MANET) topologies (generates full mesh)
-- Adaptive MCS selection scenarios
-- Fixed modulation/coding configurations
-
 ## Example Topologies
 
 ### User Examples (`examples/for_user/`)
 
+The examples form a progression — each isolating one SiNE capability. Examples 1→2 add co-channel interference to the same mesh geometry. Examples 3→4 move the same P2P geometry indoors to show how Sionna models wall attenuation.
+
 | Example | Description | Scene | Key Feature |
 |---------|-------------|-------|-------------|
-| [01_wireless_mesh/](examples/for_user/01_wireless_mesh/) | 3-node WiFi mesh — SNR only | Free space | Different throughput per link pair from geometry alone |
-| [02_co_channel_interference/](examples/for_user/02_co_channel_interference/) | Same mesh + co-channel interference | Free space | Links go dead when interference > signal |
-| [03_adaptive_wifi_link/](examples/for_user/03_adaptive_wifi_link/) | Point-to-point WiFi 6 | Free space | Automatic 1024-QAM → BPSK rate adaptation |
-| [04_through_the_wall/](examples/for_user/04_through_the_wall/) | Indoor NLOS propagation | Two rooms | Sionna RT finds the doorway path; wall attenuates SNR |
-| [05_moving_node/](examples/for_user/05_moving_node/) | Real-time node mobility | Two rooms | Watch throughput change live as node crosses doorway |
-
-### Test Examples (`examples/for_tests/`)
-
-Key integration test examples (see directory for complete list):
-
-| Example | Description | Features |
-|---------|-------------|----------|
-| [p2p_fallback_snr_vacuum/](examples/for_tests/p2p_fallback_snr_vacuum/) | Baseline free-space (2 nodes, 20m) | Basic wireless, fallback engine |
-| [p2p_sionna_snr_two-rooms/](examples/for_tests/p2p_sionna_snr_two-rooms/) | Indoor multipath | 2 rooms with doorway, Sionna RT |
-| [shared_sionna_snr_equal-triangle/](examples/for_tests/shared_sionna_snr_equal-triangle/) | 3-node MANET | Shared bridge, broadcast, SNR-only |
-| [shared_sionna_sinr_asym-triangle/](examples/for_tests/shared_sionna_sinr_asym-triangle/) | 3-node MANET with SINR | Asymmetric geometry, positive SINR |
-| [shared_sionna_snr_dual-band/](examples/for_tests/shared_sionna_snr_dual-band/) | Dual-band per node | 2.4 GHz + 5 GHz, multi-interface |
-| [shared_sionna_sinr_tdma-rr/](examples/for_tests/shared_sionna_sinr_tdma-rr/) | Round-robin TDMA | Equal slot allocation, SINR |
-| [shared_sionna_sinr_csma/](examples/for_tests/shared_sionna_sinr_csma/) | CSMA with SINR | Carrier sensing, MCS, interference |
+| [01_wireless_mesh/](examples/for_user/01_wireless_mesh/) | 3-node WiFi mesh (SNR only) | Free space | Geometry drives MCS: 30m → 480 Mbps, 91m → 320 Mbps |
+| [02_co_channel_interference/](examples/for_user/02_co_channel_interference/) | **Same mesh as 01** + `enable_sinr: true` | Free space | Outer links die at −3 dB SINR; surviving link drops to ~50 Mbps |
+| [03_adaptive_wifi_link/](examples/for_user/03_adaptive_wifi_link/) | P2P link, free space | Free space | 1024-QAM at 20m; degrades gracefully with distance |
+| [04_through_the_wall/](examples/for_user/04_through_the_wall/) | **Same geometry as 03**, indoors | Two rooms | Same link, concrete wall added — SNR drops 15-20 dB, MCS adapts |
+| [05_moving_node/](examples/for_user/05_moving_node/) | Real-time node mobility | Two rooms | Throughput changes live as client walks through doorway |
 
 ## Channel Server API
 
@@ -526,51 +458,6 @@ UV_PATH=$(which uv) sudo -E $(which uv) run pytest tests/integration/ -s
 UV_PATH=$(which uv) sudo -E $(which uv) run pytest -s
 ```
 
-## Troubleshooting
-
-### iperf3 shows 10+ Gbps instead of expected wireless rate
-
-**Cause:** netem not applied (deployment ran without sudo)
-
-**Solution:** Run deployment with sudo
-```bash
-UV_PATH=$(which uv) sudo -E $(which uv) run sine destroy <topology.yaml>
-UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy <topology.yaml>
-```
-
-### Channel server not responding
-
-**Solution:**
-```bash
-# Start channel server in separate terminal
-uv run sine channel-server
-
-# Verify it's running
-curl http://localhost:8000/health
-```
-
-### "Permission denied" when running sine deploy
-
-**Solution:** Run with sudo:
-```bash
-UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy <topology.yaml>
-```
-
-Or configure passwordless sudo:
-```bash
-sudo tee /etc/sudoers.d/sine <<EOF
-$USER ALL=(ALL) NOPASSWD: /usr/bin/nsenter
-$USER ALL=(ALL) NOPASSWD: /usr/sbin/tc
-EOF
-sudo chmod 0440 /etc/sudoers.d/sine
-```
-
-### Shared bridge TC filter issues
-
-For shared bridge mode troubleshooting (flower filters, HTB, per-destination netem), see:
-- [examples/for_tests/shared_sionna_snr_equal-triangle/TESTING.md](examples/for_tests/shared_sionna_snr_equal-triangle/TESTING.md)
-- Test scripts in `examples/for_tests/shared_sionna_snr_equal-triangle/`
-
 ## Debugging and Inspection
 
 ### Inspecting the Generated Containerlab Topology
@@ -601,13 +488,13 @@ This file contains the topology after stripping all SiNE-specific wireless and n
 **Example**:
 ```bash
 # Deploy network
-UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy examples/for_tests/p2p_fallback_snr_vacuum/network.yaml
+UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy examples/for_user/01_wireless_mesh/network.yaml
 
 # Inspect generated containerlab topology
-cat examples/for_tests/p2p_fallback_snr_vacuum/.sine_clab_topology.yaml
+cat examples/for_user/01_wireless_mesh/.sine_clab_topology.yaml
 
 # File will exist until you destroy
-uv run sine destroy examples/for_tests/p2p_fallback_snr_vacuum/network.yaml
+UV_PATH=$(which uv) sudo -E $(which uv) run sine destroy examples/for_user/01_wireless_mesh/network.yaml
 ```
 
 ## 🤝 Collaboration

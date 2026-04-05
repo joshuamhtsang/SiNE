@@ -18,6 +18,10 @@ On the node1↔node3 link, node3's desired signal travels 91.2m from node1. But 
 
 At negative SINR, the receiver cannot distinguish the desired signal from noise. Result: 100% packet loss. No manual configuration required; geometry determines who interferes with whom.
 
+## Interference Model
+
+This example uses `enable_sinr: true` with no MAC protocol (no CSMA or TDMA). SiNE treats this as the **worst-case scenario**: every node is assumed to be transmitting at all times (`tx_probability = 1.0`). This is the most conservative interference model — real networks with carrier sensing or time-division scheduling would see lower interference.
+
 ## Topology
 
 ```

@@ -1,7 +1,8 @@
 # Example 4: Through the Wall
 #
-# Two nodes in separate concrete rooms. Sionna's ray tracer finds the propagation
-# path through the doorway — no direct line of sight through the wall.
+# Identical geometry to Example 3 — same AP position (ceiling mount),
+# same client position (desk height), same 20m link distance — but now
+# placed inside a two-room concrete environment.
 #
 # Scene: scenes/two_rooms.xml
 #   Two 20m x 40m rooms separated by a concrete wall at x=20m
@@ -12,22 +13,22 @@
 #   y=40 ─────────────────────────────────────────
 #        │           Room 1       │    Room 2      │
 #   y=20 │                       (doorway 1.3m wide)
-#        │    node1 (10,10,1)    │  node2 (30,10,1)│
+#        │   node1 (5,10,2.5)    │  node2 (25,10,1)│
 #   y=0  ─────────────────────────────────────────
-#        x=0          x=10    x=20    x=30      x=40
+#        x=0   x=5  x=10     x=20   x=25 x=30   x=40
 #                        wall at x=20
 #
-# Both nodes are south of the doorway (y=10), so signal must travel
-# through wall or take the long path via the doorway opening.
-# Sionna RT finds the shortest valid propagation path.
+# Both nodes are south of the doorway (y=10). Signal must travel
+# through the concrete wall or find the long path via the doorway.
+# Sionna RT computes the actual multipath propagation.
+#
+# Geometry matches Example 3: 20m horizontal, 1.5m height difference (~20.06m 3D)
+# The only change is the scene — free space becomes two concrete rooms.
 #
 # Expected behavior:
-# - Wall attenuation drops SNR ~15-20 dB vs free space at same distance
+# - Wall attenuation drops SNR ~15-20 dB vs free space at same geometry
 # - Sionna selects a more robust MCS (e.g., MCS 4-7 instead of MCS 10)
 # - Link remains usable — NLOS degrades quality, doesn't kill it
-#
-# Compare with Example 3 (free space at 20m, MCS 10 ~480 Mbps):
-# - This example (NLOS through rooms): MCS ~4-7, ~100-300 Mbps
 
 name: through-the-wall-04
 
@@ -48,9 +49,9 @@ topology:
           ip_address: 10.0.0.1/24
           wireless:
             position:
-              x: 10.0    # Room 1 (west room)
+              x: 5.0     # Room 1 (west room), ceiling-mounted AP — matches Example 3
               y: 10.0    # South side (doorway is at y=20)
-              z: 1.0
+              z: 2.5     # Ceiling height (same as Example 3)
             frequency_ghz: 5.18
             bandwidth_mhz: 80
             rf_power_dbm: 20.0
@@ -70,9 +71,9 @@ topology:
           ip_address: 10.0.0.2/24
           wireless:
             position:
-              x: 30.0    # Room 2 (east room)
+              x: 25.0    # Room 2 (east room), desk-height client — matches Example 3
               y: 10.0    # South side (doorway is at y=20)
-              z: 1.0
+              z: 1.0     # Desk height (same as Example 3)
             frequency_ghz: 5.18
             bandwidth_mhz: 80
             rf_power_dbm: 20.0

@@ -5,19 +5,19 @@
 # modulation automatically.
 #
 # Nodes:
-# - node1 (AP):     (0, 0, 2.5) — ceiling-mounted access point
-# - node2 (client): (20, 0, 1.0) — desk-height client
+# - node1 (AP):     (5, 10, 2.5) — ceiling-mounted access point
+# - node2 (client): (25, 10, 1.0) — desk-height client
 #
-# At 20m in free space (5.18 GHz, 80 MHz, hw_dipole, 20 dBm):
-# - Distance: ~20m
+# At ~20m in free space (5.18 GHz, 80 MHz, hw_dipole, 20 dBm):
+# - Distance: ~20.06m (3D: sqrt(20² + 1.5²))
 # - SNR: ~36 dB
 # - Selected MCS: 10 (1024-QAM 3/4) → ~480 Mbps
 #
 # Try changing node2's x position to see MCS adapt:
-# - 20m → SNR ~36 dB → MCS 10 (~480 Mbps)
-# - 50m → SNR ~28 dB → MCS 8  (~340 Mbps)
-# - 100m → SNR ~22 dB → MCS 6  (~192 Mbps)
-# - 200m → SNR ~16 dB → MCS 4  (~96 Mbps)
+# - x=25  (20m) → SNR ~36 dB → MCS 10 (~480 Mbps)
+# - x=55  (50m) → SNR ~28 dB → MCS 8  (~340 Mbps)
+# - x=105 (100m) → SNR ~22 dB → MCS 6  (~192 Mbps)
+# - x=205 (200m) → SNR ~16 dB → MCS 4  (~96 Mbps)
 
 name: adaptive-wifi-link-03
 
@@ -38,8 +38,8 @@ topology:
           ip_address: 192.168.1.1/24
           wireless:
             position:
-              x: 0
-              y: 0
+              x: 5
+              y: 10
               z: 2.5        # Ceiling height (AP)
             frequency_ghz: 5.18
             bandwidth_mhz: 80
@@ -60,8 +60,8 @@ topology:
           ip_address: 192.168.1.2/24
           wireless:
             position:
-              x: 20         # Change this to vary distance and observe MCS selection
-              y: 0
+              x: 25         # Change this to vary distance and observe MCS selection
+              y: 10
               z: 1.0        # Desk height (client)
             frequency_ghz: 5.18
             bandwidth_mhz: 80

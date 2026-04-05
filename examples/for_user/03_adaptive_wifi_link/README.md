@@ -5,9 +5,9 @@ A point-to-point WiFi 6 link with automatic rate adaptation. At 20m, Sionna comp
 ## Topology
 
 ```
-node1 (AP)          node2 (client)
-(0, 0, 2.5)  ←20m→  (20, 0, 1.0)
-ceiling mount        desk height
+node1 (AP)           node2 (client)
+(5, 10, 2.5)  ←20m→  (25, 10, 1.0)
+ceiling mount         desk height
 ```
 
 ## MCS Selection Table
@@ -71,12 +71,12 @@ docker exec clab-adaptive-wifi-link-03-node1 iperf3 -c 192.168.1.2 -t 5
 
 ## Try Varying the Distance
 
-Edit `network.yaml` and change node2's `x` position (line with `x: 20`):
+Edit `network.yaml` and change node2's `x` position (line with `x: 25`):
 
 ```yaml
 position:
-  x: 100    # Change from 20 to 100 for ~22 dB SNR → MCS 6
-  y: 0
+  x: 105    # Change from 25 to 105 for ~22 dB SNR → MCS 6
+  y: 10
   z: 1.0
 ```
 

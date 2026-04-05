@@ -197,16 +197,16 @@ uv run sine channel-server
 # Deploy emulation (prints deployment summary with containers, interfaces, netem params)
 # NOTE: Requires sudo for netem (network emulation) configuration
 # CRITICAL: MUST use full pattern - UV_PATH=$(which uv) sudo -E $(which uv) run ...
-UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy examples/for_user/adaptive_mcs_wifi6/network.yaml
+UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy examples/for_user/01_wireless_mesh/network.yaml
 
 # Deploy with control API enabled (for dynamic position updates and runtime control)
-UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy --enable-control examples/for_tests/p2p_sionna_snr_two-rooms/network.yaml
+UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy --enable-control examples/for_user/05_moving_node/network.yaml
 
 # Validate topology
-uv run sine validate examples/for_user/adaptive_mcs_wifi6/network.yaml
+uv run sine validate examples/for_user/01_wireless_mesh/network.yaml
 
 # Render scene to image (does NOT require channel server)
-uv run sine render examples/for_tests/p2p_sionna_snr_two-rooms/network.yaml -o scene.png
+uv run sine render examples/for_user/04_through_the_wall/network.yaml -o scene.png
 
 # Check system info
 uv run sine info
@@ -215,7 +215,7 @@ uv run sine info
 uv run sine status
 
 # Destroy emulation
-UV_PATH=$(which uv) sudo -E $(which uv) run sine destroy examples/for_user/adaptive_mcs_wifi6/network.yaml
+UV_PATH=$(which uv) sudo -E $(which uv) run sine destroy examples/for_user/01_wireless_mesh/network.yaml
 
 # Interactive scene viewer (Jupyter notebook)
 uv run --with jupyter jupyter notebook scenes/viewer.ipynb
@@ -249,43 +249,15 @@ Example topologies are provided in `examples/`:
 
 ### User Examples (`examples/for_user/`)
 
-| Example | Description | Link Type | Scene |
-|---------|-------------|-----------|-------|
-| `adaptive_mcs_wifi6/` | WiFi 6 MCS selection (2 nodes) | wireless | `vacuum.xml` |
-| `fixed_link/` | Fixed netem parameters (no RF) | fixed_netem | (none) |
-| `mobility/` | Movement scripts and API examples | wireless | Various |
+The examples form a progression — each isolating one SiNE capability. Examples 1→2 add interference to the same mesh; examples 3→4 move the same P2P geometry indoors.
 
-### Test Examples (Integration Testing)
-
-Available in `examples/for_tests/` with flat naming pattern:
-
-| Example | Description | MAC Protocol | Features |
-|---------|-------------|--------------|----------|
-| `p2p_fallback_snr_vacuum/` | Free-space (2 nodes, 20m) | N/A | Baseline, fallback engine |
-| `p2p_sionna_snr_two-rooms/` | Indoor multipath | N/A | 2 rooms with doorway |
-| `shared_sionna_sinr_csma-mcs/` | CSMA/CA with adaptive MCS | CSMA/CA | Carrier sensing, SINR, MCS adaptation |
-
-### SINR/Interference Test Examples
-
-| Example | Description | MAC Protocol | Interference Model |
-|---------|-------------|--------------|-------------------|
-| `shared_sionna_snr_equal-triangle/` | 3-node MANET, shared bridge | N/A | SNR only (no interference) |
-| `shared_sionna_sinr_equal-triangle/` | 3-node MANET with SINR | N/A | Co-channel interference |
-| `shared_sionna_sinr_asym-triangle/` | Asymmetric 3-node MANET | N/A | Variable link quality, SINR |
-| `shared_sionna_sinr_tdma-rr/` | Round-robin TDMA (equal slots) | TDMA | Probability-weighted (20% each) |
-| `shared_sionna_sinr_tdma-fixed/` | Fixed TDMA schedule | TDMA | Per-node slot assignments |
-| `shared_sionna_snr_dual-band/` | Dual-band (2.4 GHz + 5 GHz) | N/A | Multi-interface per node |
-
-The examples demonstrate:
-- **Free-space propagation** (`p2p_fallback_snr_vacuum/`)
-- **Indoor multipath** (`p2p_sionna_snr_two-rooms/`)
-- **Adaptive modulation** (`for_user/adaptive_mcs_wifi6/`, `for_tests/shared_sionna_sinr_csma-mcs/`)
-- **MANET broadcast domains** (`shared_sionna_snr_equal-triangle/`)
-- **Fixed link emulation** (`for_user/fixed_link/`)
-- **Node mobility** (`for_user/mobility/`)
-- **SINR computation** (`shared_sionna_sinr_*`)
-- **MAC protocols** (CSMA/CA, TDMA)
-- **Multi-radio nodes** (`shared_sionna_snr_dual-band/`)
+| Example | Description | Scene | Key Feature |
+|---------|-------------|-------|-------------|
+| `01_wireless_mesh/` | 3-node WiFi mesh, SNR only | `vacuum.xml` | Geometry drives MCS: 30m → 480 Mbps, 91m → 320 Mbps |
+| `02_co_channel_interference/` | Same mesh + `enable_sinr: true` | `vacuum.xml` | Outer links die at −3 dB SINR (tx_probability=1.0) |
+| `03_adaptive_wifi_link/` | P2P link, free space | `vacuum.xml` | 1024-QAM at 20m; degrades gracefully with distance |
+| `04_through_the_wall/` | Same geometry as 03, indoors | `two_rooms.xml` | Same link + concrete wall → SNR drops 15-20 dB |
+| `05_moving_node/` | Real-time node mobility | `two_rooms.xml` | Throughput changes live as client walks through doorway |
 
 ## Channel Server API
 
@@ -1330,7 +1302,7 @@ Link Parameters:
 
 ### Example
 
-See `examples/for_user/adaptive_mcs_wifi6/` for a complete example with deployment and throughput testing instructions.
+See `examples/for_user/03_adaptive_wifi_link/` and `examples/for_user/04_through_the_wall/` for complete examples with deployment and throughput testing instructions.
 
 ### Data Rate Calculation with MCS
 

@@ -1,29 +1,29 @@
 # Example 4: Through the Wall
 
-Sionna's ray tracer finds the doorway path between two concrete rooms. Wall attenuation drops SNR by ~15-20 dB compared to free space — the radio automatically selects a more robust modulation.
+**Same geometry as [Example 3](../03_adaptive_wifi_link/)** — same AP position (ceiling mount), same client position (desk height), same 20m link — but now placed inside a two-room concrete environment. Sionna's ray tracer finds the doorway path; wall attenuation drops SNR by ~15-20 dB and MCS adapts automatically.
 
 ## Room Layout
 
 ```
-y=40 ─────────────────────────────────────────
-     │           Room 1       │    Room 2      │
-y=20 │                       (doorway 1.3m wide)
-     │    node1 (10,10,1)    │  node2 (30,10,1)│
-y=0  ─────────────────────────────────────────
-     x=0         x=10     x=20    x=30      x=40
-                              wall at x=20
+y=40 ──────────────────────────────────────────
+     │            Room 1      │    Room 2       │
+y=20 │                        (doorway 1.3m wide)
+     │   node1 (5,10,2.5)    │  node2 (25,10,1) │
+y=0  ──────────────────────────────────────────
+     x=0   x=5         x=20 x=25          x=40
+                   wall at x=20
 ```
 
-Both nodes sit south of the doorway (y=10). Signal must travel through the concrete wall or find the long path up through the doorway. Sionna RT computes the actual multipath propagation.
+Both nodes sit south of the doorway (y=10). Signal must travel through the concrete wall or find the longer path up through the doorway opening. Sionna RT computes the actual multipath propagation.
 
-## Impact of Indoor Propagation
+## Impact of Adding a Concrete Wall (same geometry as Example 3)
 
-| Scenario | Path | SNR | MCS | Rate |
-|----------|------|-----|-----|------|
-| Free space (Example 3, 20m) | Direct LOS | ~36 dB | 10 | ~480 Mbps |
-| Two rooms (this example) | Via doorway / wall | ~18-22 dB | 4-7 | ~100-300 Mbps |
+| Scenario | Scene | Path | SNR | MCS | Rate |
+|----------|-------|------|-----|-----|------|
+| Example 3 | Free space | Direct LOS | ~36 dB | 10 | ~480 Mbps |
+| Example 4 (this) | Two rooms | Via doorway / wall | ~18-22 dB | 4-7 | ~100-300 Mbps |
 
-The link remains usable — NLOS degrades quality but doesn't kill it. The radio adapts automatically.
+The only change is the scene file. The link remains usable — NLOS degrades quality but doesn't kill it. The radio adapts automatically.
 
 ## Prerequisites
 
