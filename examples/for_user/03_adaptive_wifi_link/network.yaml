@@ -35,7 +35,7 @@ topology:
         - apk add --no-cache iproute2 iputils iperf3
       interfaces:
         eth1:
-          ip_address: 192.168.1.1/24
+          ip_address: 10.0.0.1/24
           wireless:
             position:
               x: 5
@@ -57,7 +57,7 @@ topology:
         - apk add --no-cache iproute2 iputils iperf3
       interfaces:
         eth1:
-          ip_address: 192.168.1.2/24
+          ip_address: 10.0.0.2/24
           wireless:
             position:
               x: 25         # Change this to vary distance and observe MCS selection
