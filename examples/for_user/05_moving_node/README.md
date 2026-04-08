@@ -45,7 +45,7 @@ iperf3 -c 10.0.1.1 -t 120 -i 1
 ```bash
 # Walk client northward past the doorway (1 m/s)
 uv run python examples/for_user/05_moving_node/linear_movement.py \
-    client 30.0 5.0 1.0 30.0 35.0 1.0 1.0
+    client 30.0 5.0 1.0 30.0 38.0 1.0 1.0
 ```
 
 ## Scene Layout
@@ -71,7 +71,7 @@ The AP is ceiling-mounted in Room 1, directly aligned with the doorway (y=20). T
 |-----------------|----------|---------------------|
 | y=5 (start) | NLOS — signal bounces via doorway at oblique angle | ~50-100 Mbps |
 | y=20 (doorway) | Near-LOS — client aligned with doorway | ~300+ Mbps |
-| y=35 (past doorway) | NLOS again — signal bounces back through doorway | ~100-200 Mbps |
+| y=38 (past doorway) | NLOS again — signal bounces back through doorway | ~100-200 Mbps |
 
 ## Controller API
 
@@ -131,7 +131,12 @@ Open the notebook in your browser (not VS Code's Jupyter extension). In the note
 
 Run Cell 7 while the movement script is running to see channel metrics (SNR, delay spread, K-factor) and propagation paths update live.
 
-![](./images/user-example-05_paths-viz.png)
+Cell 5 would yield a vizualization of the propagation paths:
+![image](./images/user-example-05_paths-viz.png)
+
+Cell 10 would yield a signal vs time plot, clearly indicating transitions between dominant propagation modes. The moment when a LOS path opens up between the AP and client is clearly visible.
+
+![image](./images/user-example-05_signalplot.png)
 
 ## Destroy
 

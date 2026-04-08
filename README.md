@@ -400,9 +400,16 @@ uv run --with jupyter jupyter notebook scenes/viewer_live.ipynb
 We recommend making a copy of [viewer_live.ipynb](./scenes/viewer_live.ipynb) before running — Jupyter notebooks can be tricky to reset mid-session.
 
 **What you'll see:**
-- RMS delay spread, coherence bandwidth, K-factor
-- 3D scene preview with propagation paths
-- Real-time updates as nodes move
+
+Sionna ray-traces the scene in real time as the node moves, showing which propagation paths are active and how signal level changes:
+
+![Propagation paths through doorway](examples/for_user/05_moving_node/images/user-example-05_paths-viz.png)
+
+*3D scene view from the live viewer — AP in Room 1 (left), client in Room 2 (right). Propagation paths (coloured lines) are updated by Sionna each time the client position changes. The direct path through the doorway appears when the client aligns with the opening.*
+
+![Signal level vs time](examples/for_user/05_moving_node/images/user-example-05_signalplot.png)
+
+*Received signal level over time as the client walks from y = 5 m to y = 38 m at 1 m/s. The dominant propagation mode transitions from refraction (signal passing through the concrete wall) to LOS (direct path through the doorway) and back again. The signal spike at the LOS transition is ~15–20 dB, driving the adaptive MCS from 64-QAM to 1024-QAM.*
 
 **Important:** Run in standard Jupyter Notebook (browser), not VS Code's Jupyter extension.
 
