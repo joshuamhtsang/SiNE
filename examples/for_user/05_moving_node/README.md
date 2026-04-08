@@ -131,6 +131,8 @@ Open the notebook in your browser (not VS Code's Jupyter extension). In the note
 
 Run Cell 7 while the movement script is running to see channel metrics (SNR, delay spread, K-factor) and propagation paths update live.
 
+![](./images/user-example-05_paths-viz.png)
+
 ## Destroy
 
 ```bash

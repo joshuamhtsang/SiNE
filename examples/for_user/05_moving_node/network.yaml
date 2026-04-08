@@ -13,9 +13,10 @@
 # - client (node2): (30, 5, 1.0)  — Room 2, starts south/far from doorway
 #
 # Movement scenario:
-# - Move client north from (30, 5, 1) to (30, 35, 1) at 1 m/s
+# - Move client north from (30, 5, 1) to (30, 38, 1) at 1 m/s
 # - As client aligns with doorway (y=20), LOS path appears → SNR spikes
 # - Throughput climbs from ~50-100 Mbps to 300+ Mbps near doorway
+# - After passing doorway, client moves back into NLOS as it approaches north wall
 #
 # Run this example with --enable-control to activate the Controller API
 # (required for real-time position updates).

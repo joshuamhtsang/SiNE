@@ -18,11 +18,11 @@ Usage:
 Examples:
     # Walk client northward past the doorway (1 m/s)
     uv run python examples/for_user/05_moving_node/linear_movement.py \\
-        client 30.0 5.0 1.0 30.0 35.0 1.0 1.0
+        client 30.0 5.0 1.0 30.0 38.0 1.0 1.0
 
     # Walk client southward back to start (1 m/s)
     uv run python examples/for_user/05_moving_node/linear_movement.py \\
-        client 30.0 35.0 1.0 30.0 5.0 1.0 1.0
+        client 30.0 38.0 1.0 30.0 5.0 1.0 1.0
 """
 
 import asyncio
