@@ -39,12 +39,16 @@ MCS thresholds (from `examples/common_data/wifi6_mcs.csv`):
 
 ## Prerequisites
 
+Run all commands from the **SiNE root directory** — you'll need two terminals open.
+
+**Terminal 1** — Start the channel server:
 ```bash
 uv run sine channel-server
 ```
 
 ## Deploy
 
+**Terminal 2** — Deploy the emulation:
 ```bash
 UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy examples/for_user/03_adaptive_wifi_link/network.yaml
 ```

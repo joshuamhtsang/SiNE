@@ -34,12 +34,16 @@ node1 (0, 0, 1) ------- 30m ------- node2 (30, 0, 1)
 
 ## Prerequisites
 
+Run all commands from the **SiNE root directory** — you'll need two terminals open.
+
+**Terminal 1** — Start the channel server:
 ```bash
 uv run sine channel-server
 ```
 
 ## Deploy
 
+**Terminal 2** — Deploy the emulation:
 ```bash
 UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy examples/for_user/02_co_channel_interference/network.yaml
 ```

@@ -24,14 +24,16 @@ The rate difference is entirely geometry-driven. No manual rate configuration.
 
 ## Prerequisites
 
-The channel server must be running before deployment:
+Run all commands from the **SiNE root directory** — you'll need two terminals open.
 
+**Terminal 1** — Start the channel server:
 ```bash
 uv run sine channel-server
 ```
 
 ## Deploy
 
+**Terminal 2** — Deploy the emulation:
 ```bash
 UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy examples/for_user/01_wireless_mesh/network.yaml
 ```

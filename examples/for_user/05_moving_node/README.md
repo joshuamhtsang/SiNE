@@ -4,7 +4,7 @@ Watch iperf3 throughput change in real-time as a node walks through a doorway. S
 
 ## Setup
 
-This example requires three terminals running simultaneously.
+You'll need five terminals open for this one. Run all commands from the **SiNE root directory**.
 
 ### Terminal 1 — Channel server
 
@@ -20,17 +20,27 @@ UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy --enable-control example
 
 The `--enable-control` flag starts the Controller API on port 8002.
 
-### Terminal 3 — iperf3 throughput monitor
+### Terminal 3 — iperf3 server (AP node)
 
 ```bash
-# Start iperf3 server on ap node
-docker exec -d clab-moving-node-05-ap iperf3 -s
-
-# Run continuous iperf3 from client (watch throughput change as node moves)
-docker exec clab-moving-node-05-client iperf3 -c 10.0.1.1 -t 120 -i 1
+docker exec -it clab-moving-node-05-ap sh
 ```
 
-### Terminal 3 (alternative) — Run movement script
+```sh
+iperf3 -s
+```
+
+### Terminal 4 — iperf3 client (watch throughput change as node moves)
+
+```bash
+docker exec -it clab-moving-node-05-client sh
+```
+
+```sh
+iperf3 -c 10.0.1.1 -t 120 -i 1
+```
+
+### Terminal 5 — Run movement script
 
 ```bash
 # Walk client northward past the doorway (1 m/s)
@@ -101,8 +111,32 @@ Edit `waypoint_movement.py` to define your own path, then run:
 uv run python examples/for_user/05_moving_node/waypoint_movement.py
 ```
 
+## Live Visualization (Optional)
+
+Watch propagation paths update in real-time as the client moves through the doorway.
+
+### Terminal 6 — Live viewer
+
+```bash
+# Recommended: copy the notebook before running
+cp scenes/viewer_live.ipynb scenes/viewer_live_copy.ipynb
+
+uv run --with jupyter jupyter notebook scenes/viewer_live_copy.ipynb
+```
+
+Open the notebook in your browser (not VS Code's Jupyter extension). In the notebook:
+
+- **Cell 5** — Single snapshot with 3D scene and propagation paths
+- **Cell 7** — Continuous auto-refresh (uncomment to enable, 1-second updates)
+
+Run Cell 7 while the movement script is running to see channel metrics (SNR, delay spread, K-factor) and propagation paths update live.
+
 ## Destroy
 
 ```bash
 UV_PATH=$(which uv) sudo -E $(which uv) run sine destroy examples/for_user/05_moving_node/network.yaml
 ```
+
+## Next
+
+Ready to build your own? Head to the [Creating Your Own Network](../../README.md#creating-your-own-network) section in the main README.

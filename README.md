@@ -1,45 +1,45 @@
 # SiNE - Sionna-based Network Emulation
 
-Wireless network emulation using Sionna ray tracing and Containerlab.
+## Table of Contents
+
+- [Overview](#overview)
+- [Features](#features)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Example Networks and Topologies](#example-networks-and-topologies)
+- [Creating Your Own Network](#creating-your-own-network)
+- [Advanced Features](#advanced-features)
+  - [Adaptive MCS Selection](#adaptive-mcs-selection)
+  - [SINR and Interference Modeling](#sinr-and-interference-modeling)
+  - [MANET Support](#manet-support)
+  - [Node Mobility](#node-mobility)
+  - [Real-Time Visualization](#real-time-visualization)
+- [CLI Commands](#cli-commands)
+- [Channel Server API](#channel-server-api)
+- [Testing](#testing)
+- [Debugging and Inspection](#debugging-and-inspection)
+- [Collaboration](#-collaboration)
+- [License](#license)
 
 ## Overview
 
-SiNE (pronounced "SHEE-na") stands for **Si**onna **N**etwork **E**mulation. Build emulated wireless networks with Docker containers as nodes, allowing you to deploy user-space applications on each node.
+SiNE (pronounced "SHEE-na") stands for **Si**onna **N**etwork **E**mulation. It lets you build emulated wireless networks with Docker containers as nodes, allowing you to deploy real applications on each node. It's built on the integration of several frameworks:
 
-**Integration:**
-- **Containerlab**: Container deployment and network topology management
-- **Nvidia Sionna v1.2.1**: Ray tracing for wireless channel modeling
-- **Linux netem**: Apply computed channel conditions (delay, jitter, loss, bandwidth)
-
-**How it works:**
-1. Parse `network.yaml` topology file
-2. Deploy containers using Containerlab
-3. Compute wireless channel conditions using Sionna ray tracing
-4. Apply netem parameters to emulate wireless links
-
-```python
-delay_ms = propagation_delay       # From strongest path (Sionna RT)
-jitter_ms = 0.0                    # Set to 0 (requires MAC/queue modeling, not PHY)
-loss_percent = PER × 100           # From BER/BLER calculation
-rate_mbps = modulation_based_rate  # Based on MCS, bandwidth, code rate
-```
+- **Containerlab**: Handles container deployment and network topology management
+- **Nvidia Sionna v1.2.1**: Performs ray tracing and propagation modelling for wireless channel characterization
+- **Linux netem**: Applies the computed channel conditions (delay, jitter, loss, bandwidth) to the links
 
 ## Features
 
-- YAML-based network topology configuration
-- **Two link types**: Wireless (ray-traced) or Fixed netem (direct parameters)
-- **Two MANET modes**: Point-to-point links or Shared bridge (true broadcast medium)
-- Ray-traced channel computation with Sionna v1.2.1
-- Automatic netem configuration based on channel conditions
-- Modulation schemes: BPSK, QPSK, 16/64/256/1024-QAM
-- Forward error correction: LDPC, Polar, Turbo
-- **Adaptive MCS selection** (WiFi 6 style, SNR-based)
-- **SINR computation** with co-channel and adjacent-channel interference
-- **ACLR filtering** (IEEE 802.11ax-2021 spectral mask)
-- **MAC protocol support**: TDMA, CSMA/CA with configurable transmission probabilities
-- Indoor/outdoor scenes with Mitsuba XML (ITU material naming)
-- Real-time mobility support with 100ms update polling
-- Live visualization with Jupyter notebooks
+- **Two link types**: Wireless (Sionna ray-traced) or Fixed netem (direct parameter control)
+- **Two MANET modes**: Point-to-point veth pairs or Shared bridge (true broadcast medium)
+- **Adaptive MCS selection**: WiFi 6-style SNR-based switching across BPSK → 1024-QAM with LDPC/Polar/Turbo FEC
+- **SINR and interference modeling**: Co-channel and adjacent-channel interference with IEEE 802.11ax ACLR filtering
+- **MAC protocol support**: TDMA (slot-weighted throughput) and CSMA/CA (carrier-sense) interference modeling
+- **Indoor/outdoor scenes**: Mitsuba XML ray tracing with ITU material naming
+- **Real-time mobility**: Position updates trigger live channel recomputation and netem updates
+- **Live visualization**: Jupyter notebook viewer with 3D scene, propagation paths, and channel metrics
 
 ## Requirements
 
@@ -75,41 +75,61 @@ uv sync --extra dev
 
 ## Quick Start
 
-Deploy a simple two-node wireless network with adaptive MCS (WiFi 6):
+Deploy a simple point-to-point WiFi link between two nodes with adaptive MCS (WiFi 6). Run all commands from the **SiNE root directory** — you'll need three terminals open.
 
+**Terminal 1** — Start the channel server:
 ```bash
-# Terminal 1: Start channel server
 uv run sine channel-server
-
-# Terminal 2: Deploy emulation
-UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy examples/for_user/01_wireless_mesh/network.yaml
-
-# Terminal 3: Test throughput
-docker exec -d clab-wireless-mesh-01-node2 iperf3 -s
-docker exec clab-wireless-mesh-01-node1 iperf3 -c 192.168.100.2 -t 5
-
-# Expected: ~480 Mbps (30m link, MCS 10)
-
-# Cleanup
-UV_PATH=$(which uv) sudo -E $(which uv) run sine destroy examples/for_user/01_wireless_mesh/network.yaml
 ```
+
+**Terminal 2** — Deploy the emulation:
+```bash
+UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy examples/for_user/03_adaptive_wifi_link/network.yaml
+```
+
+**Terminal 3** — Test throughput:
+```bash
+docker exec -d clab-adaptive-wifi-link-03-node2 iperf3 -s
+docker exec clab-adaptive-wifi-link-03-node1 iperf3 -c 10.0.0.2 -t 5
+# Expected: ~480 Mbps (20m link, MCS 10, 1024-QAM)
+```
+
+When you're done, tear it down from Terminal 2:
+```bash
+UV_PATH=$(which uv) sudo -E $(which uv) run sine destroy examples/for_user/03_adaptive_wifi_link/network.yaml
+```
+
+More examples are described in the [Example Networks and Topologies](#example-networks-and-topologies) section.
 
 **Why sudo?** Network emulation requires sudo to access container network namespaces via `nsenter` and configure `tc` with netem. Without sudo, links operate at full bandwidth (~10+ Gbps) without wireless emulation.
 
+## Example Networks and Topologies
+
+A set of example networks and topologies can be found under the directory `examples/for_user/`. These examples form a natural progression — each isolating a specific SiNE capability. Examples 1→2 add co-channel interference to the same 3-node mesh. Examples 3→4 use the same 2-node P2P geometry, moving it indoors to show how Sionna models wall attenuation. Example 5 adds real-time mobility to the indoor scene.
+
+| Example | Nodes | Scene | Key Feature |
+|---------|-------|-------|-------------|
+| [01_wireless_mesh/](examples/for_user/01_wireless_mesh/) | 3 (shared bridge mesh) | Free space | SNR drives MCS per link: 30m → MCS 10 (~480 Mbps), 91m → MCS 7 (~320 Mbps) |
+| [02_co_channel_interference/](examples/for_user/02_co_channel_interference/) | 3 (same mesh as 01) | Free space | `enable_sinr: true` added — outer 91m links die at −3 dB SINR; surviving 30m link drops to ~50 Mbps |
+| [03_adaptive_wifi_link/](examples/for_user/03_adaptive_wifi_link/) | 2 (AP + client, P2P) | Free space | 1024-QAM at 20m (~480 Mbps); change node position in YAML to watch MCS degrade |
+| [04_through_the_wall/](examples/for_user/04_through_the_wall/) | 2 (same geometry as 03) | Two rooms | Concrete wall between nodes — SNR drops 15-20 dB vs Example 3, MCS falls to 64-QAM or lower |
+| [05_moving_node/](examples/for_user/05_moving_node/) | 2 (AP fixed, client moves) | Two rooms | Client walks through doorway; throughput rises from ~50 Mbps to 300+ Mbps as LOS path opens |
+
 ## Creating Your Own Network
+
+SiNE lets you create your own wireless networks by defining a scene (the physical environment) and a topology file (your nodes and links). Here's how to get started.
 
 ### 1. Create a Scene File (Optional)
 
-Define the physical environment for ray tracing using Mitsuba XML format:
+SiNE uses Mitsuba XML to describe the physical environment for Sionna ray tracing. You can:
 
-- Use existing scenes from `scenes/` or create your own
-- Materials must use ITU naming (e.g., `itu_concrete`, `itu_glass`)
-- For free-space propagation, use `scenes/vacuum.xml`
-- For fixed netem links only, no scene file is required
+- Start with one of the ready-made scenes in `scenes/` — use `scenes/vacuum.xml` for free-space propagation
+- Build your own scene in Mitsuba XML — materials must use ITU naming (e.g. `itu_concrete`, `itu_glass`)
+- Skip the scene entirely if you're only using fixed netem links
 
-### 2. Create Network Topology (`network.yaml`)
+### 2. Create a Network Topology (`network.yaml`)
 
-Define nodes, interfaces, and links:
+Your topology file describes the nodes, their wireless interfaces, and how they connect. Here's a minimal two-node example:
 
 ```yaml
 name: my-network
@@ -169,15 +189,13 @@ topology:
     - endpoints: [node1:eth1, node2:eth1]
 ```
 
-**Key points:**
-- Set `enable_sinr: true` for multi-node interference modeling (SINR), or `false` for SNR-only mode
-- Each interface must have either `wireless` or `fixed_netem` parameters
-- Both endpoints of a link must be the same type
-- Scene file required for wireless links only
-- Antenna config: Specify **either** `antenna_pattern` (for Sionna RT patterns like `iso`/`hw_dipole`) **or** `antenna_gain_dbi` (for custom gain values), never both. When using `antenna_gain_dbi`, Sionna automatically uses the `iso` pattern (0 dBi) and adds your explicit gain during SNR calculation to prevent double-counting.
-- MCS config: Specify **either** `mcs_table` (for adaptive MCS) **or** fixed `modulation`/`fec_type`/`fec_code_rate` parameters
+**A few things to keep in mind:**
+- Enable `enable_sinr: true` if you want co-channel interference modeled across nodes; leave it `false` for SNR-only
+- Every interface needs either `wireless` or `fixed_netem` parameters — both endpoints of a link must use the same type
+- For antennas, use **either** `antenna_pattern` (e.g. `iso`, `hw_dipole`) **or** `antenna_gain_dbi` — never both, to avoid double-counting Sionna's built-in pattern gains
+- For modulation, use **either** `mcs_table` (adaptive MCS) **or** explicit `modulation`/`fec_type`/`fec_code_rate` parameters
 
-See `examples/for_user/` for reference topologies.
+Take a look at `examples/for_user/` for complete reference topologies.
 
 ### 3. Deploy and Test
 
@@ -192,14 +210,14 @@ UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy path/to/network.yaml
 docker exec -it clab-<topology>-<node> <command>
 
 # Cleanup
-uv run sine destroy path/to/network.yaml
+UV_PATH=$(which uv) sudo -E $(which uv) run sine destroy path/to/network.yaml
 ```
 
 ## Advanced Features
 
 ### Adaptive MCS Selection
 
-Automatically select optimal modulation and coding based on SNR (WiFi 6 style):
+SiNE automatically picks the best modulation and coding scheme for current conditions, WiFi 6-style. Point it at an MCS table and it handles the rest:
 
 ```yaml
 interfaces:
@@ -330,7 +348,7 @@ See [02_co_channel_interference/](examples/for_user/02_co_channel_interference/)
 
 ### MANET Support
 
-Two modes for Mobile Ad-hoc Networks:
+SiNE supports two MANET modes — pick the one that fits your scenario:
 
 **1. Point-to-Point Links (Default)**
 - Each link is a separate veth pair with independent netem
@@ -356,11 +374,17 @@ See [01_wireless_mesh/](examples/for_user/01_wireless_mesh/) (SNR only) and [02_
 
 ### Node Mobility
 
-SiNE supports real-time position updates with automatic channel recomputation. See [CLAUDE.md](CLAUDE.md) for detailed mobility API documentation and examples.
+SiNE supports real-time node mobility — move a node and the channel is automatically recomputed and netem updated on all affected links. Position updates are sent via a REST control API running on port 8002, and SiNE polls for changes every 100 ms by default. Deploy with `--enable-control` to activate it:
+
+```bash
+UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy --enable-control examples/for_user/05_moving_node/network.yaml
+```
+
+See [05_moving_node/](examples/for_user/05_moving_node/) for a complete walkthrough, including mobility scripts for linear, circular, and random-walk movement.
 
 ### Real-Time Visualization
 
-Monitor running emulations with live channel metrics and 3D visualization:
+Want to see what's happening inside your network as it runs? SiNE includes a live Jupyter viewer with 3D scene rendering, propagation paths, and channel metrics:
 
 ```bash
 # 1. Start channel server
@@ -373,16 +397,18 @@ UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy --enable-control example
 uv run --with jupyter jupyter notebook scenes/viewer_live.ipynb
 ```
 
-Due to the nature of Jupyter notebooks, it's easier to make a copy of the notebook [viewer_live.ipynb](./scenes/viewer_live.ipynb) before running.
+We recommend making a copy of [viewer_live.ipynb](./scenes/viewer_live.ipynb) before running — Jupyter notebooks can be tricky to reset mid-session.
 
-**Features:**
+**What you'll see:**
 - RMS delay spread, coherence bandwidth, K-factor
 - 3D scene preview with propagation paths
-- Real-time updates for mobility scenarios
+- Real-time updates as nodes move
 
 **Important:** Run in standard Jupyter Notebook (browser), not VS Code's Jupyter extension.
 
 ## CLI Commands
+
+All SiNE operations go through the `sine` CLI:
 
 ```bash
 uv run sine deploy <topology.yaml>          # Deploy emulation
@@ -394,23 +420,9 @@ uv run sine render <topology.yaml> -o img   # Render scene
 uv run sine info                            # System information
 ```
 
-## Example Topologies
-
-### User Examples (`examples/for_user/`)
-
-The examples form a progression — each isolating one SiNE capability. Examples 1→2 add co-channel interference to the same mesh geometry. Examples 3→4 move the same P2P geometry indoors to show how Sionna models wall attenuation.
-
-| Example | Description | Scene | Key Feature |
-|---------|-------------|-------|-------------|
-| [01_wireless_mesh/](examples/for_user/01_wireless_mesh/) | 3-node WiFi mesh (SNR only) | Free space | Geometry drives MCS: 30m → 480 Mbps, 91m → 320 Mbps |
-| [02_co_channel_interference/](examples/for_user/02_co_channel_interference/) | **Same mesh as 01** + `enable_sinr: true` | Free space | Outer links die at −3 dB SINR; surviving link drops to ~50 Mbps |
-| [03_adaptive_wifi_link/](examples/for_user/03_adaptive_wifi_link/) | P2P link, free space | Free space | 1024-QAM at 20m; degrades gracefully with distance |
-| [04_through_the_wall/](examples/for_user/04_through_the_wall/) | **Same geometry as 03**, indoors | Two rooms | Same link, concrete wall added — SNR drops 15-20 dB, MCS adapts |
-| [05_moving_node/](examples/for_user/05_moving_node/) | Real-time node mobility | Two rooms | Throughput changes live as client walks through doorway |
-
 ## Channel Server API
 
-REST API for channel computation (port 8000):
+SiNE's channel server exposes a REST API on port 8000. You can call it directly for custom integrations or debugging:
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
@@ -441,6 +453,8 @@ Example SINR request:
 ```
 
 ## Testing
+
+SiNE has unit tests (fast, no external dependencies) and integration tests (require sudo + a running containerlab). Install dev dependencies first:
 
 ```bash
 # Install test dependencies
