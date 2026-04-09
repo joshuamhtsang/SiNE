@@ -9,60 +9,19 @@ SiNE is a wireless network emulation package that combines:
 
 ### Containerlab Integration Details
 
-SiNE uses containerlab as a core component for deploying the network topology:
+**Key Point**: Containerlab is NOT optional — it's the foundation for container and network management. SiNE adds the wireless channel computation layer on top.
 
-1. **Topology Conversion** (`ContainerlabManager.generate_clab_topology()`):
-   - SiNE topology YAML extends containerlab format with wireless/fixed_netem parameters
-   - Strips interface params to create pure containerlab YAML
-   - Links become standard veth links: `endpoints: ["node1:eth1", "node2:eth1"]`
-   - Output: `.sine_clab_topology.yaml` file
-
-#### Generated Containerlab Topology File
-
-**File**: `.sine_clab_topology.yaml`
-**Location**: Same directory as input `network.yaml`
-**Lifecycle**:
-- Created during `sine deploy` (before containerlab command execution)
-- Persists throughout emulation session
-- Deleted automatically during `sine destroy`
-
-**Purpose**: Pure containerlab format topology with all SiNE-specific parameters removed:
-- Strips `wireless` parameters: position, frequency, RF power, antenna config, MCS settings
-- Strips `fixed_netem` parameters: delay_ms, jitter_ms, loss_percent, rate_mbps
-- Keeps standard containerlab fields: kind, image, cmd, binds, env, exec
-- Preserves link endpoint format: `endpoints: ["node1:eth1", "node2:eth1"]`
-
-**Inspection**: Users can inspect this file during emulation to verify the containerlab topology or debug deployment issues. The file is available as long as the emulation is running.
-
-2. **Container Deployment**:
-   - Executes `containerlab deploy -t .sine_clab_topology.yaml`
-   - Creates Docker containers with naming pattern: `clab-<lab_name>-<node_name>`
-   - Creates veth pairs connecting containers (eth1, eth2, etc.)
-   - eth0 reserved for management interface
-
-3. **Container Discovery**:
-   - Discovers containers using Docker API or subprocess fallback
-   - Extracts container ID, name, PID, and network interfaces
-   - Stores info for later netem configuration
-
-4. **Channel Application**:
-   - **Wireless links**: Uses Sionna ray tracing to compute channel conditions (SNR, BER, BLER)
-   - **Fixed links**: Uses directly specified netem parameters
-   - SiNE abstracts the outputs of Sionna RT and link-level simulation into netem parameters:
-     ```python
-     delay_ms = propagation_delay       # From strongest path computed in Sionna RT
-     jitter_ms = 0.0                    # Set to 0 (requires MAC/queue modeling, not PHY)
-     loss_percent = PER × 100           # From BER/BLER calculation (AWGN formulas)
-     rate_mbps = modulation_based_rate  # BW × bits_per_symbol × code_rate × efficiency × (1-PER)
-     ```
-   - Applies netem to containerlab-created veth interfaces using `nsenter` (requires sudo)
-   - Bidirectional: applies same params to both TX and RX interfaces
-
-5. **Cleanup**:
-   - Executes `containerlab destroy -t .sine_clab_topology.yaml --cleanup`
-   - Removes containers, networks, and temp files
-
-**Key Point**: Containerlab is NOT optional - it's the foundation for container and network management. SiNE adds the wireless/fixed channel model layer on top.
+**Deployment flow**:
+1. `ContainerlabManager.generate_clab_topology()` strips wireless/fixed_netem params from `network.yaml` and writes `.sine_clab_topology.yaml` (pure containerlab format, kept until `sine destroy`)
+2. `containerlab deploy` creates Docker containers (`clab-<lab>-<node>`) and veth pairs (eth1+, eth0 reserved for management)
+3. SiNE computes netem parameters via the Sionna or fallback engine (ray tracing → SNR/SINR → BER/BLER → PER):
+   ```
+   delay_ms = propagation delay from strongest path
+   jitter_ms = 0.0  (requires MAC/queue modeling)
+   loss_percent = PER × 100
+   rate_mbps = BW × bits_per_symbol × code_rate × efficiency
+   ```
+4. Netem applied to veth interfaces via `sudo nsenter -t <pid> -n tc ...` (bidirectional)
 
 ## Architecture
 
@@ -197,16 +156,16 @@ uv run sine channel-server
 # Deploy emulation (prints deployment summary with containers, interfaces, netem params)
 # NOTE: Requires sudo for netem (network emulation) configuration
 # CRITICAL: MUST use full pattern - UV_PATH=$(which uv) sudo -E $(which uv) run ...
-UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy examples/for_user/adaptive_mcs_wifi6/network.yaml
+UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy examples/for_user/01_wireless_mesh/network.yaml
 
 # Deploy with control API enabled (for dynamic position updates and runtime control)
-UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy --enable-control examples/for_tests/p2p_sionna_snr_two-rooms/network.yaml
+UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy --enable-control examples/for_user/05_moving_node/network.yaml
 
 # Validate topology
-uv run sine validate examples/for_user/adaptive_mcs_wifi6/network.yaml
+uv run sine validate examples/for_user/01_wireless_mesh/network.yaml
 
 # Render scene to image (does NOT require channel server)
-uv run sine render examples/for_tests/p2p_sionna_snr_two-rooms/network.yaml -o scene.png
+uv run sine render examples/for_user/04_through_the_wall/network.yaml -o scene.png
 
 # Check system info
 uv run sine info
@@ -215,7 +174,7 @@ uv run sine info
 uv run sine status
 
 # Destroy emulation
-UV_PATH=$(which uv) sudo -E $(which uv) run sine destroy examples/for_user/adaptive_mcs_wifi6/network.yaml
+UV_PATH=$(which uv) sudo -E $(which uv) run sine destroy examples/for_user/01_wireless_mesh/network.yaml
 
 # Interactive scene viewer (Jupyter notebook)
 uv run --with jupyter jupyter notebook scenes/viewer.ipynb
@@ -249,43 +208,15 @@ Example topologies are provided in `examples/`:
 
 ### User Examples (`examples/for_user/`)
 
-| Example | Description | Link Type | Scene |
-|---------|-------------|-----------|-------|
-| `adaptive_mcs_wifi6/` | WiFi 6 MCS selection (2 nodes) | wireless | `vacuum.xml` |
-| `fixed_link/` | Fixed netem parameters (no RF) | fixed_netem | (none) |
-| `mobility/` | Movement scripts and API examples | wireless | Various |
+The examples form a progression — each isolating one SiNE capability. Examples 1→2 add interference to the same mesh; examples 3→4 move the same P2P geometry indoors.
 
-### Test Examples (Integration Testing)
-
-Available in `examples/for_tests/` with flat naming pattern:
-
-| Example | Description | MAC Protocol | Features |
-|---------|-------------|--------------|----------|
-| `p2p_fallback_snr_vacuum/` | Free-space (2 nodes, 20m) | N/A | Baseline, fallback engine |
-| `p2p_sionna_snr_two-rooms/` | Indoor multipath | N/A | 2 rooms with doorway |
-| `shared_sionna_sinr_csma-mcs/` | CSMA/CA with adaptive MCS | CSMA/CA | Carrier sensing, SINR, MCS adaptation |
-
-### SINR/Interference Test Examples
-
-| Example | Description | MAC Protocol | Interference Model |
-|---------|-------------|--------------|-------------------|
-| `shared_sionna_snr_equal-triangle/` | 3-node MANET, shared bridge | N/A | SNR only (no interference) |
-| `shared_sionna_sinr_equal-triangle/` | 3-node MANET with SINR | N/A | Co-channel interference |
-| `shared_sionna_sinr_asym-triangle/` | Asymmetric 3-node MANET | N/A | Variable link quality, SINR |
-| `shared_sionna_sinr_tdma-rr/` | Round-robin TDMA (equal slots) | TDMA | Probability-weighted (20% each) |
-| `shared_sionna_sinr_tdma-fixed/` | Fixed TDMA schedule | TDMA | Per-node slot assignments |
-| `shared_sionna_snr_dual-band/` | Dual-band (2.4 GHz + 5 GHz) | N/A | Multi-interface per node |
-
-The examples demonstrate:
-- **Free-space propagation** (`p2p_fallback_snr_vacuum/`)
-- **Indoor multipath** (`p2p_sionna_snr_two-rooms/`)
-- **Adaptive modulation** (`for_user/adaptive_mcs_wifi6/`, `for_tests/shared_sionna_sinr_csma-mcs/`)
-- **MANET broadcast domains** (`shared_sionna_snr_equal-triangle/`)
-- **Fixed link emulation** (`for_user/fixed_link/`)
-- **Node mobility** (`for_user/mobility/`)
-- **SINR computation** (`shared_sionna_sinr_*`)
-- **MAC protocols** (CSMA/CA, TDMA)
-- **Multi-radio nodes** (`shared_sionna_snr_dual-band/`)
+| Example | Description | Scene | Key Feature |
+|---------|-------------|-------|-------------|
+| `01_wireless_mesh/` | 3-node WiFi mesh, SNR only | `vacuum.xml` | Geometry drives MCS: 30m → 480 Mbps, 91m → 320 Mbps |
+| `02_co_channel_interference/` | Same mesh + `enable_sinr: true` | `vacuum.xml` | Outer links die at −3 dB SINR (tx_probability=1.0) |
+| `03_adaptive_wifi_link/` | P2P link, free space | `vacuum.xml` | 1024-QAM at 20m; degrades gracefully with distance |
+| `04_through_the_wall/` | Same geometry as 03, indoors | `two_rooms.xml` | Same link + concrete wall → SNR drops 15-20 dB |
+| `05_moving_node/` | Real-time node mobility | `two_rooms.xml` | Throughput changes live as client walks through doorway |
 
 ## Channel Server API
 
@@ -542,66 +473,6 @@ Ray Tracing → CIR (paths) → Path Loss → SNR
                     Netem Params (delay, jitter, loss%, rate)
 ```
 
-### Physical Phenomena: What SiNE Captures vs. What It Doesn't
-
-**Important:** SiNE is designed for **WiFi 6/OFDM network emulation**, not PHY waveform simulation. The channel model reflects how OFDM receivers process multipath signals.
-
-#### ✅ Correctly Captured (for OFDM/WiFi 6)
-
-| Phenomenon | How SiNE Captures It | Physical Basis |
-|------------|---------------------|----------------|
-| **Multipath diversity gain** | Incoherent power summation (Σ\|aᵢ\|²) | OFDM receiver coherently combines paths per subcarrier, then averages across 234+ subcarriers → diversity gain (0-3 dB typical) |
-| **Geometry-based path loss** | Ray tracing with reflections/diffractions | Accurate modeling of LOS/NLOS transitions, wall penetration, multipath propagation |
-| **Delay spread → coherence bandwidth** | Computed but diagnostic only (τ_rms) | For WiFi 6: τ_rms (20-300 ns) << cyclic prefix (800-3200 ns) → no ISI |
-| **SNR-based packet loss** | AWGN BER formulas → PER → loss_percent | Valid for OFDM with proper cyclic prefix (no ISI after equalization) |
-| **Frequency selectivity (multi-freq)** | ACLR filtering for SINR computation | IEEE 802.11ax spectral mask prevents cross-channel interference |
-| **LOS vs. NLOS propagation** | K-factor, dominant path type | Ray tracing identifies LOS/NLOS conditions, affects SNR |
-
-**Why incoherent summation is correct:**
-- OFDM performs FFT → per-subcarrier channel: H(f) = Σ aᵢ·e^(-j2πfτᵢ)
-- Each subcarrier is equalized independently
-- Averaging across subcarriers → E[\|H(f)\|²] ≈ Σ\|aᵢ\|²
-- Valid when τ_rms << cyclic prefix (20-300 ns << 800-3200 ns) ✅
-
-#### ⚠️ Limitations (What's NOT Captured)
-
-| Missing Phenomenon | Why Not Captured | Impact |
-|-------------------|------------------|--------|
-| **Jitter (packet timing variation)** | Currently set to 0.0 | Real jitter requires MAC/queue modeling (CSMA/CA backoff, retransmissions, queueing) - 0.1-10 ms typical |
-| **Fast fading (time-varying)** | Static channel per computation | No Doppler, Rayleigh, or Rician fading over time unless positions change |
-| **ISI (inter-symbol interference)** | AWGN BER formulas only | Not needed for OFDM - cyclic prefix absorbs delay spread |
-| **MAC layer effects** | No MAC protocol modeling | No CSMA/CA contention, no HARQ retransmissions, no frame aggregation |
-| **Per-subcarrier fading nulls** | Averaged across subcarriers | OFDM frequency diversity smooths out nulls |
-| **Coherent combining effects** | Incoherent summation | Narrowband single-carrier would need coherent sum (not WiFi 6) |
-
-#### 📊 Valid Operating Range
-
-SiNE's OFDM-based channel model is valid when:
-
-| Parameter | Valid Range | Typical Indoor | Notes |
-|-----------|-------------|----------------|-------|
-| **Delay spread (τ_rms)** | < 800 ns | 20-300 ns | WiFi 6 short GI cyclic prefix |
-| **Bandwidth** | 20-160 MHz | 80 MHz | Typical OFDM channel bandwidths |
-| **Coherence bandwidth (Bc)** | > 312.5 kHz | 1-10 MHz | Bc ≈ 1/(2πτ_rms) > subcarrier spacing |
-| **Environment** | Indoor/urban | N/A | τ_rms typically stays within valid range |
-
-**When SiNE's model would be invalid:**
-- Narrowband single-carrier systems (GPS, FSK/PSK) - would need coherent summation
-- Extreme delay spread (τ_rms > 800 ns) - would exceed cyclic prefix
-- Systems without OFDM - AWGN assumptions may not hold
-
-#### 🔧 What Requires Additional Modeling
-
-To model phenomena beyond SiNE's current scope:
-
-| Desired Phenomenon | Implementation Approach |
-|-------------------|------------------------|
-| **Jitter** | Implement MAC/queue simulator with CSMA/CA, retransmission logic |
-| **Fast fading** | Add stochastic perturbations to SNR based on Doppler/velocity |
-| **HARQ retransmissions** | MAC layer with ARQ/HARQ state machine |
-| **CSMA/CA contention** | Carrier sense and exponential backoff logic |
-| **Frame aggregation** | A-MPDU/A-MSDU with variable frame sizes |
-
 ### Multi-Radio Node Assumptions
 
 **Co-located radios** (multiple interfaces on same node):
@@ -642,56 +513,18 @@ nodes:
 - No antenna coupling modeled → actual hardware would have 20-40 dB isolation
 - Net effect: Conservative (may overestimate cross-band interference by 5-25 dB)
 
-### Relationship Between Channel Metrics and Netem Parameters
+### Channel Metrics vs. Netem Parameters
 
-**Important:** SiNE operates as **network emulation** (application-layer testing), not **PHY simulation** (waveform-level). Enhanced channel metrics like RMS delay spread (τ_rms), coherence bandwidth (Bc), and Rician K-factor are **diagnostic only** for visualization and debugging.
+SiNE operates as **network emulation** (application-layer testing). Metrics like τ_rms, coherence bandwidth, and K-factor are **diagnostic only** — they do not directly drive netem parameters.
 
-**These metrics do NOT directly influence netem configuration** - the netem parameters already account for or abstract physical channel effects:
+**BER/BLER uses theoretical AWGN formulas** (not Sionna link-level simulation) for speed and determinism:
+- BPSK/QPSK: `BER = 0.5 × erfc(√(Eb/N0))` — see [modulation.py:73-113](src/sine/channel/modulation.py#L73-L113)
+- M-QAM: symbol error rate → BER via Gray coding approximation
+- Coded systems: coding gain offset applied to SNR (LDPC +6.5 dB, Polar +6.0 dB, Turbo +5.5 dB) — see [modulation.py:185-233](src/sine/channel/modulation.py#L185-L233)
 
-| Physical Effect | How It's Captured/Abstracted in Netem |
-|----------------|----------------------------------------|
-| **Delay spread (τ_rms)** | Not used for netem (diagnostic only). Real jitter requires MAC/queue modeling. |
-| **Frequency selectivity (Bc)** | Not directly captured; SiNE uses AWGN BER formulas (frequency-flat assumption) |
-| **K-factor (LOS/NLOS)** | Indirectly via SNR (LOS has lower path loss → higher SNR → lower loss%) |
-| **Coherence time (Tc)** | May inform visualization update interval, not netem params |
+**Note**: `SionnaBERCalculator` ([modulation.py:270-348](src/sine/channel/modulation.py#L270-L348)) exists for full link-level simulation but is **not used** in the main pipeline.
 
-**Note on BER Calculation:**
-
-SiNE uses **theoretical AWGN (frequency-flat) BER formulas** based purely on SNR and modulation scheme, NOT Sionna's link-level simulation capabilities (bit generation → mapping → channel → demapping). This provides:
-
-- **Speed**: Instant computation (microseconds) vs Monte Carlo simulation (seconds)
-- **Deterministic**: No random variation from finite simulation runs
-- **Scalability**: Compute thousands of links per second for large topologies
-
-**BER Formulas** ([src/sine/channel/modulation.py:73-113](src/sine/channel/modulation.py#L73-L113)):
-- **BPSK/QPSK**: `BER = 0.5 × erfc(√(Eb/N0))`
-- **M-QAM**: Symbol error rate → BER via Gray coding approximation
-
-**BLER Approximation** (for coded systems, [modulation.py:185-233](src/sine/channel/modulation.py#L185-L233)):
-- Applies coding gain offset to SNR: `effective_snr = snr_db + coding_gain`
-- Coding gains (approximate, at BER ≈ 10⁻⁵):
-  - LDPC: +6.5 dB
-  - Polar: +6.0 dB
-  - Turbo: +5.5 dB
-- Then calculates BER at effective SNR
-
-**Note**: A `SionnaBERCalculator` class exists ([modulation.py:270-348](src/sine/channel/modulation.py#L270-L348)) that implements full link-level simulation (bits → symbols → AWGN → demapping → error counting), but it is **not used** in the main channel computation pipeline.
-
-**Validity**: Theoretical formulas are appropriate for OFDM systems (WiFi 6) where the cyclic prefix absorbs delay spread and prevents ISI at the packet level. Valid when τ_rms < 800 ns (short GI), which is typical for indoor environments (20-300 ns).
-
-**Limitations**:
-- Does not capture frequency selectivity within OFDM bandwidth (assumes frequency-flat fading)
-- Coding gains are approximations (real LDPC/Polar performance varies with block length, code rate, decoder iterations)
-- No modeling of interleaving, puncturing, or other practical FEC implementation details
-
-**Use diagnostic metrics to:**
-- Understand **why** certain netem parameters were chosen (e.g., low SNR causing high packet loss)
-- Validate that netem parameters make sense given channel conditions
-- Determine appropriate visualization update rates for mobility scenarios
-- Debug link quality issues by understanding the underlying RF propagation
-- Verify delay spread is within OFDM cyclic prefix bounds (τ_rms < 800 ns for WiFi 6)
-
-**Example:** If visualization shows high loss_percent with τ_rms = 50 ns, the delay spread is NOT causing the loss. The τ_rms is absorbed by OFDM cyclic prefix (800-3200 ns). The loss_percent comes from low SNR. If SNR is low due to high path loss, increase TX power, improve antenna gains, or reduce distance.
+**Debugging tip**: High `loss_percent` with low τ_rms means SNR is the culprit, not delay spread. τ_rms (20-300 ns typical indoors) is absorbed by OFDM cyclic prefix (800-3200 ns).
 
 ## Important Notes
 
@@ -704,8 +537,17 @@ SiNE uses **theoretical AWGN (frequency-flat) BER formulas** based purely on SNR
 
 ### Sionna-Specific
 - **Scene Materials**: Must use ITU naming (e.g., `itu_concrete`, not `concrete`)
-- **Antenna Patterns**: `"iso"`, `"dipole"`, `"hw_dipole"`, `"tr38901"`
 - **Antenna Polarization**: `"V"`, `"H"`, `"VH"`, `"cross"`
+- **Antenna Config**: Specify **either** `antenna_pattern` **or** `antenna_gain_dbi`, never both (mutual exclusion prevents double-counting Sionna RT pattern gains):
+
+| Pattern | Gain (dBi) | Description |
+|---------|-----------|-------------|
+| `iso` | 0.0 | Isotropic (ideal omnidirectional) |
+| `dipole` | 1.76 | Short dipole |
+| `hw_dipole` | 2.16 | Half-wavelength dipole (typical WiFi) |
+| `tr38901` | 8.0 | 3GPP directional antenna (cellular) |
+
+Use `antenna_gain_dbi` for custom antennas or FSPL fallback mode. When using `antenna_gain_dbi`, Sionna uses the `iso` pattern and applies your gain during SNR calculation.
 
 ### SINR/Interference
 - **Requires `topology.enable_sinr: true`** in network.yaml (explicit opt-in, see [SINR Configuration](#sinr-configuration))
@@ -782,190 +624,6 @@ Mitsuba XML scenes can be created with:
 2. **Hand-edit XML** - For simple modifications or custom geometries (see `scenes/vacuum.xml` and `scenes/two_rooms.xml` for examples)
 
 Key requirement: Material names must use `itu_` prefix (e.g., `itu_concrete`, `itu_glass`)
-
-## Migration Guides
-
-### Antenna Configuration (Breaking Change in v2.0)
-
-**BREAKING CHANGE**: `antenna_pattern` and `antenna_gain_dbi` are now mutually exclusive in wireless interface configurations.
-
-#### Why This Change?
-
-Sionna RT antenna patterns (iso, dipole, hw_dipole, tr38901) have built-in directional gains that are automatically included in path loss calculations. Specifying both `antenna_pattern` and `antenna_gain_dbi` caused confusion about which value was actually used and could lead to incorrect expectations about link performance.
-
-#### BEFORE (v1.x)
-
-```yaml
-wireless:
-  antenna_pattern: hw_dipole
-  antenna_gain_dbi: 2.15  # IGNORED by Sionna RT!
-```
-
-Both fields were allowed, but `antenna_gain_dbi` was ignored when using Sionna RT, making configurations misleading.
-
-#### AFTER (v2.0)
-
-Choose ONE based on your use case:
-
-**Option A: Use Sionna RT pattern (recommended for most scenarios)**
-```yaml
-wireless:
-  antenna_pattern: hw_dipole  # Gain = 2.16 dBi (from Sionna's antenna pattern model)
-  polarization: V
-```
-
-Use this when:
-- Using standard antenna types (omnidirectional, dipole, etc.)
-- Want directional radiation pattern modeling in Sionna RT
-- Following WiFi 6 / 802.11ax typical configurations
-
-**Option B: Use explicit gain (for custom antennas)**
-```yaml
-wireless:
-  antenna_gain_dbi: 3.0  # Custom omnidirectional antenna with 3 dBi gain
-  polarization: V
-```
-
-Use this when:
-- Using custom antenna with specific gain not matching standard patterns
-- Testing with specific gain values
-- Using FSPL fallback mode (non-Sionna scenarios)
-
-#### Antenna Pattern Gain Reference
-
-| Pattern | Gain (dBi) | Description |
-|---------|-----------|-------------|
-| `iso` | 0.0 | Isotropic (ideal omnidirectional) |
-| `dipole` | 1.76 | Short dipole |
-| `hw_dipole` | 2.16 | Half-wavelength dipole (typical WiFi) |
-| `tr38901` | 8.0 | 3GPP directional antenna (cellular) |
-
-Values from Sionna RT v1.2.1 measurements.
-
-#### Error Messages
-
-If you specify both fields:
-```
-ValueError: Cannot specify both 'antenna_pattern' (hw_dipole) and 'antenna_gain_dbi' (2.15 dBi).
-Choose ONE:
-  - 'antenna_pattern' for Sionna RT (gain embedded in path coefficients)
-  - 'antenna_gain_dbi' for explicit gain (custom antenna)
-Using both causes double-counting of antenna gain.
-```
-
-If you specify neither:
-```
-ValueError: Wireless interface requires exactly one of:
-  - 'antenna_pattern': Sionna RT pattern (iso/dipole/hw_dipole/tr38901)
-  - 'antenna_gain_dbi': Explicit gain value (custom/fallback mode)
-Specify one, but not both.
-```
-
-#### Migration Steps
-
-1. **Review your topology**: Identify which antenna type you're using
-2. **Standard antenna (iso/dipole/hw_dipole/tr38901)**:
-   - Keep `antenna_pattern` field
-   - Remove `antenna_gain_dbi` line entirely
-3. **Custom antenna gain**:
-   - Keep `antenna_gain_dbi` field
-   - Remove `antenna_pattern` line entirely
-4. **Validate**: Run `uv run sine validate <your_topology.yaml>`
-
-#### Example Migration
-
-**Before** (old network.yaml format):
-```yaml
-wireless:
-  antenna_pattern: dipole
-  polarization: V
-  antenna_gain_dbi: 3.0  # Actually used dipole's 1.76 dBi, not 3.0!
-```
-
-**After** (choose closest match):
-```yaml
-wireless:
-  antenna_pattern: hw_dipole  # 2.16 dBi, closest to intended 3.0 dBi
-  polarization: V
-```
-
-Or use explicit gain if 3.0 dBi is critical:
-```yaml
-wireless:
-  antenna_gain_dbi: 3.0  # Explicit 3.0 dBi custom antenna
-  polarization: V
-```
-
-### SINR Flag Migration (v2.0)
-
-**BREAKING CHANGE**: SINR computation now requires explicit `enable_sinr: true` flag.
-
-#### Why This Change?
-
-Previously, SINR (interference modeling) was implicitly enabled when MAC models (CSMA/TDMA) were configured. This coupling was not intuitive and limited flexibility. The new approach separates concerns: SINR computation is an explicit choice via `enable_sinr`, while MAC models only provide interference probability weights (`tx_probability`).
-
-#### BEFORE (v1.x - implicit SINR via MAC model)
-
-```yaml
-nodes:
-  node1:
-    interfaces:
-      eth1:
-        wireless:
-          csma:
-            enabled: true  # Implicitly enabled SINR
-```
-
-SINR was automatically computed when CSMA or TDMA was configured.
-
-#### AFTER (v2.0 - explicit flag)
-
-```yaml
-topology:
-  enable_sinr: true  # Explicit SINR computation
-
-nodes:
-  node1:
-    interfaces:
-      eth1:
-        wireless:
-          csma:
-            enabled: true  # Provides tx_probability only
-```
-
-**Key changes**:
-- Add `topology.enable_sinr: true` to enable interference modeling
-- MAC models (CSMA/TDMA) now only provide `tx_probability` weights
-- TDMA slot multiplier affects throughput regardless of `enable_sinr` value
-
-#### Migration Steps
-
-1. Add `topology.enable_sinr: true` to all topologies using SINR/interference
-2. Run `uv run sine validate <topology.yaml>` to verify
-3. Test deployment to confirm SINR is computed
-
-#### Examples Affected
-
-All SINR examples have been updated:
-- `shared_sionna_sinr_equal-triangle/`
-- `shared_sionna_sinr_asym-triangle/`
-- `shared_sionna_sinr_csma/`
-- `shared_sionna_sinr_csma-mcs/`
-- `shared_sionna_sinr_tdma-rr/`
-- `shared_sionna_sinr_tdma-fixed/`
-
-#### Warning Message
-
-If you configure a MAC model without `enable_sinr: true`, you'll see:
-
-```
-WARNING: MAC model (CSMA/TDMA) configured with enable_sinr=false.
-Interference modeling: DISABLED (SNR computed, not SINR).
-Throughput effects: ENABLED (TDMA slot multiplier, CSMA metadata).
-Set 'topology.enable_sinr: true' to enable interference modeling.
-```
-
-This is valid - it allows testing TDMA capacity sharing without interference complexity.
 
 ## FAQ - Frequently Asked Questions
 
@@ -1330,7 +988,7 @@ Link Parameters:
 
 ### Example
 
-See `examples/for_user/adaptive_mcs_wifi6/` for a complete example with deployment and throughput testing instructions.
+See `examples/for_user/03_adaptive_wifi_link/` and `examples/for_user/04_through_the_wall/` for complete examples with deployment and throughput testing instructions.
 
 ### Data Rate Calculation with MCS
 
@@ -1516,6 +1174,7 @@ topology:
 - SNR computed (no interference modeling)
 - Throughput scaled by slot ownership (e.g., 20% of slots → 0.2× PHY rate)
 - Use case: Testing TDMA capacity sharing without interference complexity
+- A WARNING is logged but deployment succeeds — see [test_enable_sinr_schema.py](tests/unit/config/test_enable_sinr_schema.py) and [test_enable_sinr_flag.py](tests/integration/cross_cutting/test_enable_sinr_flag.py)
 
 **Active states** (per-interface control):
 ```yaml
@@ -1671,31 +1330,9 @@ topology:
 ```
 
 **Poll interval considerations:**
-- **100ms (default)**: Good balance for walking/vehicle speeds
+- **100ms (default)**: Good balance for most mobility scenarios
 - **50ms**: High-speed scenarios (UAVs, fast vehicles)
 - **200-500ms**: Slow-moving nodes, reduced overhead
-
-### Use Cases
-
-**Walking pedestrians:**
-- Speed: 1-2 m/s
-- Poll interval: 100-200ms (moves 10-40cm between updates)
-- Example: Indoor navigation, crowd mobility
-
-**Vehicular networks:**
-- Speed: 10-30 m/s (36-108 km/h)
-- Poll interval: 50-100ms (moves 0.5-3m between updates)
-- Example: V2V communication, convoy scenarios
-
-**UAV/drone networks:**
-- Speed: 5-20 m/s
-- Poll interval: 50ms (moves 0.25-1m between updates)
-- Example: Aerial mesh networks, search patterns
-
-**Robotic swarms:**
-- Speed: 0.5-5 m/s
-- Poll interval: 100-200ms
-- Example: Warehouse automation, formation control
 
 ### Visualization with Mobility
 
@@ -1720,24 +1357,6 @@ The viewer shows:
 - Real-time channel metrics (SNR, delay spread, K-factor)
 - Propagation paths (recomputed as nodes move)
 
-### Performance Considerations
-
-**Channel computation overhead:**
-- Ray tracing: ~10-100ms per link (GPU: ~10-30ms, CPU: ~50-100ms)
-- For N-node mesh: O(N²) link updates per position change
-- Recommend: Use shared bridge mode for large topologies (single interface per node)
-
-**Netem update latency:**
-- Netem reconfiguration: ~1-5ms per interface
-- Negligible compared to channel computation time
-- Applied immediately after computation
-
-**Example timing (3-node mesh, GPU):**
-- Single node moves → 2 links affected
-- Ray tracing: 2 × 15ms = 30ms
-- Netem updates: 2 × 2ms = 4ms
-- Total: ~34ms (well within 100ms poll interval)
-
 ### Limitations
 
 - **No interpolation:** Channel updated only at poll intervals (discrete updates)
@@ -1746,35 +1365,6 @@ The viewer shows:
 - **No handover modeling:** Link-layer handover protocols not modeled
 
 For continuous channel variation, reduce poll interval or implement custom interpolation in mobility scripts.
-
-### Example: Walking Through Doorway
-
-```python
-# examples/for_user/mobility/doorway_crossing.py
-import requests
-import time
-
-API_URL = "http://localhost:8002/api/control/update"
-
-# Start in room 1 (LOS blocked)
-positions = [
-    (0.0, 0.0, 1.0),    # Room 1
-    (2.5, 1.5, 1.0),    # Approaching doorway
-    (5.0, 2.5, 1.0),    # In doorway (LOS established)
-    (7.5, 2.5, 1.0),    # Through doorway
-    (10.0, 2.5, 1.0),   # Room 2 (LOS maintained)
-]
-
-for x, y, z in positions:
-    requests.post(API_URL, json={"node": "node2", "x": x, "y": y, "z": z})
-    print(f"Moved to ({x}, {y}, {z})")
-    time.sleep(2.0)  # Wait for channel update
-```
-
-Expected behavior:
-- Rooms 1 and 2: NLOS, higher path loss, lower SNR
-- Doorway: LOS path appears, path loss drops, SNR increases
-- Throughput increases as node crosses doorway (MCS adapts to higher SNR)
 
 ## Test Organization
 
@@ -1893,32 +1483,6 @@ Examples:
 - Self-documenting names
 - No nested directory navigation
 
-### Test Examples Organization (Phase 5 Refactoring - 2026-02-03)
-
-**Flat Naming Pattern**: `examples/for_tests/` uses self-documenting flat structure:
-
-```
-<topology>_<engine>_<interference>_<description>
-```
-
-**Examples**:
-- `p2p_fallback_snr_vacuum/` - Point-to-point, fallback engine, SNR, free space
-- `p2p_sionna_snr_two-rooms/` - Point-to-point, Sionna, SNR, indoor
-- `shared_sionna_snr_equal-triangle/` - Shared bridge, Sionna, SNR, 3-node
-- `shared_sionna_sinr_equal-triangle/` - Shared bridge, Sionna, SINR, equilateral triangle
-- `shared_sionna_sinr_asym-triangle/` - Shared bridge, Sionna, SINR, asymmetric triangle
-- `shared_sionna_snr_dual-band/` - Shared bridge, dual-band (2.4 GHz + 5 GHz) per node
-
-**Benefits**:
-- Grep-friendly: `grep -r "p2p_sionna" examples/for_tests/`
-- Self-documenting: topology, engine, and interference mode in directory name
-- No nested navigation
-
-**Deleted Directories** (Phase 5):
-- `tests/e2e/` - Removed (unused placeholder)
-- `tests/performance/` - Removed (unused placeholder)
-- `tests/regression/` - Removed (unused placeholder)
-
 ### When to Write Each Type
 
 - **Unit test**: Testing a single function/class in isolation
@@ -1927,47 +1491,35 @@ Examples:
 
 ### Test Development Guidelines
 
-1. **Choose the right location:**
-   - Channel computation? → `tests/unit/channel/`
-   - Protocol behavior? → `tests/unit/protocols/`
-   - Full deployment? → `tests/integration/<topology>/<engine>/<interference>/`
+Choose the right location: channel computation → `tests/unit/channel/`; protocol behavior → `tests/unit/protocols/`; full deployment → `tests/integration/<topology>/<engine>/<interference>/`.
 
-2. **Import and use fixtures:**
-   ```python
-   from tests.integration.fixtures import (
-       channel_server,
-       deploy_topology,
-       destroy_topology,
-   )
+Integration tests must import fixtures from `tests.integration.fixtures` and always include `channel_server` as a parameter (session-scoped, starts the server once). See [test_asym-triangle_connectivity.py](tests/integration/shared_bridge/sionna_engine/sinr/test_asym-triangle_connectivity.py) for a representative example showing the standard fixture imports:
 
-   @pytest.mark.integration
-   def test_deployment(channel_server, examples_for_tests: Path):
-       """The channel_server fixture ensures the server is running."""
-       yaml_path = examples_for_tests / "p2p_fallback_snr_vacuum" / "network.yaml"
-       ...
-   ```
+```python
+from tests.integration.fixtures import (
+    bridge_node_ips,
+    channel_server,
+    deploy_topology,
+    destroy_topology,
+    extract_container_prefix,
+    run_iperf3_test,
+    stop_deployment_process,
+    verify_ping_connectivity,
+)
 
-   **Important:** Include `channel_server` as a test parameter to ensure the channel server is started before your test runs. This is a session-scoped fixture that starts once and is shared across all integration tests.
-
-3. **Mark appropriately:**
-   ```python
-   @pytest.mark.integration
-   @pytest.mark.slow
-   def test_my_deployment(channel_server, examples_for_tests: Path):
-       ...
-   ```
-
-4. **Clean up in integration tests:**
-   ```python
-   @pytest.mark.integration
-   def test_deployment(channel_server, examples_for_tests: Path):
-       yaml_path = examples_for_tests / "p2p_fallback_snr_vacuum" / "network.yaml"
-       try:
-           deploy_topology(yaml_path)
-           # ... test logic
-       finally:
-           destroy_topology(yaml_path)
-   ```
+@pytest.mark.integration
+@pytest.mark.slow
+@pytest.mark.sionna
+def test_something(channel_server, examples_for_tests: Path):
+    yaml_path = examples_for_tests / "shared_sionna_sinr_asym-triangle" / "network.yaml"
+    destroy_topology(str(yaml_path))  # Pre-clean
+    deploy_process = None
+    try:
+        deploy_process = deploy_topology(str(yaml_path))
+        # ... test logic
+    finally:
+        destroy_topology(str(yaml_path))
+```
 
 ### API Testing with FastAPI TestClient
 

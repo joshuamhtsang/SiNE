@@ -1,0 +1,135 @@
+# MANET Shared Bridge with SNR - Asymmetric Geometry (Connectivity Test)
+#
+# This example demonstrates:
+# - 3-node MANET with shared broadcast domain (Linux bridge)
+# - SNR computation only (no interference modeling)
+# - Non-equilateral triangle geometry for variable link quality
+# - Corresponds to for_user/01_wireless_mesh/ (which uses adaptive MCS)
+#
+# Topology:
+#   node1 (0, 0, 1) ------ 30m ------ node2 (30, 0, 1)
+#                \                    /
+#              91.2m              91.2m
+#                  \              /
+#                   node3 (15, 90, 1)
+#
+# Geometry Analysis:
+# - node1→node2: 30m (short link, high SNR)
+# - node1→node3: 91.2m (long link, lower SNR)
+# - node2→node3: 91.2m (long link, lower SNR)
+#
+# Expected SNR Calculation (vacuum, 5.18 GHz, 80 MHz, hw_dipole, 20 dBm):
+# - 30m link:   SNR ≈ 36 dB  → QPSK reliable, good connectivity
+# - 91.2m link: SNR ≈ 26 dB  → QPSK reliable, good connectivity
+#
+# Unlike the SINR version (shared_sionna_sinr_asym-triangle), all links
+# should have good connectivity because interference is NOT modeled.
+# This makes it suitable for testing geometry-driven rate differences
+# without the complication of interference.
+#
+# Test Commands:
+#   # Test connectivity (all pairs should succeed)
+#   docker exec clab-sh-sio-snr-asym-triangle-node1 ping -c 5 192.168.100.2
+#   docker exec clab-sh-sio-snr-asym-triangle-node1 ping -c 5 192.168.100.3
+
+name: sh-sio-snr-asym-triangle
+
+topology:
+  enable_sinr: false  # SNR only, no interference modeling
+
+  scene:
+    file: scenes/vacuum.xml
+
+  shared_bridge:
+    enabled: true
+    name: manet-snr-asym-br0
+    nodes: [node1, node2, node3]
+
+  nodes:
+    node1:
+      kind: linux
+      image: alpine:latest
+      exec:
+        - apk add --no-cache iproute2 iputils iperf3
+      interfaces:
+        eth1:
+          ip_address: 192.168.100.1/24
+          wireless:
+            position:
+              x: 0
+              y: 0
+              z: 1
+            frequency_ghz: 5.18
+            bandwidth_mhz: 80
+            rf_power_dbm: 20.0
+            rx_sensitivity_dbm: -80.0
+
+            antenna_pattern: hw_dipole
+            polarization: V
+
+            # Fixed QPSK for test predictability (assert loss < 5% at 36 dB SNR)
+            modulation: qpsk
+            fec_type: ldpc
+            fec_code_rate: 0.5
+
+    node2:
+      kind: linux
+      image: alpine:latest
+      exec:
+        - apk add --no-cache iproute2 iputils iperf3
+      interfaces:
+        eth1:
+          ip_address: 192.168.100.2/24
+          wireless:
+            position:
+              x: 30
+              y: 0
+              z: 1
+            frequency_ghz: 5.18
+            bandwidth_mhz: 80
+            rf_power_dbm: 20.0
+            rx_sensitivity_dbm: -80.0
+
+            antenna_pattern: hw_dipole
+            polarization: V
+
+            modulation: qpsk
+            fec_type: ldpc
+            fec_code_rate: 0.5
+
+    node3:
+      kind: linux
+      image: alpine:latest
+      exec:
+        - apk add --no-cache iproute2 iputils iperf3
+      interfaces:
+        eth1:
+          ip_address: 192.168.100.3/24
+          wireless:
+            position:
+              x: 15
+              y: 90
+              z: 1
+            frequency_ghz: 5.18
+            bandwidth_mhz: 80
+            rf_power_dbm: 20.0
+            rx_sensitivity_dbm: -80.0
+
+            antenna_pattern: hw_dipole
+            polarization: V
+
+            modulation: qpsk
+            fec_type: ldpc
+            fec_code_rate: 0.5
+
+# Expected Behavior:
+#
+# With SNR only (no interference):
+# - All links should have good connectivity
+# - node1↔node2 (30m):   SNR ~36 dB → QPSK → low loss, ~64 Mbps
+# - node1↔node3 (91.2m): SNR ~26 dB → QPSK → low loss, ~64 Mbps
+# - node2↔node3 (91.2m): SNR ~26 dB → QPSK → low loss, ~64 Mbps
+#
+# Contrast with SINR version:
+# - With interference: node3 links go dead (negative SINR)
+# - Without interference (this file): all links survive

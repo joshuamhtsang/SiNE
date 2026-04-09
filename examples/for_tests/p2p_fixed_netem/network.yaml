@@ -1,0 +1,46 @@
+# SiNE Test Example: Fixed Netem P2P Link
+#
+# Used by: tests/integration/cross_cutting/test_control_api.py
+# Purpose: Verify control API returns 400 when operating on fixed_netem nodes
+#          (no wireless interfaces -> position updates and interface enable/disable
+#           are not meaningful and must be rejected)
+#
+# No channel server required — fixed_netem links don't use ray tracing.
+
+name: p2p-fixed-netem
+prefix: clab
+
+topology:
+  nodes:
+    node1:
+      kind: linux
+      image: alpine:latest
+      exec:
+        - apk add --no-cache iproute2 iputils
+      interfaces:
+        eth1:
+          ip_address: 10.0.0.1/24
+          fixed_netem:
+            delay_ms: 10.0
+            jitter_ms: 1.0
+            loss_percent: 0.1
+            rate_mbps: 100.0
+
+    node2:
+      kind: linux
+      image: alpine:latest
+      exec:
+        - apk add --no-cache iproute2 iputils
+      interfaces:
+        eth1:
+          ip_address: 10.0.0.2/24
+          fixed_netem:
+            delay_ms: 10.0
+            jitter_ms: 1.0
+            loss_percent: 0.1
+            rate_mbps: 100.0
+
+  links:
+    - endpoints: [node1:eth1, node2:eth1]
+
+  control_poll_ms: 100
