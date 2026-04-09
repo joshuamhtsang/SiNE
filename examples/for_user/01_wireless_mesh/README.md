@@ -24,7 +24,7 @@ The rate difference is entirely geometry-driven. No manual rate configuration.
 
 ## Prerequisites
 
-Run all commands from the **SiNE root directory** — you'll need two terminals open.
+Run all commands from the **SiNE root directory** — you'll need five terminals open.
 
 **Terminal 1** — Start the channel server:
 ```bash
@@ -62,21 +62,37 @@ Link Parameters:
 
 ## Test
 
-Run iperf3 between each node pair to observe the geometry-driven rate difference:
+Open one shell per node to observe the geometry-driven rate difference.
 
+**Terminal 3** — node2 (iperf3 server):
 ```bash
-# Start iperf3 server on node2
-docker exec -d clab-wireless-mesh-01-node2 iperf3 -s
+docker exec -it clab-wireless-mesh-01-node2 sh
+```
 
+```sh
+iperf3 -s
+```
+
+**Terminal 4** — node3 (iperf3 server):
+```bash
+docker exec -it clab-wireless-mesh-01-node3 sh
+```
+
+```sh
+iperf3 -s
+```
+
+**Terminal 5** — node1 (iperf3 client):
+```bash
+docker exec -it clab-wireless-mesh-01-node1 sh
+```
+
+```sh
 # node1 → node2 (30m link): expect ~480 Mbps
-docker exec clab-wireless-mesh-01-node1 iperf3 -c 192.168.100.2 -t 5
+iperf3 -c 192.168.100.2 -t 5
 
 # node1 → node3 (91.2m link): expect ~320 Mbps
-docker exec -d clab-wireless-mesh-01-node3 iperf3 -s
-docker exec clab-wireless-mesh-01-node1 iperf3 -c 192.168.100.3 -t 5
-
-# node2 → node3 (91.2m link): expect ~320 Mbps
-docker exec clab-wireless-mesh-01-node2 iperf3 -c 192.168.100.3 -t 5
+iperf3 -c 192.168.100.3 -t 5
 ```
 
 ## Destroy

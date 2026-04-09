@@ -79,7 +79,7 @@ uv sync --extra dev
 
 ## Quick Start
 
-Deploy a simple point-to-point WiFi link between two nodes with adaptive MCS (WiFi 6). Run all commands from the **SiNE root directory** — you'll need three terminals open.
+Deploy a simple point-to-point WiFi link between two nodes with adaptive MCS (WiFi 6). Run all commands from the **SiNE root directory** — you'll need four terminals open.
 
 **Terminal 1** — Start the channel server:
 ```bash
@@ -91,10 +91,22 @@ uv run sine channel-server
 UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy examples/for_user/03_adaptive_wifi_link/network.yaml
 ```
 
-**Terminal 3** — Test throughput:
+**Terminal 3** — iperf3 server (node2):
 ```bash
-docker exec -d clab-adaptive-wifi-link-03-node2 iperf3 -s
-docker exec clab-adaptive-wifi-link-03-node1 iperf3 -c 10.0.0.2 -t 5
+docker exec -it clab-adaptive-wifi-link-03-node2 sh
+```
+
+```sh
+iperf3 -s
+```
+
+**Terminal 4** — iperf3 client (node1):
+```bash
+docker exec -it clab-adaptive-wifi-link-03-node1 sh
+```
+
+```sh
+iperf3 -c 10.0.0.2 -t 5
 # Expected: ~480 Mbps (20m link, MCS 10, 1024-QAM)
 ```
 
@@ -205,17 +217,28 @@ Take a look at `examples/for_user/` for complete reference topologies.
 
 ### 3. Deploy and Test
 
+**Terminal 1** — Start the channel server:
 ```bash
-# Start channel server
 uv run sine channel-server
+```
 
-# Deploy emulation
+**Terminal 2** — Deploy the emulation:
+```bash
 UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy path/to/network.yaml
+```
 
-# Run your applications
-docker exec -it clab-<topology>-<node> <command>
+**Terminal 3** — Open a shell on one of your containers and run your application:
+```bash
+docker exec -it clab-<topology>-<node> sh
+```
 
-# Cleanup
+```sh
+# Run whatever you like inside the container
+iperf3 -s
+```
+
+**Terminal 2** — When you're done, tear it down:
+```bash
 UV_PATH=$(which uv) sudo -E $(which uv) run sine destroy path/to/network.yaml
 ```
 

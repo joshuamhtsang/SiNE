@@ -39,7 +39,7 @@ MCS thresholds (from `examples/common_data/wifi6_mcs.csv`):
 
 ## Prerequisites
 
-Run all commands from the **SiNE root directory** — you'll need two terminals open.
+Run all commands from the **SiNE root directory** — you'll need four terminals open.
 
 **Terminal 1** — Start the channel server:
 ```bash
@@ -64,13 +64,23 @@ Link Parameters:
 
 ## Test
 
+**Terminal 3** — node2 (iperf3 server):
 ```bash
-# Check connectivity
-docker exec clab-adaptive-wifi-link-03-node1 ping -c 5 192.168.1.2
+docker exec -it clab-adaptive-wifi-link-03-node2 sh
+```
 
-# Measure throughput
-docker exec -d clab-adaptive-wifi-link-03-node2 iperf3 -s
-docker exec clab-adaptive-wifi-link-03-node1 iperf3 -c 192.168.1.2 -t 5
+```sh
+iperf3 -s
+```
+
+**Terminal 4** — node1 (ping + iperf3 client):
+```bash
+docker exec -it clab-adaptive-wifi-link-03-node1 sh
+```
+
+```sh
+ping -c 5 192.168.1.2
+iperf3 -c 192.168.1.2 -t 5
 ```
 
 ## Try Varying the Distance

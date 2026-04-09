@@ -27,7 +27,7 @@ The only change is the scene file. The link remains usable — NLOS degrades qua
 
 ## Prerequisites
 
-Run all commands from the **SiNE root directory** — you'll need two terminals open.
+Run all commands from the **SiNE root directory** — you'll need four terminals open.
 
 **Terminal 1** — Start the channel server:
 ```bash
@@ -54,13 +54,23 @@ The exact MCS will vary depending on what Sionna's ray tracer finds through the 
 
 ## Test
 
+**Terminal 3** — node2 (iperf3 server):
 ```bash
-# Check connectivity
-docker exec clab-through-the-wall-04-node1 ping -c 5 10.0.0.2
+docker exec -it clab-through-the-wall-04-node2 sh
+```
 
-# Measure throughput
-docker exec -d clab-through-the-wall-04-node2 iperf3 -s
-docker exec clab-through-the-wall-04-node1 iperf3 -c 10.0.0.2 -t 5
+```sh
+iperf3 -s
+```
+
+**Terminal 4** — node1 (ping + iperf3 client):
+```bash
+docker exec -it clab-through-the-wall-04-node1 sh
+```
+
+```sh
+ping -c 5 10.0.0.2
+iperf3 -c 10.0.0.2 -t 5
 ```
 
 ## Render the Scene
