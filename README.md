@@ -91,6 +91,15 @@ uv run sine channel-server
 UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy examples/for_user/03_adaptive_wifi_link/network.yaml
 ```
 
+You can see that the Docker containers for each node are deployed:
+
+~~~
+$ docker ps
+CONTAINER ID   IMAGE           COMMAND     CREATED          STATUS          PORTS     NAMES
+5044468c0419   alpine:latest   "/bin/sh"   13 seconds ago   Up 13 seconds             clab-adaptive-wifi-link-03-node1
+c453a359909b   alpine:latest   "/bin/sh"   13 seconds ago   Up 13 seconds             clab-adaptive-wifi-link-03-node2
+~~~
+
 **Terminal 3** — iperf3 server (node2):
 ```bash
 docker exec -it clab-adaptive-wifi-link-03-node2 sh
