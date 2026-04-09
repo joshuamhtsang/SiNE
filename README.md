@@ -116,7 +116,7 @@ docker exec -it clab-adaptive-wifi-link-03-node1 sh
 
 ```sh
 iperf3 -c 10.0.0.2 -t 5
-# Expected: ~480 Mbps (20m link, MCS 10, 1024-QAM)
+# Expected: ~530 Mbps (20m link, MCS 10, 1024-QAM)
 ```
 
 When you're done, tear it down from Terminal 2:
