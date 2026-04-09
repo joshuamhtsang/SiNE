@@ -30,6 +30,10 @@ SiNE (pronounced "SHEE-na") stands for **Si**onna **N**etwork **E**mulation. It 
 - **Nvidia Sionna v1.2.1**: Performs ray tracing and propagation modelling for wireless channel characterization
 - **Linux netem**: Applies the computed channel conditions (delay, jitter, loss, bandwidth) to the links
 
+![Channel movie](./examples/for_user/05_moving_node/images/channel_movie_smaller.gif)
+
+*Sionna ray-traces propagation paths in real time as a client node walks past a doorway between two rooms. The AP is fixed in one room while the client starts moving until it aligns with the doorway (giving a LOS propagation path), then continues past. See [Example 5](examples/for_user/05_moving_node/) for a full walkthrough.*
+
 ## Features
 
 - **Two link types**: Wireless (Sionna ray-traced) or Fixed netem (direct parameter control)

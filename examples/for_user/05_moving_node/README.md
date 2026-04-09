@@ -132,23 +132,31 @@ Open the notebook in your browser, in fact it should automatically open the foll
 (http://localhost:8888/notebooks/viewer_live_copy.ipynb)[http://localhost:8888/notebooks/viewer_live_copy.ipynb]
 
 
-The easiest way to get it working is to go: `Run` --> `Run All Cells`. To control what is the notebook does, change the value of the Cell 1 variable called `RUN_MODE`.
+Set `RUN_MODE` in **Cell 1** to control what the notebook does, then go `Run` → `Run All Cells`:
+
+| `RUN_MODE` | What runs |
+|------------|-----------|
+| `"signal"` | Channel gain monitor only (Cell 10) |
+| `"movie"` | Animated 3D scene only (Cell 8) |
+| `"both"` | Both |
 
 > **Re-running the mobility script?** Use `Kernel` → `Restart Kernel and Run All Cells` instead of just `Run All Cells`. This clears accumulated state (timestamps, path buffers) so the plot starts fresh.
 
-In the notebook:
+### Cell 5 — One-time 3D snapshot
 
-- **Cell 5** — Single snapshot with 3D scene and propagation paths
-- **Cell 7** — Continuous auto-refresh (uncomment to enable, 1-second updates)
-- **Cell 10** — Continuous auto-refresh (uncomment to enable, 1-second updates)
-
-Run Cell 7 while the movement script is running to see channel metrics (SNR, delay spread, K-factor) and propagation paths update live.
-
-Cell 5 would yield a vizualization of the propagation paths with the type of propgation colour-coded:
+Fetches the current scene state from the channel server and renders it once: node positions, propagation paths, and a text summary of channel metrics (SNR, delay spread, K-factor). Run this at any point during the emulation to see which paths are active. Propagation type is colour-coded by Sionna.
 
 ![image](./images/user-example-05_paths-viz.png)
 
-Cell 10 plots channel gain vs time, annotating each transition between dominant propagation modes. The moment a LOS path opens through the doorway is clearly visible as a sharp upward spike.
+### Cell 8 — Animated 3D movie (`RUN_MODE = "movie"`)
+
+Polls the channel server repeatedly and renders the 3D scene at each time step, then stitches the frames into a playable animation. Start the movement script first, then run the notebook — Cell 8 captures the node moving through the scene in real time.
+
+### Cell 10 — Channel gain vs time (`RUN_MODE = "signal"`)
+
+Polls the channel server at 0.5 s intervals for `t_monitor` seconds (default: 35 s to match the movement script duration) and records the total channel gain at each sample. Produces a static two-panel plot: channel gain in dB with dominant propagation mode transitions annotated, and active path count below. Start the movement script first, then run the notebook.
+
+The moment the client aligns with the doorway is clearly visible as a sharp upward spike in channel gain (~15–20 dB), corresponding to the `refraction + refraction` → `LOS` transition.
 
 ![image](./images/user-example05_signalplot.png)
 
