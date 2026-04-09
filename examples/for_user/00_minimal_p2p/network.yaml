@@ -1,0 +1,69 @@
+# Minimal Point-to-Point Example
+#
+# This is the minimal working topology from the README's "Creating Your Own
+# Network" section. It exists so that `sine validate` can be run against it
+# to confirm the README example stays valid as the schema evolves.
+#
+# Two nodes, 20 m apart in free space, connected by a single wireless link.
+# Adaptive MCS (wifi6_mcs.csv) selects modulation based on SNR.
+#
+# Usage:
+#   uv run sine validate examples/for_user/00_minimal_p2p/network.yaml
+#   uv run sine channel-server   # Terminal 1
+#   UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy examples/for_user/00_minimal_p2p/network.yaml
+
+name: my-network
+
+topology:
+  enable_sinr: false
+
+  scene:
+    file: scenes/vacuum.xml
+
+  nodes:
+    node1:
+      kind: linux
+      image: alpine:latest
+      exec:
+        - apk add --no-cache iproute2 iputils iperf3
+      interfaces:
+        eth1:
+          ip_address: 192.168.1.1/24
+          wireless:
+            position:
+              x: 0
+              y: 0
+              z: 1
+            frequency_ghz: 5.18
+            bandwidth_mhz: 80
+            rf_power_dbm: 20.0
+            rx_sensitivity_dbm: -80.0
+            antenna_pattern: hw_dipole
+            polarization: V
+            mcs_table: examples/common_data/wifi6_mcs.csv
+            mcs_hysteresis_db: 2.0
+
+    node2:
+      kind: linux
+      image: alpine:latest
+      exec:
+        - apk add --no-cache iproute2 iputils iperf3
+      interfaces:
+        eth1:
+          ip_address: 192.168.1.2/24
+          wireless:
+            position:
+              x: 20
+              y: 0
+              z: 1
+            frequency_ghz: 5.18
+            bandwidth_mhz: 80
+            rf_power_dbm: 20.0
+            rx_sensitivity_dbm: -80.0
+            antenna_pattern: hw_dipole
+            polarization: V
+            mcs_table: examples/common_data/wifi6_mcs.csv
+            mcs_hysteresis_db: 2.0
+
+  links:
+    - endpoints: [node1:eth1, node2:eth1]

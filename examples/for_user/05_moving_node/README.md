@@ -46,6 +46,10 @@ iperf3 -c 10.0.1.1 -t 120 -i 1
 # Walk client northward past the doorway (1 m/s)
 uv run python examples/for_user/05_moving_node/linear_movement.py \
     client 30.0 5.0 1.0 30.0 38.0 1.0 1.0
+
+# If you see lag warnings, increase the update interval (e.g. 500ms)
+uv run python examples/for_user/05_moving_node/linear_movement.py \
+    client 30.0 5.0 1.0 30.0 38.0 1.0 1.0 500
 ```
 
 ## Scene Layout
@@ -113,7 +117,7 @@ uv run python examples/for_user/05_moving_node/waypoint_movement.py
 
 ## Live Visualization (Optional)
 
-Watch propagation paths update in real-time as the client moves through the doorway.
+Watch propagation paths update in real-time as the client moves through the doorway. You'll need to open a 6th terminal and do:
 
 ### Terminal 6 — Live viewer
 
@@ -124,19 +128,63 @@ cp scenes/viewer_live.ipynb scenes/viewer_live_copy.ipynb
 uv run --with jupyter jupyter notebook scenes/viewer_live_copy.ipynb
 ```
 
-Open the notebook in your browser (not VS Code's Jupyter extension). In the notebook:
+Open the notebook in your browser, in fact it should automatically open the following URL:
+(http://localhost:8888/notebooks/viewer_live_copy.ipynb)[http://localhost:8888/notebooks/viewer_live_copy.ipynb]
+
+
+The easiest way to get it working is to go: `Run` --> `Run All Cells`. To control what is the notebook does, change the value of the Cell 1 variable called `RUN_MODE`.
+
+> **Re-running the mobility script?** Use `Kernel` → `Restart Kernel and Run All Cells` instead of just `Run All Cells`. This clears accumulated state (timestamps, path buffers) so the plot starts fresh.
+
+In the notebook:
 
 - **Cell 5** — Single snapshot with 3D scene and propagation paths
 - **Cell 7** — Continuous auto-refresh (uncomment to enable, 1-second updates)
+- **Cell 10** — Continuous auto-refresh (uncomment to enable, 1-second updates)
 
 Run Cell 7 while the movement script is running to see channel metrics (SNR, delay spread, K-factor) and propagation paths update live.
 
-Cell 5 would yield a vizualization of the propagation paths:
+Cell 5 would yield a vizualization of the propagation paths with the type of propgation colour-coded:
+
 ![image](./images/user-example-05_paths-viz.png)
 
-Cell 10 would yield a signal vs time plot, clearly indicating transitions between dominant propagation modes. The moment when a LOS path opens up between the AP and client is clearly visible.
+Cell 10 plots channel gain vs time, annotating each transition between dominant propagation modes. The moment a LOS path opens through the doorway is clearly visible as a sharp upward spike.
 
-![image](./images/user-example-05_signalplot.png)
+![image](./images/user-example05_signalplot.png)
+
+### Understanding propagation mode labels
+
+The live viewer and signal plot annotate each sample with a **dominant path mode** — the propagation mechanism of the strongest ray at that moment. A few labels that may look surprising:
+
+| Label | Meaning |
+|-------|---------|
+| `LOS` | Direct line-of-sight — no interactions |
+| `refraction` | Ray passed through one surface boundary (entry or exit of a wall) |
+| `refraction + refraction` | Ray traversed **one wall** — one refraction entering the material, one exiting |
+| `refraction + refraction + refraction + refraction` | Ray traversed **two walls** |
+| `specular reflection` | Ray bounced off a surface |
+| `refraction + specular reflection` | Ray went through one wall face then reflected |
+
+Sionna models each wall as a dielectric slab with two surfaces. A single wall crossing therefore produces **two** refraction events (air→concrete at entry, concrete→air at exit). So `refraction + refraction` almost always means the signal went through the dividing wall — not two separate walls.
+
+### Understanding the channel gain axis
+
+The y-axis shows **channel gain in dB** — the incoherent sum of Sionna's per-path power coefficients:
+
+```
+channel_gain_dB = 10 · log10( Σ |aᵢ|² )
+```
+
+where `aᵢ` are the complex amplitudes returned by Sionna's `PathSolver` for each propagation path. This is a **dimensionless ratio** (not dBm): a value of −72 dB means the received signal power is 10⁻⁷·² times the transmitted power. To convert to absolute received power:
+
+```
+received_power_dBm = channel_gain_dB + tx_power_dBm
+                   = channel_gain_dB + 20.0   (for this example)
+```
+
+The channel gain is what drives adaptive MCS selection — a 15–20 dB jump at the doorway (NLOS → LOS) pushes the link from 64-QAM (MCS 5–7, ~200–320 Mbps) to 1024-QAM (MCS 10–11, ~480–533 Mbps).
+
+**Why the gain is negative:** free-space path loss at 20 m and 5.18 GHz is already ~72 dB, so the channel always attenuates the signal. The NLOS wall-penetration case adds a further ~15–20 dB of concrete attenuation on top of that.
 
 ## Destroy
 

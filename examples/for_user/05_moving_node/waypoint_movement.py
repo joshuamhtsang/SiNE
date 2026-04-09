@@ -10,10 +10,14 @@ Usage:
     uv run sine channel-server
 
     # Terminal 2: Deploy with control API enabled
-    UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy --enable-control examples/for_user/05_moving_node/network.yaml
+    UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy \
+        --enable-control examples/for_user/05_moving_node/network.yaml
 
     # Terminal 3: Edit the waypoints in this script, then run it
     uv run python examples/for_user/05_moving_node/waypoint_movement.py
+
+    # Use a slower update interval if you see lag warnings (default: 100ms)
+    uv run python examples/for_user/05_moving_node/waypoint_movement.py --interval 500
 
 Example waypoint definition:
     waypoints = [
@@ -24,11 +28,14 @@ Example waypoint definition:
     ]
 """
 
+import argparse
 import asyncio
-import httpx
 import math
-from typing import List, Tuple
+import time
 from dataclasses import dataclass
+from typing import List, Tuple
+
+import httpx
 
 
 @dataclass
@@ -58,6 +65,7 @@ class WaypointMobility:
         end: Tuple[float, float, float],
         velocity: float,
     ) -> None:
+        """Move node linearly from start to end at constant velocity."""
         dx = end[0] - start[0]
         dy = end[1] - start[1]
         dz = end[2] - start[2]
@@ -77,7 +85,8 @@ class WaypointMobility:
         current_pos = list(start)
         traveled = 0.0
 
-        for step in range(num_steps + 1):
+        for _ in range(num_steps + 1):
+            t0 = time.monotonic()
             try:
                 response = await self.client.post(
                     f"{self.api_url}/api/control/update",
@@ -98,15 +107,22 @@ class WaypointMobility:
             if traveled >= distance:
                 break
 
-            traveled += step_distance
-            if traveled > distance:
-                traveled = distance
+            traveled = min(traveled + step_distance, distance)
 
             current_pos[0] = start[0] + dir_x * traveled
             current_pos[1] = start[1] + dir_y * traveled
             current_pos[2] = start[2] + dir_z * traveled
 
-            await asyncio.sleep(self.update_interval)
+            elapsed = time.monotonic() - t0
+            remaining = self.update_interval - elapsed
+            if remaining < 0:
+                print(
+                    f"  WARNING: channel server took {elapsed*1000:.0f}ms "
+                    f"(>{self.update_interval*1000:.0f}ms interval) — "
+                    f"movement will lag real-time. "
+                    f"Run with --interval {int(elapsed*1000 + 50)} or higher."
+                )
+            await asyncio.sleep(max(0.0, remaining))
 
     async def follow_waypoints(
         self, node: str, waypoints: List[Waypoint], loop: bool = False
@@ -125,12 +141,13 @@ class WaypointMobility:
 
         print(f"\nWaypoint Plan for {node}:")
         print(f"  Waypoints: {len(waypoints)}")
+        print(f"  Update interval: {self.update_interval*1000:.0f}ms")
         print(f"  Loop: {'Yes (infinite)' if loop else 'No (once)'}")
 
         for i, wp in enumerate(waypoints):
             print(
-                f"  {i+1}. ({wp.position[0]:.1f}, {wp.position[1]:.1f}, {wp.position[2]:.1f}) "
-                f"→ {wp.velocity:.1f} m/s"
+                f"  {i+1}. ({wp.position[0]:.1f}, {wp.position[1]:.1f}, "
+                f"{wp.position[2]:.1f}) → {wp.velocity:.1f} m/s"
             )
         print()
 
@@ -148,12 +165,16 @@ class WaypointMobility:
                 dy = next_wp.position[1] - current_wp.position[1]
                 dz = next_wp.position[2] - current_wp.position[2]
                 distance = math.sqrt(dx**2 + dy**2 + dz**2)
-                duration = distance / current_wp.velocity if current_wp.velocity > 0 else 0
+                duration = (
+                    distance / current_wp.velocity if current_wp.velocity > 0 else 0
+                )
 
                 print(
                     f"Waypoint {i+1} → {i+2}: "
-                    f"({current_wp.position[0]:.1f}, {current_wp.position[1]:.1f}, {current_wp.position[2]:.1f}) → "
-                    f"({next_wp.position[0]:.1f}, {next_wp.position[1]:.1f}, {next_wp.position[2]:.1f}) "
+                    f"({current_wp.position[0]:.1f}, {current_wp.position[1]:.1f}, "
+                    f"{current_wp.position[2]:.1f}) → "
+                    f"({next_wp.position[0]:.1f}, {next_wp.position[1]:.1f}, "
+                    f"{next_wp.position[2]:.1f}) "
                     f"[{distance:.1f}m @ {current_wp.velocity:.1f} m/s = {duration:.1f}s]"
                 )
 
@@ -169,24 +190,27 @@ class WaypointMobility:
             await asyncio.sleep(1.0)
 
     async def close(self) -> None:
+        """Close the HTTP client."""
         await self.client.aclose()
 
 
-async def main():
+async def main(interval_ms: int) -> None:
     """Walk client through doorway and back."""
-    mobility = WaypointMobility(api_url="http://localhost:8002", update_interval_ms=100)
+    mobility = WaypointMobility(
+        api_url="http://localhost:8002", update_interval_ms=interval_ms
+    )
 
     try:
         # Walk client from south (far from doorway) → doorway → north, then return
         # Doorway is at y=20; AP is at (10, 20, 2.5) aligned with doorway
         doorway_crossing = [
-            Waypoint(position=(30.0, 5.0, 1.0), velocity=1.0),   # Start: south of doorway
-            Waypoint(position=(30.0, 20.0, 1.0), velocity=1.0),  # Doorway alignment
+            Waypoint(position=(30.0, 5.0, 1.0), velocity=1.0),   # Start: south
+            Waypoint(position=(30.0, 20.0, 1.0), velocity=1.0),  # Doorway
             Waypoint(position=(30.0, 35.0, 1.0), velocity=1.0),  # North of doorway
             Waypoint(position=(30.0, 5.0, 1.0), velocity=2.0),   # Return quickly
         ]
 
-        await mobility.follow_waypoints(node="client", waypoints=doorway_crossing, loop=False)
+        await mobility.follow_waypoints(node="client", waypoints=doorway_crossing)
 
         print("\nExpected throughput observations:")
         print("  y=5  (south, far from doorway): ~50-100 Mbps  (NLOS, high path loss)")
@@ -205,7 +229,19 @@ if __name__ == "__main__":
     print("Prerequisites:")
     print("  1. Channel server:  uv run sine channel-server")
     print("  2. Deploy:          UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy \\")
-    print("                          --enable-control examples/for_user/05_moving_node/network.yaml")
+    print("                        --enable-control "
+          "examples/for_user/05_moving_node/network.yaml")
     print()
 
-    asyncio.run(main())
+    parser = argparse.ArgumentParser(description="Waypoint movement for SiNE nodes")
+    parser.add_argument(
+        "--interval",
+        type=int,
+        default=100,
+        metavar="MS",
+        help="Position update interval in milliseconds (default: 100). "
+             "Increase if you see lag warnings.",
+    )
+    parsed = parser.parse_args()
+
+    asyncio.run(main(interval_ms=parsed.interval))

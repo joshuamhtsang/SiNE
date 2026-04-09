@@ -195,6 +195,8 @@ topology:
 - For antennas, use **either** `antenna_pattern` (e.g. `iso`, `hw_dipole`) **or** `antenna_gain_dbi` — never both, to avoid double-counting Sionna's built-in pattern gains
 - For modulation, use **either** `mcs_table` (adaptive MCS) **or** explicit `modulation`/`fec_type`/`fec_code_rate` parameters
 
+The above YAML is also saved as [`examples/for_user/00_minimal_p2p/network.yaml`](examples/for_user/00_minimal_p2p/network.yaml) — run `uv run sine validate examples/for_user/00_minimal_p2p/network.yaml` to confirm it passes validation.
+
 Take a look at `examples/for_user/` for complete reference topologies.
 
 ### 3. Deploy and Test
@@ -397,7 +399,8 @@ UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy --enable-control example
 uv run --with jupyter jupyter notebook scenes/viewer_live.ipynb
 ```
 
-We recommend making a copy of [viewer_live.ipynb](./scenes/viewer_live.ipynb) before running — Jupyter notebooks can be tricky to reset mid-session.
+We recommend making a copy of [viewer_live.ipynb](./scenes/viewer_live.ipynb) before running — Jupyter notebooks can be tricky to reset mid-session. See [05_moving_node/](examples/for_user/05_moving_node/) for a complete walkthrough.
+
 
 **What you'll see:**
 
@@ -407,9 +410,9 @@ Sionna ray-traces the scene in real time as the node moves, showing which propag
 
 *3D scene view from the live viewer — AP in Room 1 (left), client in Room 2 (right). Propagation paths (coloured lines) are updated by Sionna each time the client position changes. The direct path through the doorway appears when the client aligns with the opening.*
 
-![Signal level vs time](examples/for_user/05_moving_node/images/user-example-05_signalplot.png)
+![Channel gain vs time](examples/for_user/05_moving_node/images/user-example05_signalplot.png)
 
-*Received signal level over time as the client walks from y = 5 m to y = 38 m at 1 m/s. The dominant propagation mode transitions from refraction (signal passing through the concrete wall) to LOS (direct path through the doorway) and back again. The signal spike at the LOS transition is ~15–20 dB, driving the adaptive MCS from 64-QAM to 1024-QAM.*
+*Channel gain vs time as the client walks from y = 5 m to y = 38 m at 1 m/s. Channel gain is the incoherent sum of Sionna's per-path power coefficients (10·log₁₀(Σ|aᵢ|²)) — a dimensionless ratio in dB, not received power. The dominant propagation mode starts as `refraction + refraction` (the signal traversing the concrete dividing wall — one refraction entering, one exiting) then transitions to LOS as the client aligns with the doorway. The ~15–20 dB gain spike at the LOS transition drives adaptive MCS from 64-QAM up to 1024-QAM.*
 
 **Important:** Run in standard Jupyter Notebook (browser), not VS Code's Jupyter extension.
 
@@ -442,17 +445,24 @@ SiNE's channel server exposes a REST API on port 8000. You can call it directly 
 | `/visualization/state` | GET | Cached scene/path data for live viewer |
 | `/debug/paths` | POST | Get detailed path info for debugging |
 
-Example SINR request:
+Example `POST /compute/interference` request:
 ```json
 {
-  "receiver": {"node_name": "node1", "position": [0, 0, 1], ...},
-  "desired_tx": {"node_name": "node2", "position": [20, 0, 1], ...},
+  "tx_node": "node2",
+  "rx_node": "node1",
+  "tx_position": {"x": 20, "y": 0, "z": 1},
+  "rx_position": {"x": 0,  "y": 0, "z": 1},
+  "tx_power_dbm": 20.0,
+  "frequency_hz": 5.18e9,
+  "bandwidth_hz": 80e6,
+  "antenna_pattern": "hw_dipole",
   "interferers": [
     {
       "node_name": "node3",
-      "position": [10, 17.3, 1],
-      "tx_probability": 0.2,
-      "frequency_hz": 5.28e9,
+      "position": {"x": 10, "y": 17.3, "z": 1},
+      "tx_power_dbm": 20.0,
+      "frequency_hz": 5.18e9,
+      "bandwidth_hz": 80e6,
       "is_active": true
     }
   ]

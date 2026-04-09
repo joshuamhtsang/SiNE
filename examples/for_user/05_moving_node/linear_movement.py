@@ -10,10 +10,12 @@ Usage:
     uv run sine channel-server
 
     # Terminal 2: Deploy with control API enabled
-    UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy --enable-control examples/for_user/05_moving_node/network.yaml
+    UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy \
+        --enable-control examples/for_user/05_moving_node/network.yaml
 
     # Terminal 3: Run this script
-    uv run python examples/for_user/05_moving_node/linear_movement.py <node> <start_x> <start_y> <start_z> <end_x> <end_y> <end_z> <velocity>
+    uv run python examples/for_user/05_moving_node/linear_movement.py \
+        <node> <start_x> <start_y> <start_z> <end_x> <end_y> <end_z> <velocity> [interval_ms]
 
 Examples:
     # Walk client northward past the doorway (1 m/s)
@@ -23,13 +25,19 @@ Examples:
     # Walk client southward back to start (1 m/s)
     uv run python examples/for_user/05_moving_node/linear_movement.py \\
         client 30.0 38.0 1.0 30.0 5.0 1.0 1.0
+
+    # Slower updates (500ms) if channel server response exceeds 100ms
+    uv run python examples/for_user/05_moving_node/linear_movement.py \\
+        client 30.0 5.0 1.0 30.0 38.0 1.0 1.0 500
 """
 
 import asyncio
-import httpx
 import math
 import sys
+import time
 from typing import Tuple
+
+import httpx
 
 
 class LinearMobility:
@@ -90,6 +98,7 @@ class LinearMobility:
         traveled = 0.0
 
         for step in range(num_steps + 1):
+            t0 = time.monotonic()
             try:
                 response = await self.client.post(
                     f"{self.api_url}/api/control/update",
@@ -106,8 +115,8 @@ class LinearMobility:
                 progress = (traveled / distance) * 100
                 print(
                     f"Step {step}/{num_steps}: "
-                    f"({current_pos[0]:.2f}, {current_pos[1]:.2f}, {current_pos[2]:.2f}) "
-                    f"[{progress:.1f}%]"
+                    f"({current_pos[0]:.2f}, {current_pos[1]:.2f}, "
+                    f"{current_pos[2]:.2f}) [{progress:.1f}%]"
                 )
 
             except httpx.HTTPError as e:
@@ -117,35 +126,52 @@ class LinearMobility:
             if traveled >= distance:
                 break
 
-            traveled += step_distance
-            if traveled > distance:
-                traveled = distance
+            traveled = min(traveled + step_distance, distance)
 
             current_pos[0] = start[0] + dir_x * traveled
             current_pos[1] = start[1] + dir_y * traveled
             current_pos[2] = start[2] + dir_z * traveled
 
-            await asyncio.sleep(self.update_interval)
+            elapsed = time.monotonic() - t0
+            remaining = self.update_interval - elapsed
+            if remaining < 0:
+                suggested = int(elapsed * 1000 + 50)
+                print(
+                    f"  WARNING: channel server took {elapsed*1000:.0f}ms "
+                    f"(>{self.update_interval*1000:.0f}ms interval) — "
+                    f"movement will lag real-time. "
+                    f"Add {suggested} (or higher) as the last argument."
+                )
+            await asyncio.sleep(max(0.0, remaining))
 
         print(f"\nDone: {node} reached destination")
 
     async def close(self) -> None:
+        """Close the HTTP client."""
         await self.client.aclose()
 
 
-async def main():
+async def main() -> None:
+    """Parse CLI args and run linear movement."""
     args = sys.argv[1:]
 
-    if len(args) != 8:
-        print(f"Error: Expected 8 arguments, got {len(args)}")
+    if len(args) not in (8, 9):
+        print(f"Error: Expected 8 or 9 arguments, got {len(args)}")
         print()
         print("Usage:")
         print("  uv run python examples/for_user/05_moving_node/linear_movement.py")
-        print("      <node> <start_x> <start_y> <start_z> <end_x> <end_y> <end_z> <velocity>")
+        print(
+            "      <node> <start_x> <start_y> <start_z>"
+            " <end_x> <end_y> <end_z> <velocity> [interval_ms=100]"
+        )
         print()
         print("Example (walk client past doorway at 1 m/s):")
         print("  uv run python examples/for_user/05_moving_node/linear_movement.py \\")
         print("      client 30.0 5.0 1.0 30.0 35.0 1.0 1.0")
+        print()
+        print("Example (500ms interval — use if you see lag warnings):")
+        print("  uv run python examples/for_user/05_moving_node/linear_movement.py \\")
+        print("      client 30.0 5.0 1.0 30.0 35.0 1.0 1.0 500")
         sys.exit(1)
 
     try:
@@ -157,16 +183,22 @@ async def main():
         end_y = float(args[5])
         end_z = float(args[6])
         velocity = float(args[7])
+        interval_ms = int(args[8]) if len(args) == 9 else 100
 
         if velocity <= 0:
             print("Error: Velocity must be positive")
+            sys.exit(1)
+        if interval_ms <= 0:
+            print("Error: interval_ms must be positive")
             sys.exit(1)
 
     except ValueError as e:
         print(f"Error: Invalid argument — {e}")
         sys.exit(1)
 
-    mobility = LinearMobility(api_url="http://localhost:8002", update_interval_ms=100)
+    mobility = LinearMobility(
+        api_url="http://localhost:8002", update_interval_ms=interval_ms
+    )
 
     try:
         await mobility.move_linear(
@@ -176,7 +208,10 @@ async def main():
             velocity=velocity,
         )
         print("\nMovement complete!")
-        print("Watch live positions: curl http://localhost:8002/api/control/position/" + node)
+        print(
+            "Watch live positions: "
+            f"curl http://localhost:8002/api/control/position/{node}"
+        )
 
     finally:
         await mobility.close()
@@ -190,7 +225,8 @@ if __name__ == "__main__":
     print("Prerequisites:")
     print("  1. Channel server:  uv run sine channel-server")
     print("  2. Deploy:          UV_PATH=$(which uv) sudo -E $(which uv) run sine deploy \\")
-    print("                          --enable-control examples/for_user/05_moving_node/network.yaml")
+    print("                        --enable-control "
+          "examples/for_user/05_moving_node/network.yaml")
     print()
 
     asyncio.run(main())
