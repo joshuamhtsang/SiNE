@@ -28,21 +28,17 @@ class TestFreeSpaceAgreement:
         """In vacuum, Sionna and fallback should agree within 1-2 dB for LOS."""
         # Sionna RT with vacuum scene
         sionna = SionnaEngine()
-        sionna.load_scene(
-            scene_path=str(scenes_dir / "vacuum.xml"),
-            frequency_hz=5.18e9,
-            bandwidth_hz=80e6
-        )
+        sionna.load_scene(scene_path=str(scenes_dir / "vacuum.xml"))
         sionna.add_transmitter("tx", (0, 0, 1), antenna_pattern="iso")
         sionna.add_receiver("rx", (20, 0, 1), antenna_pattern="iso")
-        sionna_result = sionna.compute_paths()
+        sionna_result = sionna.compute_paths(frequency_hz=5.18e9)
 
         # Fallback engine (FSPL + 0 dB indoor loss for vacuum)
         fallback = FallbackEngine(indoor_loss_db=0.0)
-        fallback.load_scene(frequency_hz=5.18e9, bandwidth_hz=80e6)
+        fallback.load_scene()
         fallback.add_transmitter("tx", (0, 0, 1))
         fallback.add_receiver("rx", (20, 0, 1))
-        fallback_result = fallback.compute_paths()
+        fallback_result = fallback.compute_paths(frequency_hz=5.18e9)
 
         # Should agree within 1-2 dB (Sionna includes more accurate effects)
         diff = abs(sionna_result.path_loss_db - fallback_result.path_loss_db)
@@ -59,21 +55,17 @@ class TestFreeSpaceAgreement:
         for distance in distances:
             # Sionna RT
             sionna = SionnaEngine()
-            sionna.load_scene(
-                scene_path=str(scenes_dir / "vacuum.xml"),
-                frequency_hz=5.18e9,
-                bandwidth_hz=80e6
-            )
+            sionna.load_scene(scene_path=str(scenes_dir / "vacuum.xml"))
             sionna.add_transmitter("tx", (0, 0, 1), antenna_pattern="iso")
             sionna.add_receiver("rx", (distance, 0, 1), antenna_pattern="iso")
-            sionna_result = sionna.compute_paths()
+            sionna_result = sionna.compute_paths(frequency_hz=5.18e9)
 
             # Fallback
             fallback = FallbackEngine(indoor_loss_db=0.0)
-            fallback.load_scene(frequency_hz=5.18e9, bandwidth_hz=80e6)
+            fallback.load_scene()
             fallback.add_transmitter("tx", (0, 0, 1))
             fallback.add_receiver("rx", (distance, 0, 1))
-            fallback_result = fallback.compute_paths()
+            fallback_result = fallback.compute_paths(frequency_hz=5.18e9)
 
             # Should agree within 2 dB at all distances
             diff = abs(sionna_result.path_loss_db - fallback_result.path_loss_db)
@@ -96,22 +88,18 @@ class TestIndoorDivergence:
 
         # Sionna RT with indoor scene
         sionna = SionnaEngine()
-        sionna.load_scene(
-            scene_path=str(two_rooms_scene),
-            frequency_hz=5.18e9,
-            bandwidth_hz=80e6
-        )
+        sionna.load_scene(scene_path=str(two_rooms_scene))
         # TX in room 1, RX in room 2 (through wall/door)
         sionna.add_transmitter("tx", (2, 2, 1), antenna_pattern="iso")
         sionna.add_receiver("rx", (8, 2, 1), antenna_pattern="iso")
-        sionna_result = sionna.compute_paths()
+        sionna_result = sionna.compute_paths(frequency_hz=5.18e9)
 
         # Fallback (FSPL + 10 dB indoor loss estimate)
         fallback = FallbackEngine(indoor_loss_db=10.0)
-        fallback.load_scene(frequency_hz=5.18e9, bandwidth_hz=80e6)
+        fallback.load_scene()
         fallback.add_transmitter("tx", (2, 2, 1))
         fallback.add_receiver("rx", (8, 2, 1))
-        fallback_result = fallback.compute_paths()
+        fallback_result = fallback.compute_paths(frequency_hz=5.18e9)
 
         # Sionna should show MORE path loss (walls, obstacles)
         # Exact difference depends on scene geometry, but Sionna >= Fallback expected
@@ -149,21 +137,17 @@ class TestAntennaPatternConsistency:
         """Test that isotropic pattern gives consistent results."""
         # Sionna with isotropic
         sionna = SionnaEngine()
-        sionna.load_scene(
-            scene_path=str(scenes_dir / "vacuum.xml"),
-            frequency_hz=5.18e9,
-            bandwidth_hz=80e6
-        )
+        sionna.load_scene(scene_path=str(scenes_dir / "vacuum.xml"))
         sionna.add_transmitter("tx", (0, 0, 1), antenna_pattern="iso")
         sionna.add_receiver("rx", (20, 0, 1), antenna_pattern="iso")
-        sionna_result = sionna.compute_paths()
+        sionna_result = sionna.compute_paths(frequency_hz=5.18e9)
 
         # Fallback (isotropic = 0 dBi gain)
         fallback = FallbackEngine(indoor_loss_db=0.0)
-        fallback.load_scene(frequency_hz=5.18e9, bandwidth_hz=80e6)
+        fallback.load_scene()
         fallback.add_transmitter("tx", (0, 0, 1))
         fallback.add_receiver("rx", (20, 0, 1))
-        fallback_result = fallback.compute_paths()
+        fallback_result = fallback.compute_paths(frequency_hz=5.18e9)
 
         # Should be very close (isotropic is simplest case)
         diff = abs(sionna_result.path_loss_db - fallback_result.path_loss_db)
@@ -179,21 +163,17 @@ class TestDelayCalculation:
 
         # Sionna
         sionna = SionnaEngine()
-        sionna.load_scene(
-            scene_path=str(scenes_dir / "vacuum.xml"),
-            frequency_hz=5.18e9,
-            bandwidth_hz=80e6
-        )
+        sionna.load_scene(scene_path=str(scenes_dir / "vacuum.xml"))
         sionna.add_transmitter("tx", (0, 0, 1), antenna_pattern="iso")
         sionna.add_receiver("rx", (distance, 0, 1), antenna_pattern="iso")
-        sionna_result = sionna.compute_paths()
+        sionna_result = sionna.compute_paths(frequency_hz=5.18e9)
 
         # Fallback
         fallback = FallbackEngine(indoor_loss_db=0.0)
-        fallback.load_scene(frequency_hz=5.18e9, bandwidth_hz=80e6)
+        fallback.load_scene()
         fallback.add_transmitter("tx", (0, 0, 1))
         fallback.add_receiver("rx", (distance, 0, 1))
-        fallback_result = fallback.compute_paths()
+        fallback_result = fallback.compute_paths(frequency_hz=5.18e9)
 
         # Expected delay = distance / c ≈ 66.67 ns
         expected_delay_ns = (distance / 3e8) * 1e9
@@ -214,18 +194,14 @@ class TestPathDetailsComparison:
         """Sionna should detect multiple paths, fallback always reports 1."""
         # Sionna with scene that has reflections
         sionna = SionnaEngine()
-        sionna.load_scene(
-            scene_path=str(scenes_dir / "vacuum.xml"),
-            frequency_hz=5.18e9,
-            bandwidth_hz=80e6
-        )
+        sionna.load_scene(scene_path=str(scenes_dir / "vacuum.xml"))
         sionna.add_transmitter("tx", (0, 0, 1), antenna_pattern="iso")
         sionna.add_receiver("rx", (20, 0, 1), antenna_pattern="iso")
         sionna_details = sionna.get_path_details()
 
         # Fallback
         fallback = FallbackEngine(indoor_loss_db=0.0)
-        fallback.load_scene(frequency_hz=5.18e9, bandwidth_hz=80e6)
+        fallback.load_scene()
         fallback.add_transmitter("tx", (0, 0, 1))
         fallback.add_receiver("rx", (20, 0, 1))
         fallback_details = fallback.get_path_details()
@@ -239,18 +215,14 @@ class TestPathDetailsComparison:
         """Both engines should compute same 3D distance."""
         # Sionna
         sionna = SionnaEngine()
-        sionna.load_scene(
-            scene_path=str(scenes_dir / "vacuum.xml"),
-            frequency_hz=5.18e9,
-            bandwidth_hz=80e6
-        )
+        sionna.load_scene(scene_path=str(scenes_dir / "vacuum.xml"))
         sionna.add_transmitter("tx", (0, 0, 1), antenna_pattern="iso")
         sionna.add_receiver("rx", (20, 0, 1), antenna_pattern="iso")
         sionna_details = sionna.get_path_details()
 
         # Fallback
         fallback = FallbackEngine(indoor_loss_db=0.0)
-        fallback.load_scene(frequency_hz=5.18e9, bandwidth_hz=80e6)
+        fallback.load_scene()
         fallback.add_transmitter("tx", (0, 0, 1))
         fallback.add_receiver("rx", (20, 0, 1))
         fallback_details = fallback.get_path_details()
@@ -274,21 +246,17 @@ class TestFrequencyScaling:
         for freq in frequencies:
             # Sionna
             sionna = SionnaEngine()
-            sionna.load_scene(
-                scene_path=str(scenes_dir / "vacuum.xml"),
-                frequency_hz=freq,
-                bandwidth_hz=80e6
-            )
+            sionna.load_scene(scene_path=str(scenes_dir / "vacuum.xml"))
             sionna.add_transmitter("tx", (0, 0, 1), antenna_pattern="iso")
             sionna.add_receiver("rx", (20, 0, 1), antenna_pattern="iso")
-            sionna_results.append(sionna.compute_paths().path_loss_db)
+            sionna_results.append(sionna.compute_paths(frequency_hz=freq).path_loss_db)
 
             # Fallback
             fallback = FallbackEngine(indoor_loss_db=0.0)
-            fallback.load_scene(frequency_hz=freq, bandwidth_hz=80e6)
+            fallback.load_scene()
             fallback.add_transmitter("tx", (0, 0, 1))
             fallback.add_receiver("rx", (20, 0, 1))
-            fallback_results.append(fallback.compute_paths().path_loss_db)
+            fallback_results.append(fallback.compute_paths(frequency_hz=freq).path_loss_db)
 
         # Higher frequency should give higher path loss (both engines)
         assert sionna_results[1] > sionna_results[0]  # 5.18 GHz > 2.4 GHz
@@ -308,20 +276,20 @@ class TestEdgeCases:
         # Sionna - may need a scene, skip if it fails
         try:
             sionna = SionnaEngine()
-            sionna.load_scene(frequency_hz=5.18e9, bandwidth_hz=80e6)
+            sionna.load_scene()
             sionna.add_transmitter("tx", (0, 0, 1), antenna_pattern="iso")
             sionna.add_receiver("rx", (0, 0, 1), antenna_pattern="iso")
-            sionna_result = sionna.compute_paths()
+            sionna_result = sionna.compute_paths(frequency_hz=5.18e9)
             sionna_works = True
         except Exception:
             sionna_works = False
 
         # Fallback should handle gracefully (clips to 0.1m)
         fallback = FallbackEngine(indoor_loss_db=0.0)
-        fallback.load_scene(frequency_hz=5.18e9, bandwidth_hz=80e6)
+        fallback.load_scene()
         fallback.add_transmitter("tx", (0, 0, 1))
         fallback.add_receiver("rx", (0, 0, 1))
-        fallback_result = fallback.compute_paths()
+        fallback_result = fallback.compute_paths(frequency_hz=5.18e9)
 
         # Fallback should succeed
         assert fallback_result.path_loss_db > 0
@@ -332,17 +300,17 @@ class TestEdgeCases:
 
         # Sionna
         sionna = SionnaEngine()
-        sionna.load_scene(frequency_hz=5.18e9, bandwidth_hz=80e6)
+        sionna.load_scene()
         sionna.add_transmitter("tx", (0, 0, 1), antenna_pattern="iso")
         sionna.add_receiver("rx", (distance, 0, 1), antenna_pattern="iso")
-        sionna_result = sionna.compute_paths()
+        sionna_result = sionna.compute_paths(frequency_hz=5.18e9)
 
         # Fallback
         fallback = FallbackEngine(indoor_loss_db=0.0)
-        fallback.load_scene(frequency_hz=5.18e9, bandwidth_hz=80e6)
+        fallback.load_scene()
         fallback.add_transmitter("tx", (0, 0, 1))
         fallback.add_receiver("rx", (distance, 0, 1))
-        fallback_result = fallback.compute_paths()
+        fallback_result = fallback.compute_paths(frequency_hz=5.18e9)
 
         # Both should give reasonable results
         assert sionna_result.path_loss_db > 0

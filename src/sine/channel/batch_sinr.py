@@ -268,7 +268,7 @@ class LinksSinrComputer:
                 )
 
                 # Get path result for signal
-                path_result = engine.compute_paths()
+                path_result = engine.compute_paths(frequency_hz=link.frequency_hz)
 
                 # Cache paths for visualization
                 path_details = engine.get_path_details()

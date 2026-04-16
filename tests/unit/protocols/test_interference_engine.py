@@ -37,10 +37,8 @@ class TestInterferenceEngineBasics:
     def test_load_empty_scene(self):
         """Test loading empty scene (vacuum)."""
         engine = InterferenceEngine()
-        engine.load_scene(scene_path=None, frequency_hz=5.18e9, bandwidth_hz=80e6)
+        engine.load_scene()
         assert engine._scene_loaded
-        assert engine._frequency_hz == 5.18e9
-        assert engine._bandwidth_hz == 80e6
 
     def test_cache_clearing(self):
         """Test that cache can be cleared."""
@@ -65,7 +63,7 @@ class TestFreeSpaceInterference:
         Validates that computed interference power matches Friis equation within 0.5 dB.
         """
         engine = InterferenceEngine()
-        engine.load_scene(scene_path=None, frequency_hz=5.18e9, bandwidth_hz=80e6)
+        engine.load_scene()
 
         # Setup: RX at origin, interferer at 20m distance
         rx_position = (0.0, 0.0, 1.5)
@@ -131,7 +129,7 @@ class TestFreeSpaceInterference:
         Verifies that interference is correctly summed in linear domain.
         """
         engine = InterferenceEngine()
-        engine.load_scene(scene_path=None, frequency_hz=5.18e9, bandwidth_hz=80e6)
+        engine.load_scene()
 
         rx_position = (0.0, 0.0, 1.5)
         rx_antenna_gain_dbi = 2.15
@@ -193,7 +191,7 @@ class TestFreeSpaceInterference:
     def test_inactive_interferer_skipped(self):
         """Test that inactive interferers are correctly skipped."""
         engine = InterferenceEngine()
-        engine.load_scene(scene_path=None, frequency_hz=5.18e9, bandwidth_hz=80e6)
+        engine.load_scene()
 
         rx_position = (0.0, 0.0, 1.5)
         rx_antenna_gain_dbi = 2.15
@@ -223,7 +221,7 @@ class TestInterferenceCache:
     def test_cache_usage(self):
         """Test that cache is used for repeated computations."""
         engine = InterferenceEngine()
-        engine.load_scene(scene_path=None, frequency_hz=5.18e9, bandwidth_hz=80e6)
+        engine.load_scene()
 
         rx_position = (0.0, 0.0, 1.5)
         interferer = TransmitterInfo("i1", (20.0, 0.0, 1.5), 20.0, 2.15, frequency_hz=5.18e9)
@@ -320,7 +318,7 @@ class TestCacheKeyIsolation:
         making interference appear 4.32 dB too strong and reducing SINR accordingly.
         """
         engine = InterferenceEngine()
-        engine.load_scene(scene_path=None, frequency_hz=5.18e9, bandwidth_hz=80e6)
+        engine.load_scene()
 
         # halfwave dipole result: lower path loss because Sionna embeds 2×2.16 dBi gains
         hw_dipole_result = self._fake_path(71.95)
@@ -360,7 +358,7 @@ class TestCacheKeyIsolation:
         silently return a path computed for a different geometric environment.
         """
         engine = InterferenceEngine()
-        engine.load_scene(scene_path=None, frequency_hz=5.18e9, bandwidth_hz=80e6)
+        engine.load_scene()
 
         scene_a_result = self._fake_path(72.0)
         scene_b_result = self._fake_path(85.0)  # Different scene → different geometry
@@ -393,7 +391,7 @@ class TestCacheKeyIsolation:
     def test_identical_parameters_reuse_cache_entry(self):
         """Sanity check: identical calls must share one cache entry."""
         engine = InterferenceEngine()
-        engine.load_scene(scene_path=None, frequency_hz=5.18e9, bandwidth_hz=80e6)
+        engine.load_scene()
 
         interferer = self._interferer("iso")
         kwargs = self._rx_kwargs("iso", interferer)
@@ -419,7 +417,7 @@ class TestEquilateralTriangle:
         All links should have similar interference levels due to symmetry.
         """
         engine = InterferenceEngine()
-        engine.load_scene(scene_path=None, frequency_hz=5.18e9, bandwidth_hz=80e6)
+        engine.load_scene()
 
         # Equilateral triangle with 100m sides
         # Node1 at origin, Node2 at (100, 0), Node3 at (50, 86.6)
@@ -592,7 +590,7 @@ class TestACLRIntegration:
         Compares co-channel (0 dB ACLR) vs adjacent-channel (40 dB ACLR).
         """
         engine = InterferenceEngine()
-        engine.load_scene(scene_path=None, frequency_hz=5.18e9, bandwidth_hz=80e6)
+        engine.load_scene()
 
         rx_position = (0.0, 0.0, 1.5)
         rx_frequency_hz = 5.18e9
@@ -658,7 +656,7 @@ class TestACLRIntegration:
         Test that orthogonal interferers (>2× bandwidth separation) are filtered out.
         """
         engine = InterferenceEngine()
-        engine.load_scene(scene_path=None, frequency_hz=5.18e9, bandwidth_hz=80e6)
+        engine.load_scene()
 
         rx_position = (0.0, 0.0, 1.5)
         rx_frequency_hz = 5.18e9

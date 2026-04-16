@@ -34,7 +34,7 @@ class TestCochannelInterference:
         Verifies 0 dB ACLR for 20 MHz separation.
         """
         engine = InterferenceEngine()
-        engine.load_scene(scene_path=None, frequency_hz=5.18e9, bandwidth_hz=80e6)
+        engine.load_scene()
 
         rx_position = (0.0, 0.0, 1.5)
         rx_frequency_hz = 5.18e9
@@ -84,7 +84,7 @@ class TestTransitionBandRejection:
         60 MHz separation should give 24 dB ACLR (linear interpolation).
         """
         engine = InterferenceEngine()
-        engine.load_scene(scene_path=None, frequency_hz=5.18e9, bandwidth_hz=80e6)
+        engine.load_scene()
 
         rx_position = (0.0, 0.0, 1.5)
         rx_frequency_hz = 5.18e9
@@ -137,7 +137,7 @@ class TestFirstAdjacentRejection:
         100 MHz separation should give 40 dB ACLR.
         """
         engine = InterferenceEngine()
-        engine.load_scene(scene_path=None, frequency_hz=5.18e9, bandwidth_hz=80e6)
+        engine.load_scene()
 
         rx_position = (0.0, 0.0, 1.5)
         rx_frequency_hz = 5.18e9
@@ -189,7 +189,7 @@ class TestOrthogonalFiltering:
         200 MHz separation exceeds threshold, so interferer should be filtered out.
         """
         engine = InterferenceEngine()
-        engine.load_scene(scene_path=None, frequency_hz=5.18e9, bandwidth_hz=80e6)
+        engine.load_scene()
 
         rx_position = (0.0, 0.0, 1.5)
         rx_frequency_hz = 5.18e9
@@ -239,7 +239,7 @@ class TestBandwidthDependentThresholds:
         - Orthogonal: > 2 × 20 = 40 MHz
         """
         engine = InterferenceEngine()
-        engine.load_scene(scene_path=None, frequency_hz=5.18e9, bandwidth_hz=20e6)
+        engine.load_scene()
 
         rx_position = (0.0, 0.0, 1.5)
         rx_frequency_hz = 5.18e9
@@ -296,7 +296,7 @@ class TestBandwidthDependentThresholds:
         - Orthogonal: > 2 × 40 = 80 MHz
         """
         engine = InterferenceEngine()
-        engine.load_scene(scene_path=None, frequency_hz=5.18e9, bandwidth_hz=40e6)
+        engine.load_scene()
 
         rx_position = (0.0, 0.0, 1.5)
         rx_frequency_hz = 5.18e9
@@ -352,7 +352,7 @@ class TestMixedFrequencyTopology:
         - Group 3: 5.50 GHz (+320 MHz, orthogonal, filtered out)
         """
         engine = InterferenceEngine()
-        engine.load_scene(scene_path=None, frequency_hz=5.18e9, bandwidth_hz=80e6)
+        engine.load_scene()
 
         rx_position = (0.0, 0.0, 1.5)
         rx_frequency_hz = 5.18e9

@@ -140,7 +140,7 @@ class InterferenceEngine:
 
     Usage:
         engine = InterferenceEngine()
-        engine.load_scene("scene.xml", frequency_hz=5.18e9)
+        engine.load_scene("scene.xml")
 
         interferers = [
             TransmitterInfo("node2", (10, 0, 1), 20.0, 2.15, 5.18e9),
@@ -166,33 +166,23 @@ class InterferenceEngine:
         self._engine: Optional[SionnaEngine] = None
         self._path_cache: dict = {}
         self._scene_loaded = False
-        self._frequency_hz = 5.18e9
-        self._bandwidth_hz = 80e6
         self._scene_path: str = ""
 
-    def load_scene(
-        self,
-        scene_path: Optional[str] = None,
-        frequency_hz: float = 5.18e9,
-        bandwidth_hz: float = 80e6,
-    ) -> None:
+    def load_scene(self, scene_path: Optional[str] = None) -> None:
         """
         Load ray tracing scene for interference computation.
 
         Args:
-            scene_path: Path to Mitsuba XML scene file, or None for empty scene
-            frequency_hz: RF frequency for simulation
-            bandwidth_hz: Channel bandwidth
+            scene_path: Path to Mitsuba XML scene file, or None for empty scene.
+                Frequency is set per-link in _compute_interference_path().
         """
         self._engine = SionnaEngine()
-        self._engine.load_scene(scene_path, frequency_hz, bandwidth_hz)
+        self._engine.load_scene(scene_path)
         self._scene_loaded = True
-        self._frequency_hz = frequency_hz
-        self._bandwidth_hz = bandwidth_hz
         self._scene_path = scene_path or ""
         self._path_cache.clear()
 
-        logger.info(f"InterferenceEngine: loaded scene at {frequency_hz/1e9:.3f} GHz")
+        logger.info("InterferenceEngine: loaded scene")
 
     def compute_interference_at_receiver(
         self,
@@ -290,6 +280,7 @@ class InterferenceEngine:
                 rx_antenna_pattern,
                 tx_polarization,
                 rx_polarization,
+                interferer.frequency_hz,
             )
 
             if cache_key in self._path_cache:
@@ -301,6 +292,7 @@ class InterferenceEngine:
                     rx_position,
                     interferer.node_name,
                     rx_node,
+                    frequency_hz=interferer.frequency_hz,
                     tx_antenna_pattern=tx_pattern,
                     tx_polarization=tx_polarization,
                     rx_antenna_pattern=rx_antenna_pattern,
@@ -380,6 +372,7 @@ class InterferenceEngine:
         rx_position: tuple[float, float, float],
         tx_name: str,
         rx_name: str,
+        frequency_hz: float,
         tx_antenna_pattern: str = "iso",
         tx_polarization: str = "V",
         rx_antenna_pattern: str = "iso",
@@ -409,7 +402,7 @@ class InterferenceEngine:
         self._engine.add_receiver(f"rx_{rx_name}", rx_position, rx_antenna_pattern, rx_polarization)
 
         # Compute paths using PathSolver
-        path_result = self._engine.compute_paths()
+        path_result = self._engine.compute_paths(frequency_hz=frequency_hz)
 
         logger.debug(
             f"Computed interference path {tx_name}→{rx_name}: "

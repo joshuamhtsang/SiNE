@@ -40,26 +40,26 @@ class TestFallbackEngineInitialization:
 class TestFallbackEngineSceneLoading:
     """Test scene loading for FallbackEngine."""
 
-    def test_load_scene_default_frequency(self):
-        """Test loading scene with default frequency."""
+    def test_load_scene_marks_loaded(self):
+        """Test that load_scene sets _scene_loaded."""
         engine = FallbackEngine()
         engine.load_scene()
         assert engine._scene_loaded
-        assert engine._frequency_hz == 5.18e9  # Default frequency
 
-    def test_load_scene_custom_frequency(self):
-        """Test loading scene with custom frequency."""
+    def test_compute_paths_sets_frequency(self):
+        """Frequency is set per-link via compute_paths(), not load_scene()."""
         engine = FallbackEngine()
-        custom_freq = 2.4e9  # 2.4 GHz WiFi
-        engine.load_scene(frequency_hz=custom_freq)
-        assert engine._scene_loaded
-        assert engine._frequency_hz == custom_freq
+        engine.load_scene()
+        engine.add_transmitter("tx", (0, 0, 1))
+        engine.add_receiver("rx", (20, 0, 1))
+        engine.compute_paths(frequency_hz=2.4e9)
+        assert engine._frequency_hz == 2.4e9
 
     def test_load_scene_ignores_path(self):
         """Test that scene_path is ignored in fallback mode."""
         engine = FallbackEngine()
         # Should not raise error even with invalid path
-        engine.load_scene(scene_path="/nonexistent/path.xml", frequency_hz=5.18e9)
+        engine.load_scene(scene_path="/nonexistent/path.xml")
         assert engine._scene_loaded
 
 
@@ -113,11 +113,11 @@ class TestFSPLCalculationAccuracy:
         # With 0 dB indoor loss: total = 72.75 dB
 
         engine = FallbackEngine(indoor_loss_db=0.0)
-        engine.load_scene(frequency_hz=5.18e9)
+        engine.load_scene()
         engine.add_transmitter("tx", (0, 0, 1))
         engine.add_receiver("rx", (20, 0, 1))
 
-        result = engine.compute_paths()
+        result = engine.compute_paths(frequency_hz=5.18e9)
 
         # Calculate expected FSPL using SNRCalculator
         expected_fspl = SNRCalculator.free_space_path_loss(20.0, 5.18e9)
@@ -128,11 +128,11 @@ class TestFSPLCalculationAccuracy:
     def test_fspl_1m_reference(self):
         """Test FSPL at 1 meter (reference distance)."""
         engine = FallbackEngine(indoor_loss_db=0.0)
-        engine.load_scene(frequency_hz=5.18e9)
+        engine.load_scene()
         engine.add_transmitter("tx", (0, 0, 1))
         engine.add_receiver("rx", (1, 0, 1))
 
-        result = engine.compute_paths()
+        result = engine.compute_paths(frequency_hz=5.18e9)
 
         # FSPL(1m, 5.18GHz) = 20*log10(5.18e9) - 147.55 ≈ 46.73 dB
         expected_fspl = SNRCalculator.free_space_path_loss(1.0, 5.18e9)
@@ -141,11 +141,11 @@ class TestFSPLCalculationAccuracy:
     def test_fspl_10m(self):
         """Test FSPL at 10m."""
         engine = FallbackEngine(indoor_loss_db=0.0)
-        engine.load_scene(frequency_hz=5.18e9)
+        engine.load_scene()
         engine.add_transmitter("tx", (0, 0, 1))
         engine.add_receiver("rx", (10, 0, 1))
 
-        result = engine.compute_paths()
+        result = engine.compute_paths(frequency_hz=5.18e9)
 
         # FSPL at 10m should be ~66 dB
         expected_fspl = SNRCalculator.free_space_path_loss(10.0, 5.18e9)
@@ -159,11 +159,11 @@ class TestIndoorLossConfiguration:
     def test_indoor_loss_default_10db(self):
         """Test that default 10 dB indoor loss is applied."""
         engine = FallbackEngine()  # Default indoor_loss_db=10.0
-        engine.load_scene(frequency_hz=5.18e9)
+        engine.load_scene()
         engine.add_transmitter("tx", (0, 0, 1))
         engine.add_receiver("rx", (20, 0, 1))
 
-        result = engine.compute_paths()
+        result = engine.compute_paths(frequency_hz=5.18e9)
 
         # FSPL at 20m ≈ 72.75 dB, + 10 dB indoor = 82.75 dB
         expected_fspl = SNRCalculator.free_space_path_loss(20.0, 5.18e9)
@@ -174,11 +174,11 @@ class TestIndoorLossConfiguration:
     def test_indoor_loss_custom_5db(self):
         """Test custom 5 dB indoor loss."""
         engine = FallbackEngine(indoor_loss_db=5.0)
-        engine.load_scene(frequency_hz=5.18e9)
+        engine.load_scene()
         engine.add_transmitter("tx", (0, 0, 1))
         engine.add_receiver("rx", (20, 0, 1))
 
-        result = engine.compute_paths()
+        result = engine.compute_paths(frequency_hz=5.18e9)
 
         # FSPL at 20m ≈ 72.75 dB, + 5 dB indoor = 77.75 dB
         expected_fspl = SNRCalculator.free_space_path_loss(20.0, 5.18e9)
@@ -189,11 +189,11 @@ class TestIndoorLossConfiguration:
     def test_zero_indoor_loss_pure_fspl(self):
         """Test zero indoor loss gives pure FSPL."""
         engine = FallbackEngine(indoor_loss_db=0.0)
-        engine.load_scene(frequency_hz=5.18e9)
+        engine.load_scene()
         engine.add_transmitter("tx", (0, 0, 1))
         engine.add_receiver("rx", (20, 0, 1))
 
-        result = engine.compute_paths()
+        result = engine.compute_paths(frequency_hz=5.18e9)
 
         # Should match pure FSPL
         expected_fspl = SNRCalculator.free_space_path_loss(20.0, 5.18e9)
@@ -206,20 +206,20 @@ class TestDistanceScaling:
     def test_fspl_distance_scaling_6db_per_doubling(self):
         """Verify FSPL increases by ~6 dB when distance doubles (20*log10(2))."""
         engine = FallbackEngine(indoor_loss_db=0.0)
-        engine.load_scene(frequency_hz=5.18e9)
+        engine.load_scene()
 
         # Test at 10m
         engine.add_transmitter("tx", (0, 0, 1))
         engine.add_receiver("rx", (10, 0, 1))
-        result_10m = engine.compute_paths()
+        result_10m = engine.compute_paths(frequency_hz=5.18e9)
         path_loss_10m = result_10m.path_loss_db
 
         # Test at 20m (reset engine)
         engine = FallbackEngine(indoor_loss_db=0.0)
-        engine.load_scene(frequency_hz=5.18e9)
+        engine.load_scene()
         engine.add_transmitter("tx", (0, 0, 1))
         engine.add_receiver("rx", (20, 0, 1))
-        result_20m = engine.compute_paths()
+        result_20m = engine.compute_paths(frequency_hz=5.18e9)
         path_loss_20m = result_20m.path_loss_db
 
         # Difference should be 20*log10(2) ≈ 6.02 dB
@@ -229,20 +229,20 @@ class TestDistanceScaling:
     def test_fspl_quadrupling_distance(self):
         """Test that quadrupling distance increases FSPL by ~12 dB (2 × 6 dB)."""
         engine = FallbackEngine(indoor_loss_db=0.0)
-        engine.load_scene(frequency_hz=5.18e9)
+        engine.load_scene()
 
         # Test at 5m
         engine.add_transmitter("tx", (0, 0, 1))
         engine.add_receiver("rx", (5, 0, 1))
-        result_5m = engine.compute_paths()
+        result_5m = engine.compute_paths(frequency_hz=5.18e9)
         path_loss_5m = result_5m.path_loss_db
 
         # Test at 20m (4× distance)
         engine = FallbackEngine(indoor_loss_db=0.0)
-        engine.load_scene(frequency_hz=5.18e9)
+        engine.load_scene()
         engine.add_transmitter("tx", (0, 0, 1))
         engine.add_receiver("rx", (20, 0, 1))
-        result_20m = engine.compute_paths()
+        result_20m = engine.compute_paths(frequency_hz=5.18e9)
         path_loss_20m = result_20m.path_loss_db
 
         # Difference should be 20*log10(4) ≈ 12.04 dB
@@ -256,11 +256,11 @@ class TestMinimumDistanceClipping:
     def test_minimum_distance_clipping_at_zero(self):
         """Test that zero distance is clipped to 0.1m."""
         engine = FallbackEngine(indoor_loss_db=0.0)
-        engine.load_scene(frequency_hz=5.18e9)
+        engine.load_scene()
         engine.add_transmitter("tx", (0, 0, 1))
         engine.add_receiver("rx", (0, 0, 1))  # Same position
 
-        result = engine.compute_paths()
+        result = engine.compute_paths(frequency_hz=5.18e9)
 
         # Should use 0.1m instead of 0m
         expected_fspl = SNRCalculator.free_space_path_loss(0.1, 5.18e9)
@@ -269,11 +269,11 @@ class TestMinimumDistanceClipping:
     def test_minimum_distance_clipping_at_5cm(self):
         """Test that 5cm distance is clipped to 0.1m."""
         engine = FallbackEngine(indoor_loss_db=0.0)
-        engine.load_scene(frequency_hz=5.18e9)
+        engine.load_scene()
         engine.add_transmitter("tx", (0, 0, 1))
         engine.add_receiver("rx", (0.05, 0, 1))  # 5cm
 
-        result = engine.compute_paths()
+        result = engine.compute_paths(frequency_hz=5.18e9)
 
         # Should use 0.1m instead of 0.05m
         expected_fspl = SNRCalculator.free_space_path_loss(0.1, 5.18e9)
@@ -282,11 +282,11 @@ class TestMinimumDistanceClipping:
     def test_no_clipping_above_minimum(self):
         """Test that distances above 0.1m are not clipped."""
         engine = FallbackEngine(indoor_loss_db=0.0)
-        engine.load_scene(frequency_hz=5.18e9)
+        engine.load_scene()
         engine.add_transmitter("tx", (0, 0, 1))
         engine.add_receiver("rx", (0.2, 0, 1))  # 0.2m
 
-        result = engine.compute_paths()
+        result = engine.compute_paths(frequency_hz=5.18e9)
 
         # Should use actual 0.2m
         expected_fspl = SNRCalculator.free_space_path_loss(0.2, 5.18e9)
@@ -299,11 +299,11 @@ class TestPropagationDelay:
     def test_delay_at_20m(self):
         """Test propagation delay at 20m."""
         engine = FallbackEngine()
-        engine.load_scene(frequency_hz=5.18e9)
+        engine.load_scene()
         engine.add_transmitter("tx", (0, 0, 1))
         engine.add_receiver("rx", (20, 0, 1))
 
-        result = engine.compute_paths()
+        result = engine.compute_paths(frequency_hz=5.18e9)
 
         # Delay = distance / c = 20 / 3e8 * 1e9 ≈ 66.67 ns
         expected_delay_ns = (20.0 / 3e8) * 1e9
@@ -312,11 +312,11 @@ class TestPropagationDelay:
     def test_delay_at_100m(self):
         """Test propagation delay at 100m."""
         engine = FallbackEngine()
-        engine.load_scene(frequency_hz=5.18e9)
+        engine.load_scene()
         engine.add_transmitter("tx", (0, 0, 1))
         engine.add_receiver("rx", (100, 0, 1))
 
-        result = engine.compute_paths()
+        result = engine.compute_paths(frequency_hz=5.18e9)
 
         # Delay = 100 / 3e8 * 1e9 ≈ 333.33 ns
         expected_delay_ns = (100.0 / 3e8) * 1e9
@@ -325,11 +325,11 @@ class TestPropagationDelay:
     def test_delay_spread(self):
         """Test that delay spread is small for FSPL (single path)."""
         engine = FallbackEngine()
-        engine.load_scene(frequency_hz=5.18e9)
+        engine.load_scene()
         engine.add_transmitter("tx", (0, 0, 1))
         engine.add_receiver("rx", (20, 0, 1))
 
-        result = engine.compute_paths()
+        result = engine.compute_paths(frequency_hz=5.18e9)
 
         # Delay spread should be small (5ns typical)
         assert result.delay_spread_ns == 5.0
@@ -343,7 +343,7 @@ class TestPathDetails:
     def test_path_details_basic(self):
         """Test basic path details retrieval."""
         engine = FallbackEngine(indoor_loss_db=0.0)
-        engine.load_scene(frequency_hz=5.18e9)
+        engine.load_scene()
         engine.add_transmitter("tx", (0, 0, 1))
         engine.add_receiver("rx", (20, 0, 1))
 
@@ -359,7 +359,7 @@ class TestPathDetails:
     def test_path_details_single_path(self):
         """Test that path details includes single LOS path."""
         engine = FallbackEngine(indoor_loss_db=10.0)
-        engine.load_scene(frequency_hz=5.18e9)
+        engine.load_scene()
         engine.add_transmitter("tx", (0, 0, 1))
         engine.add_receiver("rx", (20, 0, 1))
 
@@ -375,7 +375,7 @@ class TestPathDetails:
     def test_path_details_power_calculation(self):
         """Test that path power is negative FSPL + indoor loss."""
         engine = FallbackEngine(indoor_loss_db=10.0)
-        engine.load_scene(frequency_hz=5.18e9)
+        engine.load_scene()
         engine.add_transmitter("tx", (0, 0, 1))
         engine.add_receiver("rx", (20, 0, 1))
 
@@ -390,7 +390,7 @@ class TestPathDetails:
     def test_path_details_no_devices_raises_error(self):
         """Test that get_path_details raises error when no devices configured."""
         engine = FallbackEngine()
-        engine.load_scene(frequency_hz=5.18e9)
+        engine.load_scene()
 
         with pytest.raises(RuntimeError, match="At least one transmitter and receiver required"):
             engine.get_path_details()
@@ -402,28 +402,28 @@ class TestComputePathsValidation:
     def test_compute_paths_no_transmitter_raises_error(self):
         """Test that compute_paths raises error when no transmitter."""
         engine = FallbackEngine()
-        engine.load_scene(frequency_hz=5.18e9)
+        engine.load_scene()
         engine.add_receiver("rx", (20, 0, 1))
 
         with pytest.raises(RuntimeError, match="At least one transmitter and receiver required"):
-            engine.compute_paths()
+            engine.compute_paths(frequency_hz=5.18e9)
 
     def test_compute_paths_no_receiver_raises_error(self):
         """Test that compute_paths raises error when no receiver."""
         engine = FallbackEngine()
-        engine.load_scene(frequency_hz=5.18e9)
+        engine.load_scene()
         engine.add_transmitter("tx", (0, 0, 1))
 
         with pytest.raises(RuntimeError, match="At least one transmitter and receiver required"):
-            engine.compute_paths()
+            engine.compute_paths(frequency_hz=5.18e9)
 
     def test_compute_paths_requires_both_devices(self):
         """Test that compute_paths requires both TX and RX."""
         engine = FallbackEngine()
-        engine.load_scene(frequency_hz=5.18e9)
+        engine.load_scene()
 
         with pytest.raises(RuntimeError, match="At least one transmitter and receiver required"):
-            engine.compute_paths()
+            engine.compute_paths(frequency_hz=5.18e9)
 
 
 class Test3DDistanceCalculation:
@@ -432,7 +432,7 @@ class Test3DDistanceCalculation:
     def test_distance_3d_diagonal(self):
         """Test 3D diagonal distance calculation."""
         engine = FallbackEngine(indoor_loss_db=0.0)
-        engine.load_scene(frequency_hz=5.18e9)
+        engine.load_scene()
         engine.add_transmitter("tx", (0, 0, 0))
         engine.add_receiver("rx", (3, 4, 0))  # 3-4-5 triangle
 
@@ -442,7 +442,7 @@ class Test3DDistanceCalculation:
     def test_distance_3d_xyz(self):
         """Test full 3D distance (X, Y, Z components)."""
         engine = FallbackEngine(indoor_loss_db=0.0)
-        engine.load_scene(frequency_hz=5.18e9)
+        engine.load_scene()
         engine.add_transmitter("tx", (0, 0, 0))
         engine.add_receiver("rx", (1, 1, 1))
 
@@ -457,21 +457,21 @@ class TestPathResultMetadata:
     def test_path_result_num_paths(self):
         """Test that PathResult always has num_paths=1."""
         engine = FallbackEngine()
-        engine.load_scene(frequency_hz=5.18e9)
+        engine.load_scene()
         engine.add_transmitter("tx", (0, 0, 1))
         engine.add_receiver("rx", (20, 0, 1))
 
-        result = engine.compute_paths()
+        result = engine.compute_paths(frequency_hz=5.18e9)
         assert result.num_paths == 1
 
     def test_path_result_dominant_path_type(self):
         """Test that dominant path type is labeled as FSPL estimate."""
         engine = FallbackEngine()
-        engine.load_scene(frequency_hz=5.18e9)
+        engine.load_scene()
         engine.add_transmitter("tx", (0, 0, 1))
         engine.add_receiver("rx", (20, 0, 1))
 
-        result = engine.compute_paths()
+        result = engine.compute_paths(frequency_hz=5.18e9)
         assert result.dominant_path_type == "fspl_estimate"
 
 

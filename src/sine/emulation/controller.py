@@ -243,29 +243,10 @@ class EmulationController:
         """Initialize scene on channel server."""
         scene_config = self.config.topology.scene
 
-        # Get frequency from first wireless interface
-        frequency_hz = 5.18e9
-        bandwidth_hz = 80e6
-
-        for node in self.config.topology.nodes.values():
-            if node.interfaces:
-                for iface_config in node.interfaces.values():
-                    if iface_config.wireless:
-                        frequency_hz = iface_config.wireless.frequency_hz
-                        bandwidth_hz = iface_config.wireless.bandwidth_hz
-                        break
-                else:
-                    continue
-                break
-
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
                 f"{self.channel_server_url}/scene/load",
-                json={
-                    "scene_file": scene_config.file,
-                    "frequency_hz": frequency_hz,
-                    "bandwidth_hz": bandwidth_hz,
-                },
+                json={"scene_file": scene_config.file},
             )
             response.raise_for_status()
             logger.info("Scene loaded on channel server")
@@ -348,15 +329,7 @@ class EmulationController:
                 response = await client.post(
                     f"{self.channel_server_url}{endpoint}",
                     json={
-                        "scene": {
-                            "scene_file": scene_config.file,
-                            "frequency_hz": link_requests[0][
-                                "frequency_hz"
-                            ],
-                            "bandwidth_hz": link_requests[0][
-                                "bandwidth_hz"
-                            ],
-                        },
+                        "scene": {"scene_file": scene_config.file},
                         "links": link_requests,
                         "active_states": self._build_active_states_dict(),
                     },
@@ -752,11 +725,7 @@ class EmulationController:
             response = await client.post(
                 f"{self.channel_server_url}{endpoint}",
                 json={
-                    "scene": {
-                        "scene_file": scene_config.file,
-                        "frequency_hz": link_requests[0]["frequency_hz"],
-                        "bandwidth_hz": link_requests[0]["bandwidth_hz"],
-                    },
+                    "scene": {"scene_file": scene_config.file},
                     "links": link_requests,
                     "active_states": self._build_active_states_dict(),
                 },

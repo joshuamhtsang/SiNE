@@ -27,7 +27,7 @@ def benchmark_n_node_topology(num_nodes: int, use_cache: bool = True) -> dict:
         return {}
 
     engine = InterferenceEngine()
-    engine.load_scene(scene_path=None, frequency_hz=5.18e9, bandwidth_hz=80e6)
+    engine.load_scene()
 
     # Generate random node positions (100m x 100m area)
     positions = {}

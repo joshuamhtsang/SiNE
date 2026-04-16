@@ -108,12 +108,7 @@ class ChannelEngine(ABC):
         """Return engine identifier: 'sionna' or 'fallback'."""
 
     @abstractmethod
-    def load_scene(
-        self,
-        scene_path: Optional[str] = None,
-        frequency_hz: float = 5.18e9,
-        bandwidth_hz: float = 80e6,
-    ) -> None: ...
+    def load_scene(self, scene_path: Optional[str] = None) -> None: ...
 
     @abstractmethod
     def add_transmitter(
@@ -134,7 +129,7 @@ class ChannelEngine(ABC):
     ) -> None: ...
 
     @abstractmethod
-    def compute_paths(self) -> "PathResult": ...
+    def compute_paths(self, frequency_hz: float) -> "PathResult": ...
 
     @abstractmethod
     def get_path_details(self) -> "PathDetails": ...
@@ -174,19 +169,13 @@ class SionnaEngine(ChannelEngine):
         self._transmitters: dict[str, tuple[float, float, float]] = {}
         self._receivers: dict[str, tuple[float, float, float]] = {}
 
-    def load_scene(
-        self,
-        scene_path: Optional[str] = None,
-        frequency_hz: float = 5.18e9,
-        bandwidth_hz: float = 80e6,
-    ) -> None:
+    def load_scene(self, scene_path: Optional[str] = None) -> None:
         """
         Load ray tracing scene.
 
         Args:
-            scene_path: Path to Mitsuba XML scene file, or None for empty scene
-            frequency_hz: RF frequency for simulation
-            bandwidth_hz: Channel bandwidth
+            scene_path: Path to Mitsuba XML scene file, or None for empty scene.
+                Frequency is set per-link in compute_paths().
         """
         # Store scene path for later reference (for visualization)
         self.scene_path = Path(scene_path) if scene_path else None
@@ -197,10 +186,6 @@ class SionnaEngine(ChannelEngine):
             # Create empty scene (Sionna 1.2+ API)
             self.scene = Scene()
 
-        # Configure RF parameters
-        self.scene.frequency = frequency_hz
-        self.scene.bandwidth = bandwidth_hz
-
         # Initialize PathSolver
         # Note: synthetic_array defaults to True, which means antennas are collapsed
         # to a single effective channel at the device center. This is appropriate for
@@ -210,7 +195,6 @@ class SionnaEngine(ChannelEngine):
         self._scene_loaded = True
 
         logger.info(f"Loaded scene: {scene_path or 'empty'}")
-        logger.info(f"Frequency: {frequency_hz/1e9:.3f} GHz, Bandwidth: {bandwidth_hz/1e6:.1f} MHz")
 
     def add_transmitter(
         self,
@@ -294,15 +278,24 @@ class SionnaEngine(ChannelEngine):
         self._receivers[name] = position
         logger.debug(f"Added receiver '{name}' at {position}")
 
-    def compute_paths(self) -> PathResult:
+    def compute_paths(self, frequency_hz: float) -> PathResult:
         """
         Compute propagation paths using ray tracing.
+
+        Args:
+            frequency_hz: RF frequency in Hz. Updates the scene frequency before computing
+                paths, enabling correct multi-frequency topologies. Sionna re-evaluates
+                ITU-R P.2040 material coefficients and FSPL on every PathSolver call.
 
         Returns:
             PathResult with path loss, delays, and path information
         """
         if not self._scene_loaded:
             raise RuntimeError("Scene must be loaded before computing paths")
+
+        if frequency_hz != self.scene.frequency:
+            self.scene.frequency = frequency_hz
+            logger.debug(f"Scene frequency updated to {frequency_hz/1e9:.3f} GHz for this link")
 
         if not self._transmitters or not self._receivers:
             raise RuntimeError("At least one transmitter and receiver must be added")
@@ -750,16 +743,10 @@ class FallbackEngine(ChannelEngine):
         self._scene_loaded = False
         self.indoor_loss_db = indoor_loss_db  # Configurable instead of hardcoded
 
-    def load_scene(
-        self,
-        scene_path: Optional[str] = None,
-        frequency_hz: float = 5.18e9,
-        bandwidth_hz: float = 80e6,
-    ) -> None:
-        """Load scene (no-op for fallback, just store frequency)."""
-        self._frequency_hz = frequency_hz
+    def load_scene(self, scene_path: Optional[str] = None) -> None:
+        """Load scene (no-op for fallback). Frequency is set per-link in compute_paths()."""
         self._scene_loaded = True
-        logger.info(f"Fallback engine: scene loaded (frequency={frequency_hz/1e9:.3f} GHz)")
+        logger.info("Fallback engine: scene loaded")
 
     def add_transmitter(
         self,
@@ -781,13 +768,18 @@ class FallbackEngine(ChannelEngine):
         """Add receiver position."""
         self._receivers[name] = position
 
-    def compute_paths(self) -> PathResult:
+    def compute_paths(self, frequency_hz: float) -> PathResult:
         """
         Compute path using free-space model.
+
+        Args:
+            frequency_hz: RF frequency in Hz. Used directly for FSPL calculation,
+                enabling correct multi-frequency topologies.
 
         Returns:
             PathResult with FSPL-based path loss
         """
+        self._frequency_hz = frequency_hz
         if not self._transmitters or not self._receivers:
             raise RuntimeError("At least one transmitter and receiver required")
 

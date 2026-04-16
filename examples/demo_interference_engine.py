@@ -28,7 +28,7 @@ def main():
     # Initialize engine with empty scene (vacuum)
     print("1. Initializing InterferenceEngine with vacuum scene...")
     engine = InterferenceEngine()
-    engine.load_scene(scene_path=None, frequency_hz=5.18e9, bandwidth_hz=80e6)
+    engine.load_scene()
     print("   ✓ Scene loaded (free space)")
     print()
 

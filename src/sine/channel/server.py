@@ -106,8 +106,6 @@ class SceneConfig(BaseModel):
     """Scene configuration for ray tracing."""
 
     scene_file: str = Field(..., description="Path to Mitsuba XML scene file")
-    frequency_hz: float = Field(default=5.18e9, description="RF frequency in Hz")
-    bandwidth_hz: float = Field(default=80e6, description="Channel bandwidth in Hz")
 
 
 class MACModel(BaseModel):
@@ -265,8 +263,6 @@ class SceneLoadResponse(BaseModel):
 
     status: str
     scene_file: str
-    frequency_ghz: float
-    bandwidth_mhz: float
 
 
 class SinglePathInfoResponse(BaseModel):
@@ -664,22 +660,13 @@ async def load_scene(config: SceneConfig) -> SceneLoadResponse:
     engine = _engine_registry.get("auto")
 
     try:
-        engine.load_scene(
-            scene_path=config.scene_file,
-            frequency_hz=config.frequency_hz,
-            bandwidth_hz=config.bandwidth_hz,
-        )
+        engine.load_scene(scene_path=config.scene_file)
 
         # Reset MCS hysteresis state — new deployment starts fresh
         for mcs_table in _mcs_tables.values():
             mcs_table.reset_hysteresis()
 
-        return SceneLoadResponse(
-            status="success",
-            scene_file=config.scene_file,
-            frequency_ghz=config.frequency_hz / 1e9,
-            bandwidth_mhz=config.bandwidth_hz / 1e6,
-        )
+        return SceneLoadResponse(status="success", scene_file=config.scene_file)
 
     except Exception as e:
         logger.error("Failed to load scene: %s", e)
@@ -711,7 +698,7 @@ def _run_single_path(
         polarization=link.polarization,
     )
 
-    path_result = engine.compute_paths()
+    path_result = engine.compute_paths(frequency_hz=link.frequency_hz)
     path_details = engine.get_path_details()
 
     path_cache.store(
@@ -736,7 +723,7 @@ async def compute_single_link(request: WirelessLinkRequest):
 
     # Ensure scene is loaded
     if not getattr(engine, "_scene_loaded", False):
-        engine.load_scene(frequency_hz=request.frequency_hz, bandwidth_hz=request.bandwidth_hz)
+        engine.load_scene()
 
     try:
         path_result, _ = _run_single_path(engine, request, _path_cache_obj)
@@ -766,11 +753,7 @@ async def compute_links_snr(request: LinksSnrRequest):
 
     start_time = time.time()
 
-    engine.load_scene(
-        scene_path=request.scene.scene_file,
-        frequency_hz=request.scene.frequency_hz,
-        bandwidth_hz=request.scene.bandwidth_hz,
-    )
+    engine.load_scene(scene_path=request.scene.scene_file)
 
     results = []
     for link in request.links:
@@ -820,11 +803,7 @@ async def compute_links_sinr(request: LinksSinrRequest):
 
     start_time = time.time()
 
-    engine.load_scene(
-        scene_path=request.scene.scene_file,
-        frequency_hz=request.scene.frequency_hz,
-        bandwidth_hz=request.scene.bandwidth_hz,
-    )
+    engine.load_scene(scene_path=request.scene.scene_file)
 
     mac_model_config = None
     for link in request.links:
@@ -986,11 +965,7 @@ async def compute_sinr(request: InterferenceRequest):
 
     # Load scene if not loaded
     if not _interference_engine._scene_loaded:
-        _interference_engine.load_scene(
-            scene_path=None,  # Use empty scene for now
-            frequency_hz=request.frequency_hz,
-            bandwidth_hz=request.bandwidth_hz,
-        )
+        _interference_engine.load_scene()
 
     try:
         # Compute signal power using the selected engine
@@ -1009,7 +984,7 @@ async def compute_sinr(request: InterferenceRequest):
         )
 
         # Get path loss for signal
-        path_result = engine.compute_paths()
+        path_result = engine.compute_paths(frequency_hz=request.frequency_hz)
 
         # Compute signal power: P_tx + G_tx + G_rx - PL
         signal_power_dbm = (
