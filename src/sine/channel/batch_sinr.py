@@ -172,14 +172,12 @@ class LinksSinrComputer:
         # Avoids expensive Sionna scene parsing on every batch while still handling
         # different deployments (e.g., different test topologies sharing the same
         # channel server process).
-        scene_key = (scene_config.scene_file, scene_config.frequency_hz, scene_config.bandwidth_hz)
+        scene_key = scene_config.scene_file
         if self._interference_engine is None:
             self._interference_engine = InterferenceEngine()
         if scene_key != self._interference_engine_scene_key:
             self._interference_engine.load_scene(
                 scene_path=scene_config.scene_file,
-                frequency_hz=scene_config.frequency_hz,
-                bandwidth_hz=scene_config.bandwidth_hz,
             )
             self._interference_engine_scene_key = scene_key
 
